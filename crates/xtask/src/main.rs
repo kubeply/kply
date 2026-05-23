@@ -1083,6 +1083,32 @@ pub fn
     }
 
     #[test]
+    fn rejects_readme_with_heading_but_no_link() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(temp.path(), "README.md", "# Kply\n\n## Roadmap\n");
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README without roadmap link should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_link_but_no_heading() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README without roadmap heading should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
     fn collects_workspace_members_from_manifest() {
         let manifest = r#"
 [workspace]
