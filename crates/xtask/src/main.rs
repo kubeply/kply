@@ -23,6 +23,7 @@ fn main() -> Result<()> {
             println!("cargo check --all-targets --all-features --locked");
             println!("cargo clippy --all-targets --all-features --locked -- -D warnings");
             println!("cargo test --all-targets --all-features --locked");
+            println!("cargo xtask check-module-docs");
         }
         unknown => bail!("unknown xtask command: {unknown}"),
     }
