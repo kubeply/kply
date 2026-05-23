@@ -75,4 +75,5 @@ cargo xtask check-license-files
 cargo xtask check-module-docs
 cargo xtask check-placeholder-docs
 cargo xtask check-placeholders
+cargo xtask check-toolchain-pin
 ```

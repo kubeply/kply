@@ -17,6 +17,7 @@ fn main() -> Result<()> {
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
+            println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
         }
@@ -35,6 +36,9 @@ fn main() -> Result<()> {
         "check-placeholders" => {
             check_placeholders()?;
         }
+        "check-toolchain-pin" => {
+            check_toolchain_pin()?;
+        }
         "validate" => {
             println!("cargo fmt --all -- --check");
             println!("cargo check --all-targets --all-features --locked");
@@ -45,6 +49,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
+            println!("cargo xtask check-toolchain-pin");
         }
         unknown => bail!("unknown xtask command: {unknown}"),
     }
@@ -96,6 +101,18 @@ fn check_license_files() -> Result<()> {
         "Cargo.toml".as_ref(),
         workspace_crates(),
     )
+}
+
+fn check_toolchain_pin() -> Result<()> {
+    check_toolchain_pin_inner(
+        "rust-toolchain.toml".as_ref(),
+        ".github/workflows/ci.yml".as_ref(),
+        expected_rust_channel(),
+    )
+}
+
+fn expected_rust_channel() -> &'static str {
+    "1.95.0"
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -279,6 +296,68 @@ fn parse_toml_file(path: &Path) -> Result<toml::Value> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("reading TOML file {}", path.display()))?;
     toml::from_str(&source).with_context(|| format!("parsing TOML file {}", path.display()))
+}
+
+fn check_toolchain_pin_inner(
+    toolchain_path: &Path,
+    workflow_path: &Path,
+    expected_channel: &str,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    let toolchain = parse_toml_file(toolchain_path)?;
+    let channel = toolchain
+        .get("toolchain")
+        .and_then(|toolchain| toolchain.get("channel"))
+        .and_then(toml::Value::as_str);
+
+    if channel != Some(expected_channel) {
+        errors.push(format!(
+            "{} must pin channel = \"{}\"",
+            toolchain_path.display(),
+            expected_channel
+        ));
+    }
+
+    let components = toolchain
+        .get("toolchain")
+        .and_then(|toolchain| toolchain.get("components"))
+        .and_then(toml::Value::as_array)
+        .map(|components| {
+            components
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+
+    for component in ["clippy", "rustfmt"] {
+        if !components.contains(component) {
+            errors.push(format!(
+                "{} must include Rust component {component}",
+                toolchain_path.display()
+            ));
+        }
+    }
+
+    let workflow_source = std::fs::read_to_string(workflow_path)
+        .with_context(|| format!("reading workflow file {}", workflow_path.display()))?;
+    let workflow_toolchain_line = format!("toolchain: {expected_channel}");
+
+    if !workflow_source.contains(&workflow_toolchain_line) {
+        errors.push(format!(
+            "{} must install Rust toolchain {expected_channel}",
+            workflow_path.display()
+        ));
+    }
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        bail!("{} toolchain pin issue(s) found", errors.len());
+    }
+
+    Ok(())
 }
 
 fn collect_workspace_members(manifest_source: &str) -> Result<Vec<String>> {
@@ -490,8 +569,9 @@ mod tests {
 
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_docs_contain,
-        check_license_files_inner, check_placeholder_sources, collect_workspace_members,
-        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
+        check_license_files_inner, check_placeholder_sources, check_toolchain_pin_inner,
+        collect_workspace_members, contains_crate_name, has_non_placeholder_public_item,
+        has_placeholder_marker,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -946,6 +1026,100 @@ license = "Apache-2.0"
         .expect_err("crate manifest without workspace license should fail");
 
         assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
+    fn accepts_pinned_rust_toolchain_and_matching_ci() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let toolchain_path = write_source(
+            temp.path(),
+            "rust-toolchain.toml",
+            r#"
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]
+"#,
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            "toolchain: 1.95.0\n",
+        );
+
+        check_toolchain_pin_inner(&toolchain_path, &workflow_path, "1.95.0")
+            .expect("matching toolchain pin should pass");
+    }
+
+    #[test]
+    fn rejects_unpinned_rust_toolchain_channel() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let toolchain_path = write_source(
+            temp.path(),
+            "rust-toolchain.toml",
+            r#"
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
+"#,
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            "toolchain: 1.95.0\n",
+        );
+
+        let error = check_toolchain_pin_inner(&toolchain_path, &workflow_path, "1.95.0")
+            .expect_err("unpinned toolchain channel should fail");
+
+        assert!(error.to_string().contains("toolchain pin issue(s) found"));
+    }
+
+    #[test]
+    fn rejects_rust_toolchain_missing_required_components() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let toolchain_path = write_source(
+            temp.path(),
+            "rust-toolchain.toml",
+            r#"
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt"]
+"#,
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            "toolchain: 1.95.0\n",
+        );
+
+        let error = check_toolchain_pin_inner(&toolchain_path, &workflow_path, "1.95.0")
+            .expect_err("missing toolchain component should fail");
+
+        assert!(error.to_string().contains("toolchain pin issue(s) found"));
+    }
+
+    #[test]
+    fn rejects_ci_toolchain_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let toolchain_path = write_source(
+            temp.path(),
+            "rust-toolchain.toml",
+            r#"
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]
+"#,
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            "toolchain: stable\n",
+        );
+
+        let error = check_toolchain_pin_inner(&toolchain_path, &workflow_path, "1.95.0")
+            .expect_err("CI toolchain drift should fail");
+
+        assert!(error.to_string().contains("toolchain pin issue(s) found"));
     }
 
     fn test_workspace_crates() -> &'static [WorkspaceCrate] {

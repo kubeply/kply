@@ -87,7 +87,8 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
    `cargo xtask check-crate-inventory-docs`.
 5. Keep the Apache-2.0 license and notice files. Enforce this with
    `cargo xtask check-license-files`.
-6. Keep the local Rust toolchain pinned through `rust-toolchain.toml`.
+6. Keep the local Rust toolchain pinned through `rust-toolchain.toml`. Enforce
+   this with `cargo xtask check-toolchain-pin`.
 7. Keep `cargo deny` configuration strict enough for an open-source CLI.
 8. Keep release planning config present but avoid publishing a binary until the
    first useful workflow exists.

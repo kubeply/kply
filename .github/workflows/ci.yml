@@ -71,5 +71,8 @@ jobs:
       - name: Check placeholders
         run: cargo xtask check-placeholders
 
+      - name: Check toolchain pin
+        run: cargo xtask check-toolchain-pin
+
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2
