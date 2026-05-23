@@ -118,6 +118,7 @@ Goal: make future CLI, config, manifest, and Kubernetes behavior easy to verify.
    - `fixtures/k8s-responses/`
    - `fixtures/reports/`
    - `fixtures/demo/`
+   Enforce this with `cargo xtask check-fixture-directories`.
 2. Define fixture naming:
    - CLI fixtures: `cli/<behavior-name>/`
    - config fixtures: `config/<case-name>/kply.yaml`
