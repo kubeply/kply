@@ -165,24 +165,32 @@ fn check_docs_contain(docs: impl IntoIterator<Item = DocExpectation>) -> Result<
     for doc in docs {
         let source = std::fs::read_to_string(&doc.path)?;
 
-        for phrase in doc.required_phrases {
-            if !source.contains(&phrase) {
-                missing_phrases.push((doc.path.clone(), phrase));
-            }
+        let missing_for_doc: Vec<_> = doc
+            .required_phrases
+            .into_iter()
+            .filter(|phrase| !source.contains(phrase))
+            .collect();
+
+        if !missing_for_doc.is_empty() {
+            missing_phrases.push((doc.path, missing_for_doc));
         }
     }
 
     if !missing_phrases.is_empty() {
-        for (path, phrase) in &missing_phrases {
-            eprintln!(
-                "placeholder documentation phrase missing in {}: {phrase}",
-                path.display()
-            );
+        let phrase_count: usize = missing_phrases
+            .iter()
+            .map(|(_, phrases)| phrases.len())
+            .sum();
+
+        for (path, phrases) in &missing_phrases {
+            for phrase in phrases {
+                eprintln!(
+                    "placeholder documentation phrase missing in {}: {phrase}",
+                    path.display()
+                );
+            }
         }
-        bail!(
-            "{} placeholder documentation phrase(s) missing",
-            missing_phrases.len()
-        );
+        bail!("{phrase_count} placeholder documentation phrase(s) missing");
     }
 
     Ok(())
