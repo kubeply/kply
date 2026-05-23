@@ -409,6 +409,13 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
             release_workflow_path.display()
         )
     })?;
+    let release_workflow_yaml: serde_yaml::Value = serde_yaml::from_str(&release_workflow)
+        .with_context(|| {
+            format!(
+                "parsing release workflow {}",
+                release_workflow_path.display()
+            )
+        })?;
     let mut errors = Vec::new();
 
     let cargo_dist_version = dist_config
@@ -429,19 +436,35 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         errors.push("dist.pr-run-mode must stay plan".to_owned());
     }
 
-    if !release_workflow.contains("pull_request:") {
+    if !workflow_has_pull_request(&release_workflow_yaml) {
         errors.push("release workflow must run on pull_request".to_owned());
     }
 
-    for forbidden in ["push:", "tags:", "dist build", "dist host", "dist publish"] {
-        if release_workflow.contains(forbidden) {
+    if workflow_has_push(&release_workflow_yaml) {
+        errors.push("release workflow must not run on push".to_owned());
+    }
+
+    if workflow_has_push_tags(&release_workflow_yaml) {
+        errors.push("release workflow must not run on tag pushes".to_owned());
+    }
+
+    let run_commands = workflow_run_commands(&release_workflow_yaml);
+
+    for forbidden in ["dist build", "dist host", "dist publish"] {
+        if run_commands
+            .iter()
+            .any(|run_command| run_command.contains(forbidden))
+        {
             errors.push(format!(
-                "release workflow must not contain publishing trigger or command: {forbidden}"
+                "release workflow must not contain publishing command: {forbidden}"
             ));
         }
     }
 
-    if !release_workflow.contains("dist plan") {
+    if !run_commands
+        .iter()
+        .any(|run_command| run_command.contains("dist plan"))
+    {
         errors.push("release workflow must keep dist plan command".to_owned());
     }
 
@@ -453,6 +476,59 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
     }
 
     Ok(())
+}
+
+fn workflow_has_pull_request(workflow: &serde_yaml::Value) -> bool {
+    workflow_event(workflow, "pull_request").is_some()
+}
+
+fn workflow_has_push(workflow: &serde_yaml::Value) -> bool {
+    workflow_event(workflow, "push").is_some()
+}
+
+fn workflow_has_push_tags(workflow: &serde_yaml::Value) -> bool {
+    workflow_event(workflow, "push")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|push| yaml_mapping_get(push, "tags"))
+        .is_some()
+}
+
+fn workflow_event<'a>(
+    workflow: &'a serde_yaml::Value,
+    event: &str,
+) -> Option<&'a serde_yaml::Value> {
+    workflow
+        .as_mapping()
+        .and_then(|workflow| yaml_mapping_get(workflow, "on"))
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|events| yaml_mapping_get(events, event))
+}
+
+fn workflow_run_commands(workflow: &serde_yaml::Value) -> Vec<&str> {
+    let Some(jobs) = workflow
+        .as_mapping()
+        .and_then(|workflow| yaml_mapping_get(workflow, "jobs"))
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return Vec::new();
+    };
+
+    jobs.values()
+        .filter_map(serde_yaml::Value::as_mapping)
+        .filter_map(|job| yaml_mapping_get(job, "steps"))
+        .filter_map(serde_yaml::Value::as_sequence)
+        .flat_map(|steps| steps.iter())
+        .filter_map(serde_yaml::Value::as_mapping)
+        .filter_map(|step| yaml_mapping_get(step, "run"))
+        .filter_map(serde_yaml::Value::as_str)
+        .collect()
+}
+
+fn yaml_mapping_get<'a>(
+    mapping: &'a serde_yaml::Mapping,
+    key: &str,
+) -> Option<&'a serde_yaml::Value> {
+    mapping.get(serde_yaml::Value::String(key.to_owned()))
 }
 
 fn parse_toml_file(path: &Path) -> Result<toml::Value> {
