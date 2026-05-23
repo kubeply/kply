@@ -59,6 +59,9 @@ jobs:
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
 
+      - name: Check license files
+        run: cargo xtask check-license-files
+
       - name: Check module docs
         run: cargo xtask check-module-docs
 

@@ -13,6 +13,7 @@ fn main() -> Result<()> {
         "help" => {
             println!("available tasks:");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
+            println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
@@ -21,6 +22,9 @@ fn main() -> Result<()> {
         }
         "check-crate-inventory-docs" => {
             check_crate_inventory_docs()?;
+        }
+        "check-license-files" => {
+            check_license_files()?;
         }
         "check-module-docs" => {
             check_module_docs()?;
@@ -37,6 +41,7 @@ fn main() -> Result<()> {
             println!("cargo clippy --all-targets --all-features --locked -- -D warnings");
             println!("cargo test --all-targets --all-features --locked");
             println!("cargo xtask check-crate-inventory-docs");
+            println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
@@ -82,6 +87,15 @@ fn check_crate_inventory_docs() -> Result<()> {
     let doc_paths = ["AGENTS.md", "CONTRIBUTING.md", "crates/README.md"];
 
     check_crate_inventory_docs_inner("Cargo.toml".as_ref(), doc_paths, workspace_crates())
+}
+
+fn check_license_files() -> Result<()> {
+    check_license_files_inner(
+        "LICENSE".as_ref(),
+        "NOTICE".as_ref(),
+        "Cargo.toml".as_ref(),
+        workspace_crates(),
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -186,6 +200,85 @@ fn check_crate_inventory_docs_inner(
     }
 
     Ok(())
+}
+
+fn check_license_files_inner(
+    license_path: &Path,
+    notice_path: &Path,
+    manifest_path: &Path,
+    crates: &[WorkspaceCrate],
+) -> Result<()> {
+    let mut errors = Vec::new();
+    let license_source = std::fs::read_to_string(license_path)
+        .with_context(|| format!("reading license file {}", license_path.display()))?;
+    let notice_source = std::fs::read_to_string(notice_path)
+        .with_context(|| format!("reading notice file {}", notice_path.display()))?;
+
+    for phrase in [
+        "Apache License",
+        "Version 2.0, January 2004",
+        "http://www.apache.org/licenses/",
+    ] {
+        if !license_source.contains(phrase) {
+            errors.push(format!("LICENSE is missing Apache-2.0 phrase: {phrase}"));
+        }
+    }
+
+    for phrase in [
+        "Kply",
+        "Copyright 2026 Kubeply",
+        "software developed by Kubeply",
+    ] {
+        if !notice_source.contains(phrase) {
+            errors.push(format!("NOTICE is missing required phrase: {phrase}"));
+        }
+    }
+
+    let manifest = parse_toml_file(manifest_path)?;
+    let workspace_license = manifest
+        .get("workspace")
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(|package| package.get("license"))
+        .and_then(toml::Value::as_str);
+
+    if workspace_license != Some("Apache-2.0") {
+        errors.push("workspace package license must be Apache-2.0".to_owned());
+    }
+
+    let workspace_root = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+
+    for workspace_crate in crates {
+        let crate_manifest_path = workspace_root.join(workspace_crate.path).join("Cargo.toml");
+        let crate_manifest = parse_toml_file(&crate_manifest_path)?;
+        let inherits_workspace_license = crate_manifest
+            .get("package")
+            .and_then(|package| package.get("license"))
+            .and_then(|license| license.get("workspace"))
+            .and_then(toml::Value::as_bool)
+            == Some(true);
+
+        if !inherits_workspace_license {
+            errors.push(format!(
+                "{} must inherit license.workspace = true",
+                crate_manifest_path.display()
+            ));
+        }
+    }
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        bail!("{} license file issue(s) found", errors.len());
+    }
+
+    Ok(())
+}
+
+fn parse_toml_file(path: &Path) -> Result<toml::Value> {
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("reading TOML file {}", path.display()))?;
+    toml::from_str(&source).with_context(|| format!("parsing TOML file {}", path.display()))
 }
 
 fn collect_workspace_members(manifest_source: &str) -> Result<Vec<String>> {
@@ -397,8 +490,8 @@ mod tests {
 
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_docs_contain,
-        check_placeholder_sources, collect_workspace_members, contains_crate_name,
-        has_non_placeholder_public_item, has_placeholder_marker,
+        check_license_files_inner, check_placeholder_sources, collect_workspace_members,
+        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -407,6 +500,17 @@ mod tests {
 /// Placeholder marker for the future core session model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CorePlaceholder;
+";
+    const APACHE_LICENSE_SOURCE: &str = "\
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+";
+    const NOTICE_SOURCE: &str = "\
+Kply
+Copyright 2026 Kubeply
+
+This product includes software developed by Kubeply.
 ";
 
     #[test]
@@ -707,6 +811,143 @@ members = [
         );
     }
 
+    #[test]
+    fn accepts_apache_license_files_and_workspace_license_inheritance() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
+        let notice_path = write_source(temp.path(), "NOTICE", NOTICE_SOURCE);
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "Apache-2.0"
+"#,
+        );
+        write_crate_manifests(temp.path(), "license.workspace = true");
+
+        check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect("Apache-2.0 license files should pass");
+    }
+
+    #[test]
+    fn rejects_missing_apache_license_phrase() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", "Apache License\n");
+        let notice_path = write_source(temp.path(), "NOTICE", NOTICE_SOURCE);
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "Apache-2.0"
+"#,
+        );
+        write_crate_manifests(temp.path(), "license.workspace = true");
+
+        let error = check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect_err("missing Apache phrase should fail");
+
+        assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
+    fn rejects_missing_notice_phrase() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
+        let notice_path = write_source(temp.path(), "NOTICE", "Kply\n");
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "Apache-2.0"
+"#,
+        );
+        write_crate_manifests(temp.path(), "license.workspace = true");
+
+        let error = check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect_err("missing notice phrase should fail");
+
+        assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
+    fn rejects_workspace_manifest_without_apache_license() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
+        let notice_path = write_source(temp.path(), "NOTICE", NOTICE_SOURCE);
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "MIT"
+"#,
+        );
+        write_crate_manifests(temp.path(), "license.workspace = true");
+
+        let error = check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect_err("non-Apache workspace license should fail");
+
+        assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
+    fn rejects_crate_manifest_without_workspace_license_inheritance() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
+        let notice_path = write_source(temp.path(), "NOTICE", NOTICE_SOURCE);
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "Apache-2.0"
+"#,
+        );
+        write_nested_source(
+            temp.path(),
+            "crates/kply-cli/Cargo.toml",
+            "[package]\nname = \"kply-cli\"\n",
+        );
+        write_nested_source(
+            temp.path(),
+            "crates/xtask/Cargo.toml",
+            "[package]\nname = \"xtask\"\nlicense.workspace = true\n",
+        );
+
+        let error = check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect_err("crate manifest without workspace license should fail");
+
+        assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
     fn test_workspace_crates() -> &'static [WorkspaceCrate] {
         &[
             WorkspaceCrate {
@@ -723,6 +964,29 @@ members = [
     fn write_source(directory: &Path, filename: &str, source: &str) -> std::path::PathBuf {
         let source_path = directory.join(filename);
         fs::write(&source_path, source).expect("source fixture should be written");
+        source_path
+    }
+
+    fn write_crate_manifests(root: &Path, license_line: &str) {
+        for workspace_crate in test_workspace_crates() {
+            write_nested_source(
+                root,
+                &format!("{}/Cargo.toml", workspace_crate.path),
+                &format!(
+                    "[package]\nname = \"{}\"\n{}\n",
+                    workspace_crate.name, license_line
+                ),
+            );
+        }
+    }
+
+    fn write_nested_source(root: &Path, path: &str, source: &str) -> std::path::PathBuf {
+        let source_path = root.join(path);
+        let parent = source_path
+            .parent()
+            .expect("nested source path should have parent");
+        fs::create_dir_all(parent).expect("nested source parent should be created");
+        fs::write(&source_path, source).expect("nested source fixture should be written");
         source_path
     }
 }
