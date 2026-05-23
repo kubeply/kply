@@ -30,6 +30,7 @@ fn main() -> Result<()> {
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
+            println!("  check-readme-roadmap-link verify README links the roadmap");
             println!("  check-release-planning verify cargo-dist planning stays non-publishing");
             println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
@@ -53,6 +54,9 @@ fn main() -> Result<()> {
         "check-placeholders" => {
             check_placeholders()?;
         }
+        "check-readme-roadmap-link" => {
+            check_readme_roadmap_link()?;
+        }
         "check-release-planning" => {
             check_release_planning()?;
         }
@@ -70,6 +74,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
+            println!("cargo xtask check-readme-roadmap-link");
             println!("cargo xtask check-release-planning");
             println!("cargo xtask check-toolchain-pin");
         }
@@ -134,6 +139,10 @@ fn check_release_planning() -> Result<()> {
         "dist-workspace.toml".as_ref(),
         ".github/workflows/release.yml".as_ref(),
     )
+}
+
+fn check_readme_roadmap_link() -> Result<()> {
+    check_readme_roadmap_link_inner("README.md".as_ref())
 }
 
 fn check_toolchain_pin() -> Result<()> {
@@ -779,6 +788,53 @@ fn check_docs_contain(docs: impl IntoIterator<Item = DocExpectation>) -> Result<
     Ok(())
 }
 
+fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
+    let source = std::fs::read_to_string(readme_path)
+        .with_context(|| format!("reading README file {}", readme_path.display()))?;
+    let has_roadmap_heading = markdown_has_heading_outside_code_block(&source, "## Roadmap");
+    let has_roadmap_link =
+        source.contains("[docs/implementation-roadmap.md](docs/implementation-roadmap.md)");
+
+    let mut errors = Vec::new();
+
+    if !has_roadmap_heading {
+        errors.push("missing top-level ## Roadmap heading");
+    }
+
+    if !has_roadmap_link {
+        errors.push("missing markdown link to docs/implementation-roadmap.md");
+    }
+
+    if !errors.is_empty() {
+        bail!(
+            "{} must include a top-level Roadmap section linking docs/implementation-roadmap.md: {}",
+            readme_path.display(),
+            errors.join("; ")
+        );
+    }
+
+    Ok(())
+}
+
+fn markdown_has_heading_outside_code_block(source: &str, heading: &str) -> bool {
+    let mut in_fenced_code_block = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("```") {
+            in_fenced_code_block = !in_fenced_code_block;
+            continue;
+        }
+
+        if !in_fenced_code_block && trimmed == heading {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn has_placeholder_marker(source: &str) -> bool {
     source.lines().any(|line| {
         starts_public_keyword(line.trim_start(), "pub struct") && line.contains("Placeholder")
@@ -827,9 +883,9 @@ mod tests {
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
         check_docs_contain, check_license_files_inner, check_placeholder_sources,
-        check_release_planning_inner, check_toolchain_pin_inner, collect_workspace_members,
-        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
-        workflow_installs_toolchain,
+        check_readme_roadmap_link_inner, check_release_planning_inner, check_toolchain_pin_inner,
+        collect_workspace_members, contains_crate_name, has_non_placeholder_public_item,
+        has_placeholder_marker, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1031,6 +1087,100 @@ pub fn
                 .to_string()
                 .contains("1 placeholder documentation phrase(s) missing")
         );
+    }
+
+    #[test]
+    fn accepts_readme_with_roadmap_link() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n## Roadmap\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        check_readme_roadmap_link_inner(&readme_path).expect("README roadmap link should pass");
+    }
+
+    #[test]
+    fn rejects_readme_without_roadmap_link() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(temp.path(), "README.md", "# Kply\n\n## Development\n");
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README without roadmap link should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_heading_but_no_link() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(temp.path(), "README.md", "# Kply\n\n## Roadmap\n");
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README without roadmap link should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_link_but_no_heading() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README without roadmap heading should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_wrong_roadmap_heading_level() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n### Roadmap\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README with wrong roadmap heading level should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_concatenated_roadmap_heading() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n## RoadmapPlanning\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README with concatenated roadmap heading should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_roadmap_heading_in_code_block() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n```md\n## Roadmap\n```\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README with roadmap heading in code block should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
     }
 
     #[test]

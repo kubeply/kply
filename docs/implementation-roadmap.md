@@ -94,7 +94,8 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
 8. Keep release planning config present but avoid publishing a binary until the
    first useful workflow exists. Enforce this with
    `cargo xtask check-release-planning`.
-9. Add a top-level roadmap link from `README.md` once this file is accepted.
+9. Keep a top-level roadmap link from `README.md`. Enforce this with
+   `cargo xtask check-readme-roadmap-link`.
 10. Add a short “not implemented yet” note to each public-facing doc that
     mentions future sessions.
 
