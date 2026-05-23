@@ -2,8 +2,20 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
+use serde_norway::Value as YamlValue;
+
+static YAML_JOBS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("jobs".to_owned()));
+static YAML_ON_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("on".to_owned()));
+static YAML_PULL_REQUEST_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("pull_request".to_owned()));
+static YAML_PUSH_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("push".to_owned()));
+static YAML_RUN_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("run".to_owned()));
+static YAML_STEPS_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("steps".to_owned()));
+static YAML_TAGS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("tags".to_owned()));
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -18,6 +30,7 @@ fn main() -> Result<()> {
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
+            println!("  check-release-planning verify cargo-dist planning stays non-publishing");
             println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
@@ -40,6 +53,9 @@ fn main() -> Result<()> {
         "check-placeholders" => {
             check_placeholders()?;
         }
+        "check-release-planning" => {
+            check_release_planning()?;
+        }
         "check-toolchain-pin" => {
             check_toolchain_pin()?;
         }
@@ -54,6 +70,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
+            println!("cargo xtask check-release-planning");
             println!("cargo xtask check-toolchain-pin");
         }
         unknown => bail!("unknown xtask command: {unknown}"),
@@ -109,6 +126,13 @@ fn check_license_files() -> Result<()> {
         "NOTICE".as_ref(),
         "Cargo.toml".as_ref(),
         workspace_crates(),
+    )
+}
+
+fn check_release_planning() -> Result<()> {
+    check_release_planning_inner(
+        "dist-workspace.toml".as_ref(),
+        ".github/workflows/release.yml".as_ref(),
     )
 }
 
@@ -387,6 +411,130 @@ fn check_deny_config_inner(deny_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) -> Result<()> {
+    let dist_config = parse_toml_file(dist_path)?;
+    let release_workflow = std::fs::read_to_string(release_workflow_path).with_context(|| {
+        format!(
+            "reading release workflow {}",
+            release_workflow_path.display()
+        )
+    })?;
+    let release_workflow_yaml: YamlValue =
+        serde_norway::from_str(&release_workflow).with_context(|| {
+            format!(
+                "parsing release workflow {}",
+                release_workflow_path.display()
+            )
+        })?;
+    let mut errors = Vec::new();
+
+    let cargo_dist_version = dist_config
+        .get("dist")
+        .and_then(|dist| dist.get("cargo-dist-version"))
+        .and_then(toml::Value::as_str);
+
+    if cargo_dist_version != Some("0.32.0") {
+        errors.push("dist.cargo-dist-version must stay pinned to 0.32.0".to_owned());
+    }
+
+    let pr_run_mode = dist_config
+        .get("dist")
+        .and_then(|dist| dist.get("pr-run-mode"))
+        .and_then(toml::Value::as_str);
+
+    if pr_run_mode != Some("plan") {
+        errors.push("dist.pr-run-mode must stay plan".to_owned());
+    }
+
+    if !workflow_has_pull_request(&release_workflow_yaml) {
+        errors.push("release workflow must run on pull_request".to_owned());
+    }
+
+    if workflow_has_push(&release_workflow_yaml) {
+        errors.push("release workflow must not run on push".to_owned());
+    }
+
+    if workflow_has_push_tags(&release_workflow_yaml) {
+        errors.push("release workflow must not run on tag pushes".to_owned());
+    }
+
+    let run_commands = workflow_run_commands(&release_workflow_yaml);
+
+    for forbidden in ["dist build", "dist host", "dist publish"] {
+        if run_commands
+            .iter()
+            .any(|run_command| run_command.contains(forbidden))
+        {
+            errors.push(format!(
+                "release workflow must not contain publishing command: {forbidden}"
+            ));
+        }
+    }
+
+    if !run_commands
+        .iter()
+        .any(|run_command| run_command.contains("dist plan"))
+    {
+        errors.push("release workflow must keep dist plan command".to_owned());
+    }
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        bail!(
+            "{} release planning issue(s) found: {}",
+            errors.len(),
+            errors.join("; ")
+        );
+    }
+
+    Ok(())
+}
+
+fn workflow_has_pull_request(workflow: &YamlValue) -> bool {
+    workflow_event(workflow, &YAML_PULL_REQUEST_KEY).is_some()
+}
+
+fn workflow_has_push(workflow: &YamlValue) -> bool {
+    workflow_event(workflow, &YAML_PUSH_KEY).is_some()
+}
+
+fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
+    workflow_event(workflow, &YAML_PUSH_KEY)
+        .and_then(YamlValue::as_mapping)
+        .and_then(|push| push.get(&*YAML_TAGS_KEY))
+        .is_some()
+}
+
+fn workflow_event<'a>(workflow: &'a YamlValue, event_key: &YamlValue) -> Option<&'a YamlValue> {
+    workflow
+        .as_mapping()
+        .and_then(|workflow| workflow.get(&*YAML_ON_KEY))
+        .and_then(YamlValue::as_mapping)
+        .and_then(|events| events.get(event_key))
+}
+
+fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
+    let Some(jobs) = workflow
+        .as_mapping()
+        .and_then(|workflow| workflow.get(&*YAML_JOBS_KEY))
+        .and_then(YamlValue::as_mapping)
+    else {
+        return Vec::new();
+    };
+
+    jobs.values()
+        .filter_map(YamlValue::as_mapping)
+        .filter_map(|job| job.get(&*YAML_STEPS_KEY))
+        .filter_map(YamlValue::as_sequence)
+        .flat_map(|steps| steps.iter())
+        .filter_map(YamlValue::as_mapping)
+        .filter_map(|step| step.get(&*YAML_RUN_KEY))
+        .filter_map(YamlValue::as_str)
+        .collect()
 }
 
 fn parse_toml_file(path: &Path) -> Result<toml::Value> {
@@ -679,8 +827,9 @@ mod tests {
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
         check_docs_contain, check_license_files_inner, check_placeholder_sources,
-        check_toolchain_pin_inner, collect_workspace_members, contains_crate_name,
-        has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
+        check_release_planning_inner, check_toolchain_pin_inner, collect_workspace_members,
+        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
+        workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -718,6 +867,23 @@ confidence-threshold = 0.8
 multiple-versions = "deny"
 wildcards = "allow"
 highlight = "all"
+"#;
+    const DIST_CONFIG: &str = r#"
+[dist]
+cargo-dist-version = "0.32.0"
+pr-run-mode = "plan"
+"#;
+    const RELEASE_PLAN_WORKFLOW: &str = r#"
+name: release
+
+on:
+  pull_request:
+
+jobs:
+  dist-plan:
+    steps:
+      - name: Plan release
+        run: dist plan
 "#;
 
     #[test]
@@ -1220,6 +1386,138 @@ license = "Apache-2.0"
             error
                 .to_string()
                 .contains("cargo-deny config issue(s) found")
+        );
+    }
+
+    #[test]
+    fn accepts_non_publishing_release_planning() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        check_release_planning_inner(&dist_path, &workflow_path)
+            .expect("non-publishing release planning should pass");
+    }
+
+    #[test]
+    fn rejects_release_workflow_tag_publish_trigger() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            "on:\n  push:\n    tags:\n      - \"v*\"\n  pull_request:\n\njobs:\n  plan:\n    steps:\n      - run: dist plan\n",
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("tag publishing trigger should fail before release milestone");
+
+        assert!(
+            error
+                .to_string()
+                .contains("release planning issue(s) found")
+        );
+    }
+
+    #[test]
+    fn rejects_release_workflow_without_pull_request_trigger() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("  pull_request:", ""),
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without pull_request trigger should fail");
+
+        assert!(error.to_string().contains("must run on pull_request"));
+    }
+
+    #[test]
+    fn rejects_release_workflow_publish_commands() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+
+        for command in ["dist build", "dist host", "dist publish"] {
+            let workflow_path = write_nested_source(
+                temp.path(),
+                ".github/workflows/release.yml",
+                &RELEASE_PLAN_WORKFLOW.replace("dist plan", command),
+            );
+
+            let error = check_release_planning_inner(&dist_path, &workflow_path)
+                .expect_err("release publishing command should fail before release milestone");
+
+            assert!(error.to_string().contains(command));
+        }
+    }
+
+    #[test]
+    fn rejects_release_workflow_without_dist_plan() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("dist plan", "cargo dist --help"),
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without dist plan should fail");
+
+        assert!(error.to_string().contains("dist plan"));
+    }
+
+    #[test]
+    fn rejects_release_cargo_dist_version_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                "cargo-dist-version = \"0.32.0\"",
+                "cargo-dist-version = \"0.33.0\"",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release cargo-dist-version drift should fail");
+
+        assert!(error.to_string().contains("cargo-dist-version"));
+    }
+
+    #[test]
+    fn rejects_release_planning_mode_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace("pr-run-mode = \"plan\"", "pr-run-mode = \"build\""),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release planning mode drift should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("release planning issue(s) found")
         );
     }
 

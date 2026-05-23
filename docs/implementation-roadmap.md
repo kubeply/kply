@@ -92,7 +92,8 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
 7. Keep `cargo deny` configuration strict enough for an open-source CLI.
    Enforce this with `cargo xtask check-deny-config`.
 8. Keep release planning config present but avoid publishing a binary until the
-   first useful workflow exists.
+   first useful workflow exists. Enforce this with
+   `cargo xtask check-release-planning`.
 9. Add a top-level roadmap link from `README.md` once this file is accepted.
 10. Add a short “not implemented yet” note to each public-facing doc that
     mentions future sessions.
