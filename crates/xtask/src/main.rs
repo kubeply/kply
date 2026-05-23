@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -409,8 +410,8 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
             release_workflow_path.display()
         )
     })?;
-    let release_workflow_yaml: serde_yaml::Value = serde_yaml::from_str(&release_workflow)
-        .with_context(|| {
+    let release_workflow_yaml: YamlValue =
+        serde_norway::from_str(&release_workflow).with_context(|| {
             format!(
                 "parsing release workflow {}",
                 release_workflow_path.display()
@@ -478,57 +479,60 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
     Ok(())
 }
 
-fn workflow_has_pull_request(workflow: &serde_yaml::Value) -> bool {
+fn workflow_has_pull_request(workflow: &YamlValue) -> bool {
     workflow_event(workflow, "pull_request").is_some()
 }
 
-fn workflow_has_push(workflow: &serde_yaml::Value) -> bool {
+fn workflow_has_push(workflow: &YamlValue) -> bool {
     workflow_event(workflow, "push").is_some()
 }
 
-fn workflow_has_push_tags(workflow: &serde_yaml::Value) -> bool {
+fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
+    let tags_key = YamlValue::String("tags".to_owned());
+
     workflow_event(workflow, "push")
-        .and_then(serde_yaml::Value::as_mapping)
-        .and_then(|push| yaml_mapping_get(push, "tags"))
+        .and_then(YamlValue::as_mapping)
+        .and_then(|push| yaml_mapping_get(push, &tags_key))
         .is_some()
 }
 
-fn workflow_event<'a>(
-    workflow: &'a serde_yaml::Value,
-    event: &str,
-) -> Option<&'a serde_yaml::Value> {
+fn workflow_event<'a>(workflow: &'a YamlValue, event: &str) -> Option<&'a YamlValue> {
+    let on_key = YamlValue::String("on".to_owned());
+    let event_key = YamlValue::String(event.to_owned());
+
     workflow
         .as_mapping()
-        .and_then(|workflow| yaml_mapping_get(workflow, "on"))
-        .and_then(serde_yaml::Value::as_mapping)
-        .and_then(|events| yaml_mapping_get(events, event))
+        .and_then(|workflow| yaml_mapping_get(workflow, &on_key))
+        .and_then(YamlValue::as_mapping)
+        .and_then(|events| yaml_mapping_get(events, &event_key))
 }
 
-fn workflow_run_commands(workflow: &serde_yaml::Value) -> Vec<&str> {
+fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
+    let jobs_key = YamlValue::String("jobs".to_owned());
+    let steps_key = YamlValue::String("steps".to_owned());
+    let run_key = YamlValue::String("run".to_owned());
+
     let Some(jobs) = workflow
         .as_mapping()
-        .and_then(|workflow| yaml_mapping_get(workflow, "jobs"))
-        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|workflow| yaml_mapping_get(workflow, &jobs_key))
+        .and_then(YamlValue::as_mapping)
     else {
         return Vec::new();
     };
 
     jobs.values()
-        .filter_map(serde_yaml::Value::as_mapping)
-        .filter_map(|job| yaml_mapping_get(job, "steps"))
-        .filter_map(serde_yaml::Value::as_sequence)
+        .filter_map(YamlValue::as_mapping)
+        .filter_map(|job| yaml_mapping_get(job, &steps_key))
+        .filter_map(YamlValue::as_sequence)
         .flat_map(|steps| steps.iter())
-        .filter_map(serde_yaml::Value::as_mapping)
-        .filter_map(|step| yaml_mapping_get(step, "run"))
-        .filter_map(serde_yaml::Value::as_str)
+        .filter_map(YamlValue::as_mapping)
+        .filter_map(|step| yaml_mapping_get(step, &run_key))
+        .filter_map(YamlValue::as_str)
         .collect()
 }
 
-fn yaml_mapping_get<'a>(
-    mapping: &'a serde_yaml::Mapping,
-    key: &str,
-) -> Option<&'a serde_yaml::Value> {
-    mapping.get(serde_yaml::Value::String(key.to_owned()))
+fn yaml_mapping_get<'a>(mapping: &'a YamlMapping, key: &YamlValue) -> Option<&'a YamlValue> {
+    mapping.get(key)
 }
 
 fn parse_toml_file(path: &Path) -> Result<toml::Value> {
