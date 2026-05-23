@@ -1,5 +1,6 @@
 //! Repository automation placeholder for Kply development tasks.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -138,12 +139,25 @@ fn check_crate_inventory_docs_inner(
         .iter()
         .map(|workspace_crate| workspace_crate.path)
         .collect::<Vec<_>>();
+    let workspace_member_set = workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let expected_member_set = expected_members.iter().copied().collect::<BTreeSet<_>>();
 
-    if workspace_members != expected_members {
+    if workspace_member_set != expected_member_set {
+        let missing_members = expected_member_set
+            .difference(&workspace_member_set)
+            .copied()
+            .collect::<Vec<_>>();
+        let unexpected_members = workspace_member_set
+            .difference(&expected_member_set)
+            .copied()
+            .collect::<Vec<_>>();
         bail!(
-            "workspace crate inventory does not match Cargo.toml members: expected {:?}, found {:?}",
-            expected_members,
-            workspace_members
+            "workspace crate inventory does not match Cargo.toml members: missing {:?}, unexpected {:?}",
+            missing_members,
+            unexpected_members
         );
     }
 
@@ -612,6 +626,26 @@ members = [
             test_workspace_crates(),
         )
         .expect("complete crate inventory docs should pass");
+    }
+
+    #[test]
+    fn accepts_manifest_members_in_different_order() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace]
+members = [
+    "crates/xtask",
+    "crates/kply-cli",
+]
+"#,
+        );
+        let agents_path = write_source(temp.path(), "AGENTS.md", "kply-cli\nxtask\n");
+
+        check_crate_inventory_docs_inner(&manifest_path, [&agents_path], test_workspace_crates())
+            .expect("manifest member order should not matter");
     }
 
     #[test]
