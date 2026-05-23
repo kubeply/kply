@@ -1,3 +1,5 @@
+//! Repository automation placeholder for Kply development tasks.
+
 use anyhow::{Result, bail};
 
 fn main() -> Result<()> {

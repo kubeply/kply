@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply 0.1.0
+Placeholder CLI. Roadmap and commands are intentionally pending.
+

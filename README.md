@@ -10,25 +10,14 @@ promoted.
 
 ## Status
 
-Early scaffold. The current code establishes the Rust workspace, CLI shape,
-session model, tests, CI, release packaging, and OpenSpec context. Kubernetes
-execution adapters are intentionally thin until the first workflow is validated.
-
-## Example
-
-```bash
-kply session create backend-api \
-  --namespace shop \
-  --image ghcr.io/acme/backend:agent-fix-123 \
-  --route-header x-kply-session \
-  --route-value fix-123 \
-  --dry-run \
-  --json
-```
+Early scaffold. The current code intentionally contains placeholders only:
+workspace structure, crate boundaries, basic CLI entrypoint, tests, CI, release
+planning, and OpenSpec context.
 
 ## Product Primitive
 
-A Kply session is a temporary, scoped workspace for an agent:
+A future Kply session is expected to be a temporary, scoped workspace for an
+agent:
 
 - target workload
 - proposed image or config change

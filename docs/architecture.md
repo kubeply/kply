@@ -1,7 +1,7 @@
 # Architecture
 
-Kply starts as a CLI-first safety layer for AI agents working near
-Kubernetes.
+Kply starts as a CLI-first scaffold for a future safety layer around AI agents
+working near Kubernetes.
 
 ## Actors
 
@@ -10,26 +10,26 @@ AI coding agent / human
         |
         | runs kply commands
         v
-kply CLI
+kply CLI placeholder
         |
         | creates scoped sessions and checks
         v
 Kubernetes API / routing layer
         |
         v
-sandbox workloads, temporary routes, reports, cleanup
+future sandbox workloads, temporary routes, reports, cleanup
 ```
 
 The first interface is the CLI because agents already operate terminals well.
 MCP can be added later as another adapter over the same core.
 
-## Session
+## Future Session
 
-A session is the core primitive. It represents a bounded attempt to test a
-change against Kubernetes-like reality without giving an agent direct production
-mutation access.
+A session is the expected core primitive. It will represent a bounded attempt
+to test a change against Kubernetes-like reality without giving an agent direct
+production mutation access.
 
-Initial session fields:
+Candidate session fields:
 
 - `id`
 - `workload`
@@ -53,14 +53,13 @@ kply-cli
 
 Core does not depend on Kubernetes client libraries or CLI output.
 
-## First Workflow
+## Current Workflow
 
-The first workflow is dry-run session planning:
+The current workflow is intentionally minimal:
 
-1. Accept target workload and proposed image.
-2. Build a session plan.
-3. Render human or JSON output.
-4. Snapshot-test output for agent compatibility.
+1. Preserve crate boundaries.
+2. Print placeholder CLI output.
+3. Keep tests and CI green.
 
-Kubernetes execution will be added behind adapters once the session contract is
-stable.
+Real session planning and Kubernetes execution will be added only after the
+roadmap is defined.

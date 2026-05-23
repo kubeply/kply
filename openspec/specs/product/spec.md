@@ -7,20 +7,18 @@ tool.
 
 ## Requirements
 
-### Requirement: Kply exposes safe sessions to agents
+### Requirement: Kply defines safe sessions for agents
 
-Kply SHALL expose a CLI that AI coding agents and humans can use to create
-safe Kubernetes-oriented sessions. The CLI SHALL prefer constrained commands and
-auditable output over raw cluster mutation.
+Kply SHALL define a CLI architecture that AI coding agents and humans can use
+to create safe Kubernetes-oriented sessions once the roadmap is implemented.
+The CLI SHALL prefer constrained commands and auditable output over raw cluster
+mutation.
 
-#### Scenario: Agent creates a dry-run session
+#### Scenario: Placeholder CLI is run
 
-- **WHEN** an agent creates a session with a workload, namespace, proposed image,
-  and route header
-- **THEN** Kply returns a deterministic session plan
-- **AND** the plan identifies the workload, namespace, sandbox image, route
-  header, initial checks, and cleanup expectation
-- **AND** no Kubernetes resource is mutated when `--dry-run` is used
+- **WHEN** an agent or human runs the placeholder CLI
+- **THEN** Kply returns deterministic placeholder output
+- **AND** no Kubernetes resource is mutated
 
 ### Requirement: Kply remains a boundary, not a CD platform
 
