@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/kubeply-checks",
+    "crates/kubeply-cli",
+    "crates/kubeply-config",
+    "crates/kubeply-core",
+    "crates/kubeply-k8s",
+    "crates/kubeply-routing",
+    "crates/kubeply-test",
+    "crates/xtask",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/kubeply/kubeply"
+authors = ["Kubeply"]
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+assert_cmd = "2.1.1"
+clap = { version = "4.5.51", features = ["derive"] }
+insta = { version = "1.44.0", features = ["json"] }
+kubeply-checks = { path = "crates/kubeply-checks" }
+kubeply-config = { path = "crates/kubeply-config" }
+kubeply-core = { path = "crates/kubeply-core" }
+kubeply-k8s = { path = "crates/kubeply-k8s" }
+kubeply-routing = { path = "crates/kubeply-routing" }
+kubeply-test = { path = "crates/kubeply-test" }
+predicates = "3.1.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+tempfile = "3.23.0"
+time = { version = "0.3.44", features = ["formatting", "macros", "parsing", "serde"] }
+uuid = { version = "1.18.1", features = ["v4", "serde"] }
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

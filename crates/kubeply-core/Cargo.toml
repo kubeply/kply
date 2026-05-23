@@ -1,0 +1,13 @@
+[package]
+name = "kubeply-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+time.workspace = true
+uuid.workspace = true
+

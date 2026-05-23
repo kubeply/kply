@@ -1,0 +1,7 @@
+/target/
+/.idea/
+/.vscode/
+*.swp
+.DS_Store
+*.log
+*.snap.new

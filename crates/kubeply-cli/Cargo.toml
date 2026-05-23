@@ -1,0 +1,23 @@
+[package]
+name = "kubeply-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kubeply"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+kubeply-checks.workspace = true
+kubeply-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+kubeply-test.workspace = true
+predicates.workspace = true

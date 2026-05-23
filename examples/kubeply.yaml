@@ -1,0 +1,5 @@
+apps:
+  - name: backend-api
+    namespace: shop
+    workload: deployment/backend-api
+    default_route_header: x-kubeply-session
