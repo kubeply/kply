@@ -11,11 +11,15 @@ fn main() -> Result<()> {
     match command.as_str() {
         "help" => {
             println!("available tasks:");
+            println!("  check-crate-inventory-docs verify docs list workspace crates");
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
+        }
+        "check-crate-inventory-docs" => {
+            check_crate_inventory_docs()?;
         }
         "check-module-docs" => {
             check_module_docs()?;
@@ -31,6 +35,7 @@ fn main() -> Result<()> {
             println!("cargo check --all-targets --all-features --locked");
             println!("cargo clippy --all-targets --all-features --locked -- -D warnings");
             println!("cargo test --all-targets --all-features --locked");
+            println!("cargo xtask check-crate-inventory-docs");
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
@@ -70,6 +75,131 @@ fn check_module_docs() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn check_crate_inventory_docs() -> Result<()> {
+    let doc_paths = ["AGENTS.md", "CONTRIBUTING.md", "crates/README.md"];
+
+    check_crate_inventory_docs_inner("Cargo.toml".as_ref(), doc_paths, workspace_crates())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkspaceCrate {
+    name: &'static str,
+    path: &'static str,
+}
+
+fn workspace_crates() -> &'static [WorkspaceCrate] {
+    &[
+        WorkspaceCrate {
+            name: "kply-checks",
+            path: "crates/kply-checks",
+        },
+        WorkspaceCrate {
+            name: "kply-cli",
+            path: "crates/kply-cli",
+        },
+        WorkspaceCrate {
+            name: "kply-config",
+            path: "crates/kply-config",
+        },
+        WorkspaceCrate {
+            name: "kply-core",
+            path: "crates/kply-core",
+        },
+        WorkspaceCrate {
+            name: "kply-k8s",
+            path: "crates/kply-k8s",
+        },
+        WorkspaceCrate {
+            name: "kply-routing",
+            path: "crates/kply-routing",
+        },
+        WorkspaceCrate {
+            name: "kply-test",
+            path: "crates/kply-test",
+        },
+        WorkspaceCrate {
+            name: "xtask",
+            path: "crates/xtask",
+        },
+    ]
+}
+
+fn check_crate_inventory_docs_inner(
+    manifest_path: &Path,
+    doc_paths: impl IntoIterator<Item = impl AsRef<Path>>,
+    crates: &[WorkspaceCrate],
+) -> Result<()> {
+    let manifest_source = std::fs::read_to_string(manifest_path)
+        .with_context(|| format!("reading workspace manifest {}", manifest_path.display()))?;
+    let workspace_members = collect_workspace_members(&manifest_source);
+    let expected_members = crates
+        .iter()
+        .map(|workspace_crate| workspace_crate.path)
+        .collect::<Vec<_>>();
+
+    if workspace_members != expected_members {
+        bail!(
+            "workspace crate inventory does not match Cargo.toml members: expected {:?}, found {:?}",
+            expected_members,
+            workspace_members
+        );
+    }
+
+    let mut missing_entries = Vec::new();
+
+    for doc_path in doc_paths {
+        let doc_path = doc_path.as_ref();
+        let source = std::fs::read_to_string(doc_path)
+            .with_context(|| format!("reading crate inventory doc {}", doc_path.display()))?;
+
+        for workspace_crate in crates {
+            if !source.contains(workspace_crate.name) {
+                missing_entries.push((doc_path.to_path_buf(), workspace_crate.name));
+            }
+        }
+    }
+
+    if !missing_entries.is_empty() {
+        for (doc_path, crate_name) in &missing_entries {
+            eprintln!(
+                "crate inventory entry missing in {}: {crate_name}",
+                doc_path.display()
+            );
+        }
+        bail!("{} crate inventory entries missing", missing_entries.len());
+    }
+
+    Ok(())
+}
+
+fn collect_workspace_members(manifest_source: &str) -> Vec<String> {
+    let mut members = Vec::new();
+    let mut in_members = false;
+
+    for line in manifest_source.lines() {
+        let line = line.trim();
+
+        if line.starts_with("members = [") {
+            in_members = true;
+            continue;
+        }
+
+        if in_members && line.starts_with(']') {
+            break;
+        }
+
+        if in_members
+            && let Some(member) = line
+                .strip_prefix('"')
+                .and_then(|line| line.split('"').next())
+        {
+            members.push(member.to_owned());
+        }
+    }
+
+    members
 }
 
 fn collect_crate_sources(root: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
@@ -243,8 +373,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        DocExpectation, check_docs_contain, check_placeholder_sources,
-        has_non_placeholder_public_item, has_placeholder_marker,
+        DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_docs_contain,
+        check_placeholder_sources, collect_workspace_members, has_non_placeholder_public_item,
+        has_placeholder_marker,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -400,6 +531,121 @@ pub fn
                 .to_string()
                 .contains("1 placeholder documentation phrase(s) missing")
         );
+    }
+
+    #[test]
+    fn collects_workspace_members_from_manifest() {
+        let manifest = r#"
+[workspace]
+members = [
+    "crates/kply-cli",
+    "crates/xtask",
+]
+resolver = "3"
+"#;
+
+        assert_eq!(
+            collect_workspace_members(manifest),
+            vec!["crates/kply-cli", "crates/xtask"]
+        );
+    }
+
+    #[test]
+    fn accepts_docs_with_complete_crate_inventory() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace]
+members = [
+    "crates/kply-cli",
+    "crates/xtask",
+]
+"#,
+        );
+        let agents_path = write_source(temp.path(), "AGENTS.md", "kply-cli\nxtask\n");
+        let contributing_path = write_source(temp.path(), "CONTRIBUTING.md", "kply-cli\nxtask\n");
+        let crates_path = write_source(temp.path(), "crates.md", "kply-cli\nxtask\n");
+
+        check_crate_inventory_docs_inner(
+            &manifest_path,
+            [&agents_path, &contributing_path, &crates_path],
+            test_workspace_crates(),
+        )
+        .expect("complete crate inventory docs should pass");
+    }
+
+    #[test]
+    fn rejects_docs_missing_crate_inventory_entries() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace]
+members = [
+    "crates/kply-cli",
+    "crates/xtask",
+]
+"#,
+        );
+        let agents_path = write_source(temp.path(), "AGENTS.md", "kply-cli\n");
+
+        let error = check_crate_inventory_docs_inner(
+            &manifest_path,
+            [&agents_path],
+            test_workspace_crates(),
+        )
+        .expect_err("missing crate inventory entry should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("crate inventory entries missing")
+        );
+    }
+
+    #[test]
+    fn rejects_manifest_inventory_mismatches() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace]
+members = [
+    "crates/kply-cli",
+]
+"#,
+        );
+        let agents_path = write_source(temp.path(), "AGENTS.md", "kply-cli\nxtask\n");
+
+        let error = check_crate_inventory_docs_inner(
+            &manifest_path,
+            [&agents_path],
+            test_workspace_crates(),
+        )
+        .expect_err("manifest inventory mismatch should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not match Cargo.toml members")
+        );
+    }
+
+    fn test_workspace_crates() -> &'static [WorkspaceCrate] {
+        &[
+            WorkspaceCrate {
+                name: "kply-cli",
+                path: "crates/kply-cli",
+            },
+            WorkspaceCrate {
+                name: "xtask",
+                path: "crates/xtask",
+            },
+        ]
     }
 
     fn write_source(directory: &Path, filename: &str, source: &str) -> std::path::PathBuf {

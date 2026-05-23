@@ -9,6 +9,7 @@ cargo fmt --all -- --check
 cargo check --all-targets --all-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
+cargo xtask check-crate-inventory-docs
 cargo xtask check-module-docs
 cargo xtask check-placeholder-docs
 cargo xtask check-placeholders

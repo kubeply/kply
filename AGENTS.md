@@ -52,6 +52,17 @@ Kubernetes wrapper dependency in core session logic.
   the lockfile diff scoped and prefer `cargo update --package <name> --precise
   <version>`.
 
+## Workspace Crate Inventory
+
+- `kply-checks`: runtime verification checks and report generation.
+- `kply-cli`: command parsing and user/agent-facing output.
+- `kply-config`: project and cluster config parsing.
+- `kply-core`: domain model, session state, audit events.
+- `kply-k8s`: Kubernetes discovery and mutation adapters.
+- `kply-routing`: Gateway, ingress, mesh, and fallback routing adapters.
+- `kply-test`: shared test helpers.
+- `xtask`: repository automation tasks.
+
 ## Validation
 
 ```bash
@@ -59,6 +70,7 @@ cargo fmt --all -- --check
 cargo check --all-targets --all-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
+cargo xtask check-crate-inventory-docs
 cargo xtask check-module-docs
 cargo xtask check-placeholder-docs
 cargo xtask check-placeholders

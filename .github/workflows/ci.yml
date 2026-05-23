@@ -56,6 +56,9 @@ jobs:
       - name: Test
         run: cargo test --all-targets --all-features --locked
 
+      - name: Check crate inventory docs
+        run: cargo xtask check-crate-inventory-docs
+
       - name: Check module docs
         run: cargo xtask check-module-docs
 
