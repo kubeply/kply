@@ -139,6 +139,7 @@ Goal: make future CLI, config, manifest, and Kubernetes behavior easy to verify.
    - check reports.
    - route plans.
 5. Add fixture docs explaining when to use snapshots versus direct assertions.
+   Enforce this with `cargo xtask check-fixture-testing-docs`.
 6. Add test helpers for temporary directories.
 7. Add test helpers for fake kubeconfig paths.
 8. Add test helpers for checking exit codes.

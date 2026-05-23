@@ -28,6 +28,7 @@ fn main() -> Result<()> {
             println!("  check-deny-config verify cargo-deny policy strictness");
             println!("  check-fixture-directories verify fixture directory skeleton");
             println!("  check-fixture-naming-docs verify fixture naming docs");
+            println!("  check-fixture-testing-docs verify fixture testing guidance");
             println!("  check-future-session-docs verify future session docs are explicit");
             println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
@@ -50,6 +51,9 @@ fn main() -> Result<()> {
         }
         "check-fixture-naming-docs" => {
             check_fixture_naming_docs()?;
+        }
+        "check-fixture-testing-docs" => {
+            check_fixture_testing_docs()?;
         }
         "check-future-session-docs" => {
             check_future_session_docs()?;
@@ -84,6 +88,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-deny-config");
             println!("cargo xtask check-fixture-directories");
             println!("cargo xtask check-fixture-naming-docs");
+            println!("cargo xtask check-fixture-testing-docs");
             println!("cargo xtask check-future-session-docs");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
@@ -155,6 +160,10 @@ fn check_fixture_directories() -> Result<()> {
 
 fn check_fixture_naming_docs() -> Result<()> {
     check_fixture_naming_docs_inner("fixtures/README.md".as_ref())
+}
+
+fn check_fixture_testing_docs() -> Result<()> {
+    check_fixture_testing_docs_inner("fixtures/README.md".as_ref())
 }
 
 fn check_future_session_docs() -> Result<()> {
@@ -922,6 +931,18 @@ fn check_fixture_naming_docs_inner(fixture_readme_path: &Path) -> Result<()> {
     }])
 }
 
+fn check_fixture_testing_docs_inner(fixture_readme_path: &Path) -> Result<()> {
+    check_docs_contain([DocExpectation {
+        path: fixture_readme_path.into(),
+        required_phrases: vec![
+            "Snapshot Versus Direct Assertions".into(),
+            "Use snapshots when".into(),
+            "Use direct assertions when".into(),
+            "Prefer direct assertions for invariants and snapshots for reviewable artifacts".into(),
+        ],
+    }])
+}
+
 fn markdown_has_heading_outside_code_block(source: &str, heading: &str) -> bool {
     let mut in_fenced_code_block = false;
 
@@ -989,10 +1010,11 @@ mod tests {
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
         check_docs_contain, check_fixture_directories_inner, check_fixture_naming_docs_inner,
-        check_future_session_docs_inner, check_license_files_inner, check_placeholder_sources,
-        check_readme_roadmap_link_inner, check_release_planning_inner, check_toolchain_pin_inner,
-        collect_workspace_members, contains_crate_name, has_non_placeholder_public_item,
-        has_placeholder_marker, workflow_installs_toolchain,
+        check_fixture_testing_docs_inner, check_future_session_docs_inner,
+        check_license_files_inner, check_placeholder_sources, check_readme_roadmap_link_inner,
+        check_release_planning_inner, check_toolchain_pin_inner, collect_workspace_members,
+        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
+        workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1287,6 +1309,30 @@ pub fn
 
         let error = check_fixture_naming_docs_inner(&readme_path)
             .expect_err("fixture naming docs missing patterns should fail");
+
+        assert!(error.to_string().contains("placeholder documentation"));
+    }
+
+    #[test]
+    fn accepts_fixture_testing_docs() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "## Snapshot Versus Direct Assertions\n\nUse snapshots when output is reviewable.\nUse direct assertions when behavior is small.\nPrefer direct assertions for invariants and snapshots for reviewable artifacts.\n",
+        );
+
+        check_fixture_testing_docs_inner(&readme_path)
+            .expect("fixture testing docs with required guidance should pass");
+    }
+
+    #[test]
+    fn rejects_fixture_testing_docs_missing_guidance() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(temp.path(), "README.md", "## Fixtures\n");
+
+        let error = check_fixture_testing_docs_inner(&readme_path)
+            .expect_err("fixture testing docs missing guidance should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
     }
