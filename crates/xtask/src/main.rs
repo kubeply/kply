@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -163,7 +163,8 @@ fn check_docs_contain(docs: impl IntoIterator<Item = DocExpectation>) -> Result<
     let mut missing_phrases = Vec::new();
 
     for doc in docs {
-        let source = std::fs::read_to_string(&doc.path)?;
+        let source = std::fs::read_to_string(&doc.path)
+            .with_context(|| format!("reading documentation file {}", doc.path.display()))?;
 
         let missing_for_doc: Vec<_> = doc
             .required_phrases
