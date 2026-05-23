@@ -1,3 +1,5 @@
+//! CLI placeholder behavior tests for Kply.
+
 use kply_test::kply_cmd;
 
 #[test]

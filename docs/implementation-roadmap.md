@@ -75,6 +75,7 @@ These decisions are fixed unless implementation proves they are wrong.
 Goal: preserve a clean, trustworthy scaffold before implementation starts.
 
 1. Keep every crate source file documented with a one-line module docstring.
+   Enforce this with `cargo xtask check-module-docs`.
 2. Keep placeholder marker types in non-CLI crates until their roadmap work
    starts.
 3. Keep `README.md`, `docs/architecture.md`, and `docs/product.md` explicit
