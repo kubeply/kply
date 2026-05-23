@@ -56,5 +56,8 @@ jobs:
       - name: Test
         run: cargo test --all-targets --all-features --locked
 
+      - name: Check module docs
+        run: cargo xtask check-module-docs
+
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2
