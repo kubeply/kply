@@ -90,6 +90,7 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
 6. Keep the local Rust toolchain pinned through `rust-toolchain.toml`. Enforce
    this with `cargo xtask check-toolchain-pin`.
 7. Keep `cargo deny` configuration strict enough for an open-source CLI.
+   Enforce this with `cargo xtask check-deny-config`.
 8. Keep release planning config present but avoid publishing a binary until the
    first useful workflow exists.
 9. Add a top-level roadmap link from `README.md` once this file is accepted.
