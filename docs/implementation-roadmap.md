@@ -80,7 +80,8 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
    starts. Enforce product crate placeholders with
    `cargo xtask check-placeholders`.
 3. Keep `README.md`, `docs/architecture.md`, and `docs/product.md` explicit
-   that behavior is placeholder-only.
+   that behavior is placeholder-only. Enforce this with
+   `cargo xtask check-placeholder-docs`.
 4. Keep `AGENTS.md`, `CONTRIBUTING.md`, and `crates/README.md` aligned with the
    workspace crate inventory.
 5. Keep the Apache-2.0 license and notice files.

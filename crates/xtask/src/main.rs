@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -12,12 +12,16 @@ fn main() -> Result<()> {
         "help" => {
             println!("available tasks:");
             println!("  check-module-docs  verify crate source files start with module docs");
+            println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
         }
         "check-module-docs" => {
             check_module_docs()?;
+        }
+        "check-placeholder-docs" => {
+            check_placeholder_docs()?;
         }
         "check-placeholders" => {
             check_placeholders()?;
@@ -28,6 +32,7 @@ fn main() -> Result<()> {
             println!("cargo clippy --all-targets --all-features --locked -- -D warnings");
             println!("cargo test --all-targets --all-features --locked");
             println!("cargo xtask check-module-docs");
+            println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
         }
         unknown => bail!("unknown xtask command: {unknown}"),
@@ -124,6 +129,74 @@ fn check_placeholder_sources(
     Ok(())
 }
 
+fn check_placeholder_docs() -> Result<()> {
+    let docs = [
+        DocExpectation {
+            path: "README.md".into(),
+            required_phrases: vec!["placeholders only".into(), "future Kply session".into()],
+        },
+        DocExpectation {
+            path: "docs/architecture.md".into(),
+            required_phrases: vec![
+                "kply CLI placeholder".into(),
+                "Real session planning and Kubernetes execution".into(),
+            ],
+        },
+        DocExpectation {
+            path: "docs/product.md".into(),
+            required_phrases: vec![
+                "roadmap hypothesis, not implemented behavior".into(),
+                "placeholder-only".into(),
+            ],
+        },
+    ];
+
+    check_docs_contain(docs)
+}
+
+struct DocExpectation {
+    path: PathBuf,
+    required_phrases: Vec<String>,
+}
+
+fn check_docs_contain(docs: impl IntoIterator<Item = DocExpectation>) -> Result<()> {
+    let mut missing_phrases = Vec::new();
+
+    for doc in docs {
+        let source = std::fs::read_to_string(&doc.path)
+            .with_context(|| format!("reading documentation file {}", doc.path.display()))?;
+
+        let missing_for_doc: Vec<_> = doc
+            .required_phrases
+            .into_iter()
+            .filter(|phrase| !source.contains(phrase))
+            .collect();
+
+        if !missing_for_doc.is_empty() {
+            missing_phrases.push((doc.path, missing_for_doc));
+        }
+    }
+
+    if !missing_phrases.is_empty() {
+        let phrase_count: usize = missing_phrases
+            .iter()
+            .map(|(_, phrases)| phrases.len())
+            .sum();
+
+        for (path, phrases) in &missing_phrases {
+            for phrase in phrases {
+                eprintln!(
+                    "placeholder documentation phrase missing in {}: {phrase}",
+                    path.display()
+                );
+            }
+        }
+        bail!("{phrase_count} placeholder documentation phrase(s) missing");
+    }
+
+    Ok(())
+}
+
 fn has_placeholder_marker(source: &str) -> bool {
     source.lines().any(|line| {
         starts_public_keyword(line.trim_start(), "pub struct") && line.contains("Placeholder")
@@ -170,7 +243,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        check_placeholder_sources, has_non_placeholder_public_item, has_placeholder_marker,
+        DocExpectation, check_docs_contain, check_placeholder_sources,
+        has_non_placeholder_public_item, has_placeholder_marker,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -289,6 +363,43 @@ pub fn
 ";
 
         assert!(has_non_placeholder_public_item(source));
+    }
+
+    #[test]
+    fn accepts_docs_with_required_placeholder_phrases() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let doc_path = write_source(
+            temp.path(),
+            "README.md",
+            "This scaffold contains placeholders only for a future Kply session.",
+        );
+
+        check_docs_contain([DocExpectation {
+            path: doc_path,
+            required_phrases: vec![
+                "placeholders only".to_owned(),
+                "future Kply session".to_owned(),
+            ],
+        }])
+        .expect("doc should include required placeholder phrases");
+    }
+
+    #[test]
+    fn rejects_docs_missing_placeholder_phrases() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let doc_path = write_source(temp.path(), "README.md", "This doc overclaims behavior.");
+
+        let error = check_docs_contain([DocExpectation {
+            path: doc_path,
+            required_phrases: vec!["placeholders only".to_owned()],
+        }])
+        .expect_err("doc missing placeholder phrase should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("1 placeholder documentation phrase(s) missing")
+        );
     }
 
     fn write_source(directory: &Path, filename: &str, source: &str) -> std::path::PathBuf {
