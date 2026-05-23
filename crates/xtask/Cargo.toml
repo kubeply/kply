@@ -9,3 +9,5 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
