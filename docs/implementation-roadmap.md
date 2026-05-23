@@ -77,7 +77,8 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
 1. Keep every crate source file documented with a one-line module docstring.
    Enforce this with `cargo xtask check-module-docs`.
 2. Keep placeholder marker types in non-CLI crates until their roadmap work
-   starts.
+   starts. Enforce product crate placeholders with
+   `cargo xtask check-placeholders`.
 3. Keep `README.md`, `docs/architecture.md`, and `docs/product.md` explicit
    that behavior is placeholder-only.
 4. Keep `AGENTS.md`, `CONTRIBUTING.md`, and `crates/README.md` aligned with the

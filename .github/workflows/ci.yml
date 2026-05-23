@@ -59,5 +59,8 @@ jobs:
       - name: Check module docs
         run: cargo xtask check-module-docs
 
+      - name: Check placeholders
+        run: cargo xtask check-placeholders
+
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2
