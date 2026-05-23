@@ -329,6 +329,7 @@ dependencies = [
  "insta",
  "regex",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use assert_cmd::Command;
 use regex::Regex;
 use serde_json::Value;
+use tempfile::TempDir;
 
 pub use insta;
 
@@ -43,6 +44,37 @@ pub fn fixture_root() -> PathBuf {
 /// Resolve a path inside the repository fixture root.
 pub fn fixture_path(relative_path: impl AsRef<Path>) -> PathBuf {
     fixture_root().join(relative_path)
+}
+
+/// Create a temporary workspace directory for tests.
+pub fn temp_workspace() -> TempDir {
+    tempfile::Builder::new()
+        .prefix("kply-test-")
+        .tempdir()
+        .expect("temporary workspace should be created")
+}
+
+/// Create a directory path inside a temporary workspace.
+pub fn temp_workspace_dir(workspace: &TempDir, relative_path: impl AsRef<Path>) -> PathBuf {
+    let path = workspace.path().join(relative_path);
+    std::fs::create_dir_all(&path).expect("temporary workspace directory should be created");
+    path
+}
+
+/// Write a UTF-8 fixture file inside a temporary workspace.
+pub fn write_temp_file(
+    workspace: &TempDir,
+    relative_path: impl AsRef<Path>,
+    contents: impl AsRef<str>,
+) -> PathBuf {
+    let path = workspace.path().join(relative_path);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("temporary file parent should be created");
+    }
+
+    std::fs::write(&path, contents.as_ref()).expect("temporary file should be written");
+    path
 }
 
 /// Run `kply` and return UTF-8 stdout for integration tests.
@@ -162,7 +194,7 @@ mod tests {
     use super::{
         fixture_path, fixture_root, kply_stdout, normalize_absolute_paths, normalize_generated_ids,
         normalize_kubernetes_object_names, normalize_output, normalize_timestamps,
-        parse_json_output,
+        parse_json_output, temp_workspace, temp_workspace_dir, write_temp_file,
     };
 
     #[test]
@@ -177,6 +209,20 @@ mod tests {
         let value = parse_json_output(output);
 
         assert_eq!(value["name"], "kply");
+    }
+
+    #[test]
+    fn creates_temporary_workspace_directories_and_files() {
+        let workspace = temp_workspace();
+
+        let directory = temp_workspace_dir(&workspace, "config/nested");
+        let file = write_temp_file(&workspace, "config/nested/kply.yaml", "name: demo\n");
+
+        assert!(directory.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(file).expect("temporary file should be readable"),
+            "name: demo\n"
+        );
     }
 
     #[test]
