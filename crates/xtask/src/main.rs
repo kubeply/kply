@@ -862,6 +862,58 @@ license = "Apache-2.0"
     }
 
     #[test]
+    fn rejects_missing_notice_phrase() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
+        let notice_path = write_source(temp.path(), "NOTICE", "Kply\n");
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "Apache-2.0"
+"#,
+        );
+        write_crate_manifests(temp.path(), "license.workspace = true");
+
+        let error = check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect_err("missing notice phrase should fail");
+
+        assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
+    fn rejects_workspace_manifest_without_apache_license() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
+        let notice_path = write_source(temp.path(), "NOTICE", NOTICE_SOURCE);
+        let manifest_path = write_source(
+            temp.path(),
+            "Cargo.toml",
+            r#"
+[workspace.package]
+license = "MIT"
+"#,
+        );
+        write_crate_manifests(temp.path(), "license.workspace = true");
+
+        let error = check_license_files_inner(
+            &license_path,
+            &notice_path,
+            &manifest_path,
+            test_workspace_crates(),
+        )
+        .expect_err("non-Apache workspace license should fail");
+
+        assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
     fn rejects_crate_manifest_without_workspace_license_inheritance() {
         let temp = TempDir::new().expect("temp dir should be created");
         let license_path = write_source(temp.path(), "LICENSE", APACHE_LICENSE_SOURCE);
