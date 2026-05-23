@@ -14,6 +14,8 @@ Early scaffold. The current code intentionally contains placeholders only:
 workspace structure, crate boundaries, basic CLI entrypoint, tests, CI, release
 planning, and OpenSpec context.
 
+Sessions are not implemented yet.
+
 ## Product Primitive
 
 A future Kply session is expected to be a temporary, scoped workspace for an

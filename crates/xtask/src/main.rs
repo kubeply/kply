@@ -26,6 +26,7 @@ fn main() -> Result<()> {
             println!("available tasks:");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
             println!("  check-deny-config verify cargo-deny policy strictness");
+            println!("  check-future-session-docs verify future session docs are explicit");
             println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
@@ -41,6 +42,9 @@ fn main() -> Result<()> {
         }
         "check-deny-config" => {
             check_deny_config()?;
+        }
+        "check-future-session-docs" => {
+            check_future_session_docs()?;
         }
         "check-license-files" => {
             check_license_files()?;
@@ -70,6 +74,7 @@ fn main() -> Result<()> {
             println!("cargo test --all-targets --all-features --locked");
             println!("cargo xtask check-crate-inventory-docs");
             println!("cargo xtask check-deny-config");
+            println!("cargo xtask check-future-session-docs");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
@@ -132,6 +137,34 @@ fn check_license_files() -> Result<()> {
         "Cargo.toml".as_ref(),
         workspace_crates(),
     )
+}
+
+fn check_future_session_docs() -> Result<()> {
+    check_future_session_docs_inner([
+        "README.md".into(),
+        "docs/architecture.md".into(),
+        "docs/product.md".into(),
+    ])
+}
+
+fn check_future_session_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
+    let [readme_path, architecture_path, product_path] = doc_paths;
+    let docs = [
+        DocExpectation {
+            path: readme_path,
+            required_phrases: vec!["Sessions are not implemented yet.".into()],
+        },
+        DocExpectation {
+            path: architecture_path,
+            required_phrases: vec!["Sessions are not implemented yet.".into()],
+        },
+        DocExpectation {
+            path: product_path,
+            required_phrases: vec!["Sessions are not implemented yet.".into()],
+        },
+    ];
+
+    check_docs_contain(docs)
 }
 
 fn check_release_planning() -> Result<()> {
@@ -882,10 +915,10 @@ mod tests {
 
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
-        check_docs_contain, check_license_files_inner, check_placeholder_sources,
-        check_readme_roadmap_link_inner, check_release_planning_inner, check_toolchain_pin_inner,
-        collect_workspace_members, contains_crate_name, has_non_placeholder_public_item,
-        has_placeholder_marker, workflow_installs_toolchain,
+        check_docs_contain, check_future_session_docs_inner, check_license_files_inner,
+        check_placeholder_sources, check_readme_roadmap_link_inner, check_release_planning_inner,
+        check_toolchain_pin_inner, collect_workspace_members, contains_crate_name,
+        has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1087,6 +1120,51 @@ pub fn
                 .to_string()
                 .contains("1 placeholder documentation phrase(s) missing")
         );
+    }
+
+    #[test]
+    fn accepts_future_session_docs_with_not_implemented_notes() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "Future sessions.\n\nSessions are not implemented yet.\n",
+        );
+        let architecture_path = write_nested_source(
+            temp.path(),
+            "docs/architecture.md",
+            "Future session architecture.\n\nSessions are not implemented yet.\n",
+        );
+        let product_path = write_nested_source(
+            temp.path(),
+            "docs/product.md",
+            "Future session product direction.\n\nSessions are not implemented yet.\n",
+        );
+
+        check_future_session_docs_inner([readme_path, architecture_path, product_path])
+            .expect("future session docs with notes should pass");
+    }
+
+    #[test]
+    fn rejects_future_session_docs_missing_not_implemented_note() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "Future sessions.\n\nSessions are not implemented yet.\n",
+        );
+        let architecture_path =
+            write_nested_source(temp.path(), "docs/architecture.md", "Future sessions.\n");
+        let product_path = write_nested_source(
+            temp.path(),
+            "docs/product.md",
+            "Future sessions.\n\nSessions are not implemented yet.\n",
+        );
+
+        let error = check_future_session_docs_inner([readme_path, architecture_path, product_path])
+            .expect_err("future session docs missing note should fail");
+
+        assert!(error.to_string().contains("placeholder documentation"));
     }
 
     #[test]

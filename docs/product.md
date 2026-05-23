@@ -13,6 +13,7 @@ Kply CLI should eventually let a developer or coding agent create a sandbox
 session for one Kubernetes workload and get a clear report about what would
 happen. This is a roadmap hypothesis, not implemented behavior; the current
 repository remains placeholder-only until the roadmap starts landing.
+Sessions are not implemented yet.
 
 ## Expansion
 
