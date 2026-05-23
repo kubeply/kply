@@ -13,6 +13,7 @@ fn main() -> Result<()> {
         "help" => {
             println!("available tasks:");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
+            println!("  check-deny-config verify cargo-deny policy strictness");
             println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
             println!("  check-placeholder-docs verify public docs describe placeholder status");
@@ -23,6 +24,9 @@ fn main() -> Result<()> {
         }
         "check-crate-inventory-docs" => {
             check_crate_inventory_docs()?;
+        }
+        "check-deny-config" => {
+            check_deny_config()?;
         }
         "check-license-files" => {
             check_license_files()?;
@@ -45,6 +49,7 @@ fn main() -> Result<()> {
             println!("cargo clippy --all-targets --all-features --locked -- -D warnings");
             println!("cargo test --all-targets --all-features --locked");
             println!("cargo xtask check-crate-inventory-docs");
+            println!("cargo xtask check-deny-config");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-placeholder-docs");
@@ -92,6 +97,10 @@ fn check_crate_inventory_docs() -> Result<()> {
     let doc_paths = ["AGENTS.md", "CONTRIBUTING.md", "crates/README.md"];
 
     check_crate_inventory_docs_inner("Cargo.toml".as_ref(), doc_paths, workspace_crates())
+}
+
+fn check_deny_config() -> Result<()> {
+    check_deny_config_inner("deny.toml".as_ref())
 }
 
 fn check_license_files() -> Result<()> {
@@ -291,6 +300,90 @@ fn check_license_files_inner(
             eprintln!("{error}");
         }
         bail!("{} license file issue(s) found", errors.len());
+    }
+
+    Ok(())
+}
+
+fn check_deny_config_inner(deny_path: &Path) -> Result<()> {
+    let deny_config = parse_toml_file(deny_path)?;
+    let mut errors = Vec::new();
+
+    let yanked = deny_config
+        .get("advisories")
+        .and_then(|advisories| advisories.get("yanked"))
+        .and_then(toml::Value::as_str);
+
+    if yanked != Some("deny") {
+        errors.push("advisories.yanked must be deny".to_owned());
+    }
+
+    let ignore_is_empty = deny_config
+        .get("advisories")
+        .and_then(|advisories| advisories.get("ignore"))
+        .and_then(toml::Value::as_array)
+        .is_some_and(Vec::is_empty);
+
+    if !ignore_is_empty {
+        errors.push("advisories.ignore must stay empty".to_owned());
+    }
+
+    let allowed_licenses = deny_config
+        .get("licenses")
+        .and_then(|licenses| licenses.get("allow"))
+        .and_then(toml::Value::as_array)
+        .map(|licenses| {
+            licenses
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let expected_licenses = ["Apache-2.0", "MIT", "Unicode-3.0"]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+    if allowed_licenses != expected_licenses {
+        errors.push(format!(
+            "licenses.allow must be exactly {:?}",
+            expected_licenses
+        ));
+    }
+
+    let confidence_threshold = deny_config
+        .get("licenses")
+        .and_then(|licenses| licenses.get("confidence-threshold"))
+        .and_then(toml::Value::as_float);
+
+    if confidence_threshold.is_none_or(|threshold| threshold < 0.8) {
+        errors.push("licenses.confidence-threshold must be at least 0.8".to_owned());
+    }
+
+    for (key, expected) in [("multiple-versions", "deny"), ("wildcards", "allow")] {
+        let actual = deny_config
+            .get("bans")
+            .and_then(|bans| bans.get(key))
+            .and_then(toml::Value::as_str);
+
+        if actual != Some(expected) {
+            errors.push(format!("bans.{key} must be {expected}"));
+        }
+    }
+
+    let highlight = deny_config
+        .get("bans")
+        .and_then(|bans| bans.get("highlight"))
+        .and_then(toml::Value::as_str);
+
+    if highlight != Some("all") {
+        errors.push("bans.highlight must be all".to_owned());
+    }
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        bail!("{} cargo-deny config issue(s) found", errors.len());
     }
 
     Ok(())
@@ -584,10 +677,10 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_docs_contain,
-        check_license_files_inner, check_placeholder_sources, check_toolchain_pin_inner,
-        collect_workspace_members, contains_crate_name, has_non_placeholder_public_item,
-        has_placeholder_marker, workflow_installs_toolchain,
+        DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
+        check_docs_contain, check_license_files_inner, check_placeholder_sources,
+        check_toolchain_pin_inner, collect_workspace_members, contains_crate_name,
+        has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -608,6 +701,24 @@ Copyright 2026 Kubeply
 
 This product includes software developed by Kubeply.
 ";
+    const STRICT_DENY_CONFIG: &str = r#"
+[advisories]
+yanked = "deny"
+ignore = []
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "deny"
+wildcards = "allow"
+highlight = "all"
+"#;
 
     #[test]
     fn accepts_placeholder_only_sources() {
@@ -1042,6 +1153,74 @@ license = "Apache-2.0"
         .expect_err("crate manifest without workspace license should fail");
 
         assert!(error.to_string().contains("license file issue(s) found"));
+    }
+
+    #[test]
+    fn accepts_strict_cargo_deny_config() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let deny_path = write_source(temp.path(), "deny.toml", STRICT_DENY_CONFIG);
+
+        check_deny_config_inner(&deny_path).expect("strict cargo-deny config should pass");
+    }
+
+    #[test]
+    fn rejects_cargo_deny_warning_for_duplicate_versions() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let deny_path = write_source(
+            temp.path(),
+            "deny.toml",
+            &STRICT_DENY_CONFIG.replace(
+                "multiple-versions = \"deny\"",
+                "multiple-versions = \"warn\"",
+            ),
+        );
+
+        let error = check_deny_config_inner(&deny_path)
+            .expect_err("duplicate version warnings should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cargo-deny config issue(s) found")
+        );
+    }
+
+    #[test]
+    fn rejects_cargo_deny_license_allowlist_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let deny_path = write_source(
+            temp.path(),
+            "deny.toml",
+            &STRICT_DENY_CONFIG.replace("\"MIT\",", "\"MIT\",\n  \"BSD-3-Clause\","),
+        );
+
+        let error =
+            check_deny_config_inner(&deny_path).expect_err("extra allowed license should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cargo-deny config issue(s) found")
+        );
+    }
+
+    #[test]
+    fn rejects_cargo_deny_advisory_ignores() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let deny_path = write_source(
+            temp.path(),
+            "deny.toml",
+            &STRICT_DENY_CONFIG.replace("ignore = []", "ignore = [\"RUSTSEC-0000-0000\"]"),
+        );
+
+        let error = check_deny_config_inner(&deny_path)
+            .expect_err("advisory ignores should fail until justified");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cargo-deny config issue(s) found")
+        );
     }
 
     #[test]
