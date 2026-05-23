@@ -124,6 +124,7 @@ Goal: make future CLI, config, manifest, and Kubernetes behavior easy to verify.
    - config fixtures: `config/<case-name>/kply.yaml`
    - manifest fixtures: `manifests/<workload-shape>/`
    - report fixtures: `reports/<workflow-name>/`
+   Enforce this with `cargo xtask check-fixture-naming-docs`.
 3. Extend `kply-test` with helpers for:
    - resolving fixture paths.
    - invoking the `kply` binary.
