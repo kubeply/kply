@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
+use serde_norway::Value as YamlValue;
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -492,7 +492,7 @@ fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
 
     workflow_event(workflow, "push")
         .and_then(YamlValue::as_mapping)
-        .and_then(|push| yaml_mapping_get(push, &tags_key))
+        .and_then(|push| push.get(&tags_key))
         .is_some()
 }
 
@@ -502,9 +502,9 @@ fn workflow_event<'a>(workflow: &'a YamlValue, event: &str) -> Option<&'a YamlVa
 
     workflow
         .as_mapping()
-        .and_then(|workflow| yaml_mapping_get(workflow, &on_key))
+        .and_then(|workflow| workflow.get(&on_key))
         .and_then(YamlValue::as_mapping)
-        .and_then(|events| yaml_mapping_get(events, &event_key))
+        .and_then(|events| events.get(&event_key))
 }
 
 fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
@@ -514,7 +514,7 @@ fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
 
     let Some(jobs) = workflow
         .as_mapping()
-        .and_then(|workflow| yaml_mapping_get(workflow, &jobs_key))
+        .and_then(|workflow| workflow.get(&jobs_key))
         .and_then(YamlValue::as_mapping)
     else {
         return Vec::new();
@@ -522,17 +522,13 @@ fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
 
     jobs.values()
         .filter_map(YamlValue::as_mapping)
-        .filter_map(|job| yaml_mapping_get(job, &steps_key))
+        .filter_map(|job| job.get(&steps_key))
         .filter_map(YamlValue::as_sequence)
         .flat_map(|steps| steps.iter())
         .filter_map(YamlValue::as_mapping)
-        .filter_map(|step| yaml_mapping_get(step, &run_key))
+        .filter_map(|step| step.get(&run_key))
         .filter_map(YamlValue::as_str)
         .collect()
-}
-
-fn yaml_mapping_get<'a>(mapping: &'a YamlMapping, key: &YamlValue) -> Option<&'a YamlValue> {
-    mapping.get(key)
 }
 
 fn parse_toml_file(path: &Path) -> Result<toml::Value> {
