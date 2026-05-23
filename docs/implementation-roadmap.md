@@ -83,7 +83,8 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
    that behavior is placeholder-only. Enforce this with
    `cargo xtask check-placeholder-docs`.
 4. Keep `AGENTS.md`, `CONTRIBUTING.md`, and `crates/README.md` aligned with the
-   workspace crate inventory.
+   workspace crate inventory. Enforce this with
+   `cargo xtask check-crate-inventory-docs`.
 5. Keep the Apache-2.0 license and notice files.
 6. Keep the local Rust toolchain pinned through `rust-toolchain.toml`.
 7. Keep `cargo deny` configuration strict enough for an open-source CLI.
