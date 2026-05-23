@@ -74,6 +74,9 @@ jobs:
       - name: Check placeholders
         run: cargo xtask check-placeholders
 
+      - name: Check release planning
+        run: cargo xtask check-release-planning
+
       - name: Check toolchain pin
         run: cargo xtask check-toolchain-pin
 
