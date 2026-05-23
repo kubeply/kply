@@ -795,10 +795,21 @@ fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
     let has_roadmap_link =
         source.contains("[docs/implementation-roadmap.md](docs/implementation-roadmap.md)");
 
-    if !has_roadmap_heading || !has_roadmap_link {
+    let mut errors = Vec::new();
+
+    if !has_roadmap_heading {
+        errors.push("missing top-level ## Roadmap heading");
+    }
+
+    if !has_roadmap_link {
+        errors.push("missing markdown link to docs/implementation-roadmap.md");
+    }
+
+    if !errors.is_empty() {
         bail!(
-            "{} must include a top-level Roadmap section linking docs/implementation-roadmap.md",
-            readme_path.display()
+            "{} must include a top-level Roadmap section linking docs/implementation-roadmap.md: {}",
+            readme_path.display(),
+            errors.join("; ")
         );
     }
 
