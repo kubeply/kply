@@ -473,7 +473,11 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         for error in &errors {
             eprintln!("{error}");
         }
-        bail!("{} release planning issue(s) found", errors.len());
+        bail!(
+            "{} release planning issue(s) found: {}",
+            errors.len(),
+            errors.join("; ")
+        );
     }
 
     Ok(())
@@ -1418,23 +1422,77 @@ license = "Apache-2.0"
     }
 
     #[test]
-    fn rejects_release_workflow_publish_commands() {
+    fn rejects_release_workflow_without_pull_request_trigger() {
         let temp = TempDir::new().expect("temp dir should be created");
         let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
         let workflow_path = write_nested_source(
             temp.path(),
             ".github/workflows/release.yml",
-            &RELEASE_PLAN_WORKFLOW.replace("dist plan", "dist build"),
+            &RELEASE_PLAN_WORKFLOW.replace("  pull_request:", ""),
         );
 
         let error = check_release_planning_inner(&dist_path, &workflow_path)
-            .expect_err("release build command should fail before release milestone");
+            .expect_err("release workflow without pull_request trigger should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("release planning issue(s) found")
+        assert!(error.to_string().contains("must run on pull_request"));
+    }
+
+    #[test]
+    fn rejects_release_workflow_publish_commands() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+
+        for command in ["dist build", "dist host", "dist publish"] {
+            let workflow_path = write_nested_source(
+                temp.path(),
+                ".github/workflows/release.yml",
+                &RELEASE_PLAN_WORKFLOW.replace("dist plan", command),
+            );
+
+            let error = check_release_planning_inner(&dist_path, &workflow_path)
+                .expect_err("release publishing command should fail before release milestone");
+
+            assert!(error.to_string().contains(command));
+        }
+    }
+
+    #[test]
+    fn rejects_release_workflow_without_dist_plan() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("dist plan", "cargo dist --help"),
         );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without dist plan should fail");
+
+        assert!(error.to_string().contains("dist plan"));
+    }
+
+    #[test]
+    fn rejects_release_cargo_dist_version_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                "cargo-dist-version = \"0.32.0\"",
+                "cargo-dist-version = \"0.33.0\"",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release cargo-dist-version drift should fail");
+
+        assert!(error.to_string().contains("cargo-dist-version"));
     }
 
     #[test]
