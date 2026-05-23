@@ -7,6 +7,8 @@ use assert_cmd::Command;
 use regex::Regex;
 use serde_json::Value;
 
+pub use insta;
+
 static RFC3339_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b")
         .expect("timestamp regex should compile")
@@ -97,6 +99,64 @@ pub fn normalize_absolute_paths(output: &str) -> String {
         .into_owned()
 }
 
+/// Assert normalized CLI text output against an insta snapshot.
+#[macro_export]
+macro_rules! assert_cli_text_snapshot {
+    ($name:expr, $output:expr $(,)?) => {{
+        $crate::__assert_normalized_text_snapshot!($name, $output);
+    }};
+}
+
+/// Assert CLI JSON output against an insta JSON snapshot.
+#[macro_export]
+macro_rules! assert_cli_json_snapshot {
+    ($name:expr, $output:expr $(,)?) => {{
+        $crate::__assert_json_snapshot!($name, $output);
+    }};
+}
+
+/// Assert generated Kubernetes manifests against an insta snapshot.
+#[macro_export]
+macro_rules! assert_manifest_snapshot {
+    ($name:expr, $manifest:expr $(,)?) => {{
+        $crate::__assert_normalized_text_snapshot!($name, $manifest);
+    }};
+}
+
+/// Assert check report JSON against an insta JSON snapshot.
+#[macro_export]
+macro_rules! assert_check_report_snapshot {
+    ($name:expr, $report:expr $(,)?) => {{
+        $crate::__assert_json_snapshot!($name, $report);
+    }};
+}
+
+/// Assert route plan JSON against an insta JSON snapshot.
+#[macro_export]
+macro_rules! assert_route_plan_snapshot {
+    ($name:expr, $route_plan:expr $(,)?) => {{
+        $crate::__assert_json_snapshot!($name, $route_plan);
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_normalized_text_snapshot {
+    ($name:expr, $output:expr $(,)?) => {{
+        let normalized = $crate::normalize_output($output);
+        $crate::insta::assert_snapshot!($name, normalized);
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_json_snapshot {
+    ($name:expr, $output:expr $(,)?) => {{
+        let value = $crate::parse_json_output($output);
+        $crate::insta::assert_json_snapshot!($name, value);
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -163,6 +223,27 @@ mod tests {
         assert_eq!(
             normalize_absolute_paths("path=/workspace/kply"),
             "path=<absolute-path>"
+        );
+    }
+
+    #[test]
+    fn snapshot_helpers_assert_expected_outputs() {
+        crate::assert_cli_text_snapshot!(
+            "helper_cli_text",
+            "created=2026-05-23T22:00:00Z path=/tmp/kply/demo"
+        );
+        crate::assert_cli_json_snapshot!("helper_cli_json", br#"{"status":"placeholder"}"#);
+        crate::assert_manifest_snapshot!(
+            "helper_manifest",
+            "metadata:\n  name: kply-backend-abcdef12\n"
+        );
+        crate::assert_check_report_snapshot!(
+            "helper_check_report",
+            br#"{"checks":[{"name":"health","status":"pass"}]}"#
+        );
+        crate::assert_route_plan_snapshot!(
+            "helper_route_plan",
+            br#"{"routes":[{"header":"x-kply-session","target":"sandbox"}]}"#
         );
     }
 }

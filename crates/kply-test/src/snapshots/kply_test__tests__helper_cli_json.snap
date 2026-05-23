@@ -1,0 +1,7 @@
+---
+source: crates/kply-test/src/lib.rs
+expression: value
+---
+{
+  "status": "placeholder"
+}

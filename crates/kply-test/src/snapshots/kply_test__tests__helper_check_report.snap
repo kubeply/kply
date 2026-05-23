@@ -1,0 +1,12 @@
+---
+source: crates/kply-test/src/lib.rs
+expression: value
+---
+{
+  "checks": [
+    {
+      "name": "health",
+      "status": "pass"
+    }
+  ]
+}

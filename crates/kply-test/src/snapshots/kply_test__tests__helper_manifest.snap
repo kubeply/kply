@@ -1,0 +1,6 @@
+---
+source: crates/kply-test/src/lib.rs
+expression: normalized
+---
+metadata:
+  name: kply-<object-name>
