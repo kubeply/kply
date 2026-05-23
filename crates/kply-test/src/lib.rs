@@ -103,8 +103,7 @@ pub fn normalize_absolute_paths(output: &str) -> String {
 #[macro_export]
 macro_rules! assert_cli_text_snapshot {
     ($name:expr, $output:expr $(,)?) => {{
-        let normalized = $crate::normalize_output($output);
-        $crate::insta::assert_snapshot!($name, normalized);
+        $crate::__assert_normalized_text_snapshot!($name, $output);
     }};
 }
 
@@ -112,8 +111,7 @@ macro_rules! assert_cli_text_snapshot {
 #[macro_export]
 macro_rules! assert_cli_json_snapshot {
     ($name:expr, $output:expr $(,)?) => {{
-        let value = $crate::parse_json_output($output);
-        $crate::insta::assert_json_snapshot!($name, value);
+        $crate::__assert_json_snapshot!($name, $output);
     }};
 }
 
@@ -121,8 +119,7 @@ macro_rules! assert_cli_json_snapshot {
 #[macro_export]
 macro_rules! assert_manifest_snapshot {
     ($name:expr, $manifest:expr $(,)?) => {{
-        let normalized = $crate::normalize_output($manifest);
-        $crate::insta::assert_snapshot!($name, normalized);
+        $crate::__assert_normalized_text_snapshot!($name, $manifest);
     }};
 }
 
@@ -130,8 +127,7 @@ macro_rules! assert_manifest_snapshot {
 #[macro_export]
 macro_rules! assert_check_report_snapshot {
     ($name:expr, $report:expr $(,)?) => {{
-        let value = $crate::parse_json_output($report);
-        $crate::insta::assert_json_snapshot!($name, value);
+        $crate::__assert_json_snapshot!($name, $report);
     }};
 }
 
@@ -139,7 +135,24 @@ macro_rules! assert_check_report_snapshot {
 #[macro_export]
 macro_rules! assert_route_plan_snapshot {
     ($name:expr, $route_plan:expr $(,)?) => {{
-        let value = $crate::parse_json_output($route_plan);
+        $crate::__assert_json_snapshot!($name, $route_plan);
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_normalized_text_snapshot {
+    ($name:expr, $output:expr $(,)?) => {{
+        let normalized = $crate::normalize_output($output);
+        $crate::insta::assert_snapshot!($name, normalized);
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_json_snapshot {
+    ($name:expr, $output:expr $(,)?) => {{
+        let value = $crate::parse_json_output($output);
         $crate::insta::assert_json_snapshot!($name, value);
     }};
 }
