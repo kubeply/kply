@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalized_json(&output)
+---
+{
+  "name": "kply",
+  "version": "0.1.0"
+}

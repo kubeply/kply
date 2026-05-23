@@ -347,28 +347,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "kubeply-checks"
+name = "kply-checks"
 version = "0.1.0"
 dependencies = [
- "kubeply-core",
+ "kply-core",
 ]
 
 [[package]]
-name = "kubeply-cli"
+name = "kply-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "insta",
- "kubeply-checks",
- "kubeply-core",
- "kubeply-test",
+ "kply-checks",
+ "kply-core",
+ "kply-test",
  "predicates",
  "serde_json",
 ]
 
 [[package]]
-name = "kubeply-config"
+name = "kply-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -377,7 +377,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kubeply-core"
+name = "kply-core"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -386,21 +386,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "kubeply-k8s"
+name = "kply-k8s"
 version = "0.1.0"
 dependencies = [
- "kubeply-core",
+ "kply-core",
 ]
 
 [[package]]
-name = "kubeply-routing"
+name = "kply-routing"
 version = "0.1.0"
 dependencies = [
- "kubeply-core",
+ "kply-core",
 ]
 
 [[package]]
-name = "kubeply-test"
+name = "kply-test"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",

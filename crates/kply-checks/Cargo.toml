@@ -1,0 +1,11 @@
+[package]
+name = "kply-checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kply-core.workspace = true
+

@@ -1,15 +1,15 @@
 # Product Direction
 
-Kubeply should not become a generic CD platform. Existing systems such as
+Kply should not become a generic CD platform. Existing systems such as
 Harness, Argo, GitHub Actions, and Flux already own deployment orchestration.
 
-Kubeply focuses on the agent boundary:
+Kply focuses on the Kubeply agent boundary:
 
 > Give AI agents safe Kubernetes sessions instead of raw cluster access.
 
 ## Initial Product
 
-Kubeply CLI lets a developer or coding agent create a sandbox session for one
+Kply CLI lets a developer or coding agent create a sandbox session for one
 Kubernetes workload and get a clear report about what would happen.
 
 ## Expansion

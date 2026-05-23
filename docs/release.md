@@ -1,6 +1,6 @@
 # Release
 
-Kubeply uses semver and `cargo-dist` for binary releases.
+Kply uses semver and `cargo-dist` for binary releases.
 
 ## Versioning
 

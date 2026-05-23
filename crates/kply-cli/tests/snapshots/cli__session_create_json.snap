@@ -1,0 +1,37 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalized_json(&output)
+---
+{
+  "checks": [
+    {
+      "description": "Sandbox pods should start successfully",
+      "name": "pod-starts"
+    },
+    {
+      "description": "Sandbox service should be reachable",
+      "name": "service-reachable"
+    },
+    {
+      "description": "Sandbox logs should not show fatal errors",
+      "name": "logs-clean"
+    },
+    {
+      "description": "Temporary session resources should be removable",
+      "name": "cleanup-ready"
+    }
+  ],
+  "created_at": "$TIMESTAMP",
+  "dry_run": true,
+  "id": "$SESSION_ID",
+  "image": "ghcr.io/acme/backend:agent-fix-123",
+  "route_header": {
+    "name": "x-kply-session",
+    "value": "fix-123"
+  },
+  "status": "planned",
+  "workload": {
+    "name": "backend-api",
+    "namespace": "shop"
+  }
+}

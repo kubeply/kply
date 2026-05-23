@@ -2,13 +2,14 @@
 
 ## Purpose
 
-Define the first open-source Kubeply CLI product boundary.
+Define the first open-source Kubeply CLI product boundary through the `kply`
+tool.
 
 ## Requirements
 
-### Requirement: Kubeply exposes safe sessions to agents
+### Requirement: Kply exposes safe sessions to agents
 
-Kubeply SHALL expose a CLI that AI coding agents and humans can use to create
+Kply SHALL expose a CLI that AI coding agents and humans can use to create
 safe Kubernetes-oriented sessions. The CLI SHALL prefer constrained commands and
 auditable output over raw cluster mutation.
 
@@ -16,19 +17,19 @@ auditable output over raw cluster mutation.
 
 - **WHEN** an agent creates a session with a workload, namespace, proposed image,
   and route header
-- **THEN** Kubeply returns a deterministic session plan
+- **THEN** Kply returns a deterministic session plan
 - **AND** the plan identifies the workload, namespace, sandbox image, route
   header, initial checks, and cleanup expectation
 - **AND** no Kubernetes resource is mutated when `--dry-run` is used
 
-### Requirement: Kubeply remains a boundary, not a CD platform
+### Requirement: Kply remains a boundary, not a CD platform
 
-Kubeply SHALL integrate with existing Kubernetes, CI/CD, GitOps, and routing
+Kply SHALL integrate with existing Kubernetes, CI/CD, GitOps, and routing
 systems rather than replacing them as the first product wedge.
 
 #### Scenario: A deployment workflow is proposed
 
 - **WHEN** a workflow requires full release orchestration
-- **THEN** Kubeply treats promotion as an integration point
+- **THEN** Kply treats promotion as an integration point
 - **AND** keeps the product surface focused on agent sessions, verification,
   route isolation, and audit trails

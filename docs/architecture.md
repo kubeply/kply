@@ -1,6 +1,6 @@
 # Architecture
 
-Kubeply starts as a CLI-first safety layer for AI agents working near
+Kply starts as a CLI-first safety layer for AI agents working near
 Kubernetes.
 
 ## Actors
@@ -8,9 +8,9 @@ Kubernetes.
 ```text
 AI coding agent / human
         |
-        | runs kubeply commands
+        | runs kply commands
         v
-kubeply CLI
+kply CLI
         |
         | creates scoped sessions and checks
         v
@@ -43,12 +43,12 @@ Initial session fields:
 ## Crate Direction
 
 ```text
-kubeply-cli
-  -> kubeply-config
-  -> kubeply-checks
-  -> kubeply-routing
-  -> kubeply-k8s
-  -> kubeply-core
+kply-cli
+  -> kply-config
+  -> kply-checks
+  -> kply-routing
+  -> kply-k8s
+  -> kply-core
 ```
 
 Core does not depend on Kubernetes client libraries or CLI output.

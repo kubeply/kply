@@ -1,8 +1,0 @@
----
-source: crates/kubeply-cli/tests/cli.rs
-expression: normalized_json(&output)
----
-{
-  "name": "kubeply",
-  "version": "0.1.0"
-}

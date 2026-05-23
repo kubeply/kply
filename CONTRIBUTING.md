@@ -1,6 +1,6 @@
 # Contributing
 
-Kubeply is early, but the engineering bar should be high from the first commit.
+Kply is early, but the engineering bar should be high from the first commit.
 
 ## Local Checks
 
@@ -20,13 +20,13 @@ cargo test --all-targets --all-features --locked
 
 ## Crate Boundaries
 
-- `kubeply-core`: domain model, session state, audit events.
-- `kubeply-config`: project and cluster config parsing.
-- `kubeply-k8s`: Kubernetes discovery and mutation adapters.
-- `kubeply-routing`: Gateway, ingress, mesh, and fallback routing adapters.
-- `kubeply-checks`: runtime verification checks.
-- `kubeply-cli`: command parsing and user/agent-facing output.
-- `kubeply-test`: shared test helpers.
+- `kply-core`: domain model, session state, audit events.
+- `kply-config`: project and cluster config parsing.
+- `kply-k8s`: Kubernetes discovery and mutation adapters.
+- `kply-routing`: Gateway, ingress, mesh, and fallback routing adapters.
+- `kply-checks`: runtime verification checks.
+- `kply-cli`: command parsing and user/agent-facing output.
+- `kply-test`: shared test helpers.
 
 ## Release
 

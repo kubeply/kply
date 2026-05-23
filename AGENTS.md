@@ -2,11 +2,11 @@
 
 ## Purpose
 
-`kubeply` is a Rust CLI that gives AI coding agents safe Kubernetes sessions
+`kply` is a Rust CLI that gives AI coding agents safe Kubernetes sessions
 instead of raw production cluster access.
 
 The project starts with a single binary and a multi-crate workspace. Keep the
-normal `kubeply` path lightweight: no shell, Python, Node, or external
+normal `kply` path lightweight: no shell, Python, Node, or external
 Kubernetes wrapper dependency in core session logic.
 
 ## Working Rules
@@ -17,7 +17,7 @@ Kubernetes wrapper dependency in core session logic.
   dependency direction should stay CLI -> config/checks/routing/k8s -> core,
   not the reverse.
 - Placeholder crates are intentional. Put new implementation in the matching
-  crate instead of expanding `kubeply-cli` by default.
+  crate instead of expanding `kply-cli` by default.
 - Keep session modeling, Kubernetes access, routing adapters, checks, config,
   and output separated.
 - Prefer deterministic, auditable behavior over broad automation.

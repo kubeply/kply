@@ -1,0 +1,23 @@
+[package]
+name = "kply-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kply"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+kply-checks.workspace = true
+kply-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+kply-test.workspace = true
+predicates.workspace = true

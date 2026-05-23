@@ -1,7 +1,7 @@
-# Kubeply
+# Kply
 
-Kubeply gives AI coding agents safe Kubernetes sessions instead of raw cluster
-access.
+Kply is the Kubeply CLI for giving AI coding agents safe Kubernetes sessions
+instead of raw cluster access.
 
 The CLI is the first open-source surface for the larger Kubeply product: a
 control boundary where agents can inspect workloads, create sandbox sessions,
@@ -17,17 +17,18 @@ execution adapters are intentionally thin until the first workflow is validated.
 ## Example
 
 ```bash
-kubeply session create backend-api \
+kply session create backend-api \
   --namespace shop \
   --image ghcr.io/acme/backend:agent-fix-123 \
-  --route-header x-kubeply-session=fix-123 \
+  --route-header x-kply-session \
+  --route-value fix-123 \
   --dry-run \
   --json
 ```
 
 ## Product Primitive
 
-A Kubeply session is a temporary, scoped workspace for an agent:
+A Kply session is a temporary, scoped workspace for an agent:
 
 - target workload
 - proposed image or config change
