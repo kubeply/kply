@@ -26,6 +26,7 @@ fn main() -> Result<()> {
             println!("available tasks:");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
             println!("  check-deny-config verify cargo-deny policy strictness");
+            println!("  check-fixture-directories verify fixture directory skeleton");
             println!("  check-future-session-docs verify future session docs are explicit");
             println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
@@ -42,6 +43,9 @@ fn main() -> Result<()> {
         }
         "check-deny-config" => {
             check_deny_config()?;
+        }
+        "check-fixture-directories" => {
+            check_fixture_directories()?;
         }
         "check-future-session-docs" => {
             check_future_session_docs()?;
@@ -74,6 +78,7 @@ fn main() -> Result<()> {
             println!("cargo test --all-targets --all-features --locked");
             println!("cargo xtask check-crate-inventory-docs");
             println!("cargo xtask check-deny-config");
+            println!("cargo xtask check-fixture-directories");
             println!("cargo xtask check-future-session-docs");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
@@ -139,6 +144,10 @@ fn check_license_files() -> Result<()> {
     )
 }
 
+fn check_fixture_directories() -> Result<()> {
+    check_fixture_directories_inner("fixtures".as_ref(), required_fixture_directories())
+}
+
 fn check_future_session_docs() -> Result<()> {
     check_future_session_docs_inner([
         "README.md".into(),
@@ -188,6 +197,17 @@ fn check_toolchain_pin() -> Result<()> {
 
 fn expected_rust_channel() -> &'static str {
     "1.95.0"
+}
+
+fn required_fixture_directories() -> &'static [&'static str] {
+    &[
+        "cli",
+        "config",
+        "manifests",
+        "k8s-responses",
+        "reports",
+        "demo",
+    ]
 }
 
 fn required_rust_components() -> &'static [&'static str] {
@@ -849,6 +869,36 @@ fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn check_fixture_directories_inner(
+    fixtures_root: &Path,
+    required_directories: &[&str],
+) -> Result<()> {
+    let mut missing_directories = Vec::new();
+
+    for directory in required_directories {
+        let path = fixtures_root.join(directory);
+
+        if !path.is_dir() {
+            missing_directories.push(path);
+        }
+    }
+
+    if !missing_directories.is_empty() {
+        let missing_list = missing_directories
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(
+            "{} fixture directories missing: {}",
+            missing_directories.len(),
+            missing_list
+        );
+    }
+
+    Ok(())
+}
+
 fn markdown_has_heading_outside_code_block(source: &str, heading: &str) -> bool {
     let mut in_fenced_code_block = false;
 
@@ -915,10 +965,11 @@ mod tests {
 
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
-        check_docs_contain, check_future_session_docs_inner, check_license_files_inner,
-        check_placeholder_sources, check_readme_roadmap_link_inner, check_release_planning_inner,
-        check_toolchain_pin_inner, collect_workspace_members, contains_crate_name,
-        has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
+        check_docs_contain, check_fixture_directories_inner, check_future_session_docs_inner,
+        check_license_files_inner, check_placeholder_sources, check_readme_roadmap_link_inner,
+        check_release_planning_inner, check_toolchain_pin_inner, collect_workspace_members,
+        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
+        workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1165,6 +1216,32 @@ pub fn
             .expect_err("future session docs missing note should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
+    }
+
+    #[test]
+    fn accepts_required_fixture_directories() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let fixtures_root = temp.path().join("fixtures");
+
+        for directory in ["cli", "config", "manifests"] {
+            fs::create_dir_all(fixtures_root.join(directory))
+                .expect("fixture directory should be created");
+        }
+
+        check_fixture_directories_inner(&fixtures_root, &["cli", "config", "manifests"])
+            .expect("required fixture directories should pass");
+    }
+
+    #[test]
+    fn rejects_missing_fixture_directories() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let fixtures_root = temp.path().join("fixtures");
+        fs::create_dir_all(fixtures_root.join("cli")).expect("fixture directory should be created");
+
+        let error = check_fixture_directories_inner(&fixtures_root, &["cli", "config"])
+            .expect_err("missing fixture directories should fail");
+
+        assert!(error.to_string().contains("fixture directories missing"));
     }
 
     #[test]
