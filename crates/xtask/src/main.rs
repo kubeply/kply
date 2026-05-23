@@ -363,6 +363,11 @@ fn check_toolchain_pin_inner(
     Ok(())
 }
 
+/// Returns true when any workflow line pins `toolchain:` to `expected_channel`.
+///
+/// This intentionally checks presence, not uniqueness: if `workflow_source`
+/// contains conflicting toolchain lines, this still accepts as long as one line
+/// matches. Tighten this if CI starts installing Rust in multiple jobs.
 fn workflow_installs_toolchain(workflow_source: &str, expected_channel: &str) -> bool {
     workflow_source.lines().any(|line| {
         let line = line.trim();
