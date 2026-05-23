@@ -65,6 +65,9 @@ jobs:
       - name: Check fixture directories
         run: cargo xtask check-fixture-directories
 
+      - name: Check fixture naming docs
+        run: cargo xtask check-fixture-naming-docs
+
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
 
