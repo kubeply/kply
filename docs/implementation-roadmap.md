@@ -96,8 +96,9 @@ Goal: preserve a clean, trustworthy scaffold before implementation starts.
    `cargo xtask check-release-planning`.
 9. Keep a top-level roadmap link from `README.md`. Enforce this with
    `cargo xtask check-readme-roadmap-link`.
-10. Add a short “not implemented yet” note to each public-facing doc that
-    mentions future sessions.
+10. Keep a short “not implemented yet” note in each public-facing doc that
+    mentions future sessions. Enforce this with
+    `cargo xtask check-future-session-docs`.
 
 Acceptance criteria:
 

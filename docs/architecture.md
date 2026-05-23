@@ -29,6 +29,8 @@ A session is the expected core primitive. It will represent a bounded attempt
 to test a change against Kubernetes-like reality without giving an agent direct
 production mutation access.
 
+Sessions are not implemented yet.
+
 Candidate session fields:
 
 - `id`

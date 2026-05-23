@@ -62,6 +62,9 @@ jobs:
       - name: Check cargo-deny config
         run: cargo xtask check-deny-config
 
+      - name: Check future session docs
+        run: cargo xtask check-future-session-docs
+
       - name: Check license files
         run: cargo xtask check-license-files
 
