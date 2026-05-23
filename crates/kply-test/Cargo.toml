@@ -11,3 +11,4 @@ assert_cmd.workspace = true
 insta.workspace = true
 regex.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
