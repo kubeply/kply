@@ -20,7 +20,7 @@ static KUBERNETES_OBJECT_NAME: LazyLock<Regex> = LazyLock::new(|| {
         .expect("Kubernetes object name regex should compile")
 });
 static ABSOLUTE_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?m)(^|[\s"=])/(?:Users|private|tmp|var)/[^\s"]+"#)
+    Regex::new(r#"(?m)(^|[\s"=])/(?:Users|home|private|tmp|var|workspace)/[^\s"]+"#)
         .expect("absolute path regex should compile")
 });
 
@@ -154,6 +154,14 @@ mod tests {
         );
         assert_eq!(
             normalize_absolute_paths("path=/tmp/kply/demo"),
+            "path=<absolute-path>"
+        );
+        assert_eq!(
+            normalize_absolute_paths("path=/home/runner/work/kply"),
+            "path=<absolute-path>"
+        );
+        assert_eq!(
+            normalize_absolute_paths("path=/workspace/kply"),
             "path=<absolute-path>"
         );
     }
