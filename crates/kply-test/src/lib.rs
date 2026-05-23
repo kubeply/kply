@@ -77,6 +77,39 @@ pub fn write_temp_file(
     path
 }
 
+/// Return deterministic fake kubeconfig contents for tests.
+pub fn fake_kubeconfig() -> String {
+    fake_kubeconfig_with_context("kply-test", "kply-test-user", "kply-test-context")
+}
+
+/// Return fake kubeconfig contents with explicit cluster, user, and context names.
+pub fn fake_kubeconfig_with_context(cluster: &str, user: &str, context: &str) -> String {
+    format!(
+        r#"apiVersion: v1
+kind: Config
+clusters:
+  - name: {cluster}
+    cluster:
+      server: https://127.0.0.1:6443
+users:
+  - name: {user}
+    user:
+      token: fake-token
+contexts:
+  - name: {context}
+    context:
+      cluster: {cluster}
+      user: {user}
+current-context: {context}
+"#
+    )
+}
+
+/// Write a deterministic fake kubeconfig file inside a temporary workspace.
+pub fn write_fake_kubeconfig(workspace: &TempDir) -> PathBuf {
+    write_temp_file(workspace, "kubeconfig.yaml", fake_kubeconfig())
+}
+
 /// Run `kply` and return UTF-8 stdout for integration tests.
 pub fn kply_stdout(args: &[&str]) -> String {
     let output = kply_cmd()
@@ -192,9 +225,10 @@ macro_rules! __assert_json_snapshot {
 #[cfg(test)]
 mod tests {
     use super::{
-        fixture_path, fixture_root, kply_stdout, normalize_absolute_paths, normalize_generated_ids,
-        normalize_kubernetes_object_names, normalize_output, normalize_timestamps,
-        parse_json_output, temp_workspace, temp_workspace_dir, write_temp_file,
+        fake_kubeconfig, fake_kubeconfig_with_context, fixture_path, fixture_root, kply_stdout,
+        normalize_absolute_paths, normalize_generated_ids, normalize_kubernetes_object_names,
+        normalize_output, normalize_timestamps, parse_json_output, temp_workspace,
+        temp_workspace_dir, write_fake_kubeconfig, write_temp_file,
     };
 
     #[test]
@@ -223,6 +257,26 @@ mod tests {
             std::fs::read_to_string(file).expect("temporary file should be readable"),
             "name: demo\n"
         );
+    }
+
+    #[test]
+    fn creates_fake_kubeconfig_contents() {
+        let kubeconfig = fake_kubeconfig_with_context("cluster-a", "user-a", "context-a");
+
+        assert!(kubeconfig.contains("server: https://127.0.0.1:6443"));
+        assert!(kubeconfig.contains("current-context: context-a"));
+        assert!(fake_kubeconfig().contains("current-context: kply-test-context"));
+    }
+
+    #[test]
+    fn writes_fake_kubeconfig_file() {
+        let workspace = temp_workspace();
+        let kubeconfig_path = write_fake_kubeconfig(&workspace);
+        let kubeconfig =
+            std::fs::read_to_string(kubeconfig_path).expect("fake kubeconfig should be readable");
+
+        assert!(kubeconfig.contains("kind: Config"));
+        assert!(kubeconfig.contains("token: fake-token"));
     }
 
     #[test]
