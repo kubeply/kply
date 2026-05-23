@@ -2,9 +2,20 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
 use serde_norway::Value as YamlValue;
+
+static YAML_JOBS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("jobs".to_owned()));
+static YAML_ON_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("on".to_owned()));
+static YAML_PULL_REQUEST_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("pull_request".to_owned()));
+static YAML_PUSH_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("push".to_owned()));
+static YAML_RUN_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("run".to_owned()));
+static YAML_STEPS_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("steps".to_owned()));
+static YAML_TAGS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("tags".to_owned()));
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -484,41 +495,32 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
 }
 
 fn workflow_has_pull_request(workflow: &YamlValue) -> bool {
-    workflow_event(workflow, "pull_request").is_some()
+    workflow_event(workflow, &YAML_PULL_REQUEST_KEY).is_some()
 }
 
 fn workflow_has_push(workflow: &YamlValue) -> bool {
-    workflow_event(workflow, "push").is_some()
+    workflow_event(workflow, &YAML_PUSH_KEY).is_some()
 }
 
 fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
-    let tags_key = YamlValue::String("tags".to_owned());
-
-    workflow_event(workflow, "push")
+    workflow_event(workflow, &YAML_PUSH_KEY)
         .and_then(YamlValue::as_mapping)
-        .and_then(|push| push.get(&tags_key))
+        .and_then(|push| push.get(&*YAML_TAGS_KEY))
         .is_some()
 }
 
-fn workflow_event<'a>(workflow: &'a YamlValue, event: &str) -> Option<&'a YamlValue> {
-    let on_key = YamlValue::String("on".to_owned());
-    let event_key = YamlValue::String(event.to_owned());
-
+fn workflow_event<'a>(workflow: &'a YamlValue, event_key: &YamlValue) -> Option<&'a YamlValue> {
     workflow
         .as_mapping()
-        .and_then(|workflow| workflow.get(&on_key))
+        .and_then(|workflow| workflow.get(&*YAML_ON_KEY))
         .and_then(YamlValue::as_mapping)
-        .and_then(|events| events.get(&event_key))
+        .and_then(|events| events.get(event_key))
 }
 
 fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
-    let jobs_key = YamlValue::String("jobs".to_owned());
-    let steps_key = YamlValue::String("steps".to_owned());
-    let run_key = YamlValue::String("run".to_owned());
-
     let Some(jobs) = workflow
         .as_mapping()
-        .and_then(|workflow| workflow.get(&jobs_key))
+        .and_then(|workflow| workflow.get(&*YAML_JOBS_KEY))
         .and_then(YamlValue::as_mapping)
     else {
         return Vec::new();
@@ -526,11 +528,11 @@ fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
 
     jobs.values()
         .filter_map(YamlValue::as_mapping)
-        .filter_map(|job| job.get(&steps_key))
+        .filter_map(|job| job.get(&*YAML_STEPS_KEY))
         .filter_map(YamlValue::as_sequence)
         .flat_map(|steps| steps.iter())
         .filter_map(YamlValue::as_mapping)
-        .filter_map(|step| step.get(&run_key))
+        .filter_map(|step| step.get(&*YAML_RUN_KEY))
         .filter_map(YamlValue::as_str)
         .collect()
 }
