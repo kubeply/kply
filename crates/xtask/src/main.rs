@@ -115,6 +115,10 @@ fn expected_rust_channel() -> &'static str {
     "1.95.0"
 }
 
+fn required_rust_components() -> &'static [&'static str] {
+    &["clippy", "rustfmt"]
+}
+
 #[derive(Debug, Clone, Copy)]
 struct WorkspaceCrate {
     name: &'static str,
@@ -330,7 +334,7 @@ fn check_toolchain_pin_inner(
         })
         .unwrap_or_default();
 
-    for component in ["clippy", "rustfmt"] {
+    for component in required_rust_components() {
         if !components.contains(component) {
             errors.push(format!(
                 "{} must include Rust component {component}",
@@ -341,9 +345,8 @@ fn check_toolchain_pin_inner(
 
     let workflow_source = std::fs::read_to_string(workflow_path)
         .with_context(|| format!("reading workflow file {}", workflow_path.display()))?;
-    let workflow_toolchain_line = format!("toolchain: {expected_channel}");
 
-    if !workflow_source.contains(&workflow_toolchain_line) {
+    if !workflow_installs_toolchain(&workflow_source, expected_channel) {
         errors.push(format!(
             "{} must install Rust toolchain {expected_channel}",
             workflow_path.display()
@@ -358,6 +361,14 @@ fn check_toolchain_pin_inner(
     }
 
     Ok(())
+}
+
+fn workflow_installs_toolchain(workflow_source: &str, expected_channel: &str) -> bool {
+    workflow_source.lines().any(|line| {
+        let line = line.trim();
+        line.strip_prefix("toolchain:")
+            .is_some_and(|value| value.trim() == expected_channel)
+    })
 }
 
 fn collect_workspace_members(manifest_source: &str) -> Result<Vec<String>> {
@@ -571,7 +582,7 @@ mod tests {
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_docs_contain,
         check_license_files_inner, check_placeholder_sources, check_toolchain_pin_inner,
         collect_workspace_members, contains_crate_name, has_non_placeholder_public_item,
-        has_placeholder_marker,
+        has_placeholder_marker, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1120,6 +1131,20 @@ components = ["clippy", "rustfmt"]
             .expect_err("CI toolchain drift should fail");
 
         assert!(error.to_string().contains("toolchain pin issue(s) found"));
+    }
+
+    #[test]
+    fn matches_workflow_toolchain_key_with_whitespace() {
+        let workflow = "      toolchain: 1.95.0\n";
+
+        assert!(workflow_installs_toolchain(workflow, "1.95.0"));
+    }
+
+    #[test]
+    fn rejects_workflow_toolchain_mentions_outside_key() {
+        let workflow = "name: toolchain: 1.95.0\n";
+
+        assert!(!workflow_installs_toolchain(workflow, "1.95.0"));
     }
 
     fn test_workspace_crates() -> &'static [WorkspaceCrate] {
