@@ -1,0 +1,12 @@
+---
+source: crates/kply-test/src/lib.rs
+expression: value
+---
+{
+  "routes": [
+    {
+      "header": "x-kply-session",
+      "target": "sandbox"
+    }
+  ]
+}

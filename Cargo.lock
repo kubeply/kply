@@ -326,6 +326,7 @@ name = "kply-test"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "insta",
  "regex",
  "serde_json",
 ]
