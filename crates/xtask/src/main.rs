@@ -791,7 +791,7 @@ fn check_docs_contain(docs: impl IntoIterator<Item = DocExpectation>) -> Result<
 fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
     let source = std::fs::read_to_string(readme_path)
         .with_context(|| format!("reading README file {}", readme_path.display()))?;
-    let has_roadmap_heading = source.contains("## Roadmap");
+    let has_roadmap_heading = markdown_has_heading_outside_code_block(&source, "## Roadmap");
     let has_roadmap_link =
         source.contains("[docs/implementation-roadmap.md](docs/implementation-roadmap.md)");
 
@@ -814,6 +814,25 @@ fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn markdown_has_heading_outside_code_block(source: &str, heading: &str) -> bool {
+    let mut in_fenced_code_block = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("```") {
+            in_fenced_code_block = !in_fenced_code_block;
+            continue;
+        }
+
+        if !in_fenced_code_block && trimmed == heading {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn has_placeholder_marker(source: &str) -> bool {
@@ -1115,6 +1134,51 @@ pub fn
 
         let error = check_readme_roadmap_link_inner(&readme_path)
             .expect_err("README without roadmap heading should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_wrong_roadmap_heading_level() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n### Roadmap\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README with wrong roadmap heading level should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_concatenated_roadmap_heading() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n## RoadmapPlanning\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README with concatenated roadmap heading should fail");
+
+        assert!(error.to_string().contains("Roadmap section"));
+    }
+
+    #[test]
+    fn rejects_readme_with_roadmap_heading_in_code_block() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "# Kply\n\n```md\n## Roadmap\n```\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+        );
+
+        let error = check_readme_roadmap_link_inner(&readme_path)
+            .expect_err("README with roadmap heading in code block should fail");
 
         assert!(error.to_string().contains("Roadmap section"));
     }
