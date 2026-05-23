@@ -36,6 +36,10 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
 ```
 
+## Roadmap
+
+See [docs/implementation-roadmap.md](docs/implementation-roadmap.md).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
