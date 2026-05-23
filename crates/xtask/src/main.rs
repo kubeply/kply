@@ -133,7 +133,7 @@ fn check_crate_inventory_docs_inner(
 ) -> Result<()> {
     let manifest_source = std::fs::read_to_string(manifest_path)
         .with_context(|| format!("reading workspace manifest {}", manifest_path.display()))?;
-    let workspace_members = collect_workspace_members(&manifest_source);
+    let workspace_members = collect_workspace_members(&manifest_source)?;
     let expected_members = crates
         .iter()
         .map(|workspace_crate| workspace_crate.path)
@@ -155,7 +155,7 @@ fn check_crate_inventory_docs_inner(
             .with_context(|| format!("reading crate inventory doc {}", doc_path.display()))?;
 
         for workspace_crate in crates {
-            if !source.contains(workspace_crate.name) {
+            if !contains_crate_name(&source, workspace_crate.name) {
                 missing_entries.push((doc_path.to_path_buf(), workspace_crate.name));
             }
         }
@@ -174,32 +174,41 @@ fn check_crate_inventory_docs_inner(
     Ok(())
 }
 
-fn collect_workspace_members(manifest_source: &str) -> Vec<String> {
-    let mut members = Vec::new();
-    let mut in_members = false;
-
-    for line in manifest_source.lines() {
-        let line = line.trim();
-
-        if line.starts_with("members = [") {
-            in_members = true;
-            continue;
-        }
-
-        if in_members && line.starts_with(']') {
-            break;
-        }
-
-        if in_members
-            && let Some(member) = line
-                .strip_prefix('"')
-                .and_then(|line| line.split('"').next())
-        {
-            members.push(member.to_owned());
-        }
-    }
+fn collect_workspace_members(manifest_source: &str) -> Result<Vec<String>> {
+    let manifest: toml::Value =
+        toml::from_str(manifest_source).context("parsing workspace manifest TOML")?;
+    let Some(members) = manifest
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
 
     members
+        .iter()
+        .map(|member| {
+            member
+                .as_str()
+                .map(str::to_owned)
+                .context("workspace member must be a string")
+        })
+        .collect()
+}
+
+fn contains_crate_name(source: &str, crate_name: &str) -> bool {
+    source.match_indices(crate_name).any(|(start, _)| {
+        let before = source[..start].chars().next_back();
+        let after = source[start + crate_name.len()..].chars().next();
+
+        !is_crate_name_character(before) && !is_crate_name_character(after)
+    })
+}
+
+fn is_crate_name_character(character: Option<char>) -> bool {
+    character.is_some_and(|character| {
+        character.is_ascii_alphanumeric() || character == '-' || character == '_'
+    })
 }
 
 fn collect_crate_sources(root: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
@@ -374,8 +383,8 @@ mod tests {
 
     use super::{
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_docs_contain,
-        check_placeholder_sources, collect_workspace_members, has_non_placeholder_public_item,
-        has_placeholder_marker,
+        check_placeholder_sources, collect_workspace_members, contains_crate_name,
+        has_non_placeholder_public_item, has_placeholder_marker,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -545,9 +554,38 @@ resolver = "3"
 "#;
 
         assert_eq!(
-            collect_workspace_members(manifest),
+            collect_workspace_members(manifest).expect("workspace members should parse"),
             vec!["crates/kply-cli", "crates/xtask"]
         );
+    }
+
+    #[test]
+    fn collects_inline_workspace_members_from_manifest() {
+        let manifest = r#"
+[workspace]
+members = ["crates/kply-cli", "crates/xtask"]
+"#;
+
+        assert_eq!(
+            collect_workspace_members(manifest).expect("workspace members should parse"),
+            vec!["crates/kply-cli", "crates/xtask"]
+        );
+    }
+
+    #[test]
+    fn matches_crate_names_with_boundaries() {
+        assert!(contains_crate_name(
+            "`kply-core`: domain model",
+            "kply-core"
+        ));
+        assert!(!contains_crate_name(
+            "`kply-core-extra`: separate crate",
+            "kply-core"
+        ));
+        assert!(!contains_crate_name(
+            "`my-kply-core`: separate crate",
+            "kply-core"
+        ));
     }
 
     #[test]
