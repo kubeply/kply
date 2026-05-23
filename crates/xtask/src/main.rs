@@ -255,7 +255,7 @@ fn check_license_files_inner(
             .and_then(|package| package.get("license"))
             .and_then(|license| license.get("workspace"))
             .and_then(toml::Value::as_bool)
-            .is_some_and(|is_inherited| is_inherited);
+            == Some(true);
 
         if !inherits_workspace_license {
             errors.push(format!(
