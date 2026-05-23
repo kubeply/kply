@@ -10,6 +10,7 @@ cargo check --all-targets --all-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
 cargo xtask check-module-docs
+cargo xtask check-placeholders
 ```
 
 ## Testing
