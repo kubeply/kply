@@ -49,6 +49,8 @@ pub enum Command {
     Config,
     /// Inspect future cluster capabilities.
     Cluster,
+    /// Generate future shell completion scripts.
+    Completion,
     /// Read future session reports.
     Report,
 }
@@ -60,6 +62,7 @@ impl Command {
         Self::App,
         Self::Config,
         Self::Cluster,
+        Self::Completion,
         Self::Report,
     ];
 
@@ -71,6 +74,7 @@ impl Command {
             Self::App => "app",
             Self::Config => "config",
             Self::Cluster => "cluster",
+            Self::Completion => "completion",
             Self::Report => "report",
         }
     }
