@@ -775,6 +775,10 @@ enum SessionTokenError {
     InvalidCharacter { character: char },
 }
 
+/// Find the first duplicate operation in a sorted slice.
+///
+/// This only checks adjacent elements, so callers must sort operations first.
+/// Returns [`None`] when all adjacent operations are unique.
 fn duplicate_session_operation(operations: &[SessionOperation]) -> Option<SessionOperation> {
     operations
         .windows(2)
