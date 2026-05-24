@@ -23,6 +23,34 @@ future sandbox workloads, temporary routes, reports, cleanup
 The first interface is the CLI because agents already operate terminals well.
 MCP can be added later as another adapter over the same core.
 
+## CLI Command Naming
+
+Command names are part of the agent-facing contract. Agents are the primary
+automation audience, while humans must still be able to inspect and approve the
+same commands. Names must stay boring, predictable, and easy to discover from
+`kply --help`.
+
+Rules:
+
+- Use lowercase kebab-case for multi-word commands and flags.
+- Prefer nouns for command groups, such as `session`, `app`, `config`,
+  `cluster`, and `report`.
+- Prefer explicit verbs for subcommands that perform actions, such as `show`,
+  `validate`, `plan`, `start`, `verify`, and `cleanup`.
+- Keep mutation verbs explicit for destructive commands, such as
+  `session delete` or `resource destroy`.
+- Reserve plan or preview commands for non-mutating output by default. If a
+  plan command can later perform the planned change, the canonical confirmation
+  flag is `--apply`, for example `session plan --apply`.
+- Avoid hidden aliases until the primary command surface is stable.
+- Do not reuse a command name for different resource concepts. Reusing verbs is
+  fine when the resource group stays clear: `session show` and `app show` are
+  acceptable, but two unrelated resource concepts should not both be named
+  `session`.
+- Keep JSON field names aligned with command names when the command produces
+  machine-readable output. Convert kebab-case command terms to snake_case JSON
+  keys, for example `route-header` becomes `route_header`.
+
 ## Future Session
 
 A session is the expected core primitive. It will represent a bounded attempt
