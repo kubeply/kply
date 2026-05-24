@@ -483,6 +483,60 @@ impl SessionPlan {
     }
 }
 
+/// Final report for an executed [`SessionPlan`].
+///
+/// A report preserves the original [`SessionPlan`] and records a reportable
+/// [`SessionStatus`] such as [`SessionStatus::Ready`], [`SessionStatus::Blocked`],
+/// [`SessionStatus::CleanedUp`], or [`SessionStatus::Failed`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionReport {
+    plan: SessionPlan,
+    status: SessionStatus,
+}
+
+impl SessionReport {
+    /// Create a [`SessionReport`] from a plan and reportable status.
+    pub fn new(plan: SessionPlan, status: SessionStatus) -> Result<Self, SessionReportError> {
+        if !is_report_status(status) {
+            return Err(SessionReportError::NonReportableStatus { status });
+        }
+
+        Ok(Self { plan, status })
+    }
+
+    /// Borrow the original [`SessionPlan`].
+    pub fn plan(&self) -> &SessionPlan {
+        &self.plan
+    }
+
+    /// Return the final report [`SessionStatus`].
+    pub const fn status(&self) -> SessionStatus {
+        self.status
+    }
+}
+
+/// Error returned when a [`SessionReport`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionReportError {
+    /// Session reports must use a reportable terminal or blocked status.
+    NonReportableStatus { status: SessionStatus },
+}
+
+impl fmt::Display for SessionReportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonReportableStatus { status } => {
+                write!(
+                    formatter,
+                    "session report status `{status}` is not reportable"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SessionReportError {}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -865,6 +919,16 @@ fn duplicate_session_operation(operations: &[SessionOperation]) -> Option<Sessio
         .map(|window| window[0])
 }
 
+const fn is_report_status(status: SessionStatus) -> bool {
+    matches!(
+        status,
+        SessionStatus::Blocked
+            | SessionStatus::Ready
+            | SessionStatus::CleanedUp
+            | SessionStatus::Failed
+    )
+}
+
 fn validate_session_token(value: &str) -> Result<(), SessionTokenError> {
     if value.is_empty() {
         return Err(SessionTokenError::Empty);
@@ -1173,9 +1237,19 @@ mod tests {
         RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteSelector,
         RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName,
         SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
-        SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        SessionReport, SessionReportError, SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError,
+        WorkloadRef, WorkloadRefError, WorkloadTokenError,
     };
+
+    fn test_session_plan() -> SessionPlan {
+        SessionPlan::new(
+            SessionId::new("session-123").expect("session id"),
+            SessionName::new("checkout-test").expect("session name"),
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+            SessionPolicy::sandbox(),
+        )
+    }
 
     #[test]
     fn creates_session_id_from_valid_value() {
@@ -1430,16 +1504,41 @@ mod tests {
     fn creates_session_plan_with_route_selector() {
         let route_selector =
             RouteSelector::header("x-kply-session", "session-123").expect("route selector");
-        let plan = SessionPlan::new(
-            SessionId::new("session-123").expect("session id"),
-            SessionName::new("checkout-test").expect("session name"),
-            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
-            ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
-            SessionPolicy::sandbox(),
-        )
-        .with_route_selector(route_selector.clone());
+        let plan = test_session_plan().with_route_selector(route_selector.clone());
 
         assert_eq!(plan.route_selector(), Some(&route_selector));
+    }
+
+    #[test]
+    fn creates_session_report_for_reportable_status() {
+        for status in [
+            SessionStatus::Blocked,
+            SessionStatus::Ready,
+            SessionStatus::CleanedUp,
+            SessionStatus::Failed,
+        ] {
+            let plan = test_session_plan();
+            let report =
+                SessionReport::new(plan.clone(), status).expect("session report should be valid");
+
+            assert_eq!(report.plan(), &plan);
+            assert_eq!(report.status(), status);
+        }
+    }
+
+    #[test]
+    fn rejects_session_report_for_non_reportable_status() {
+        for status in [
+            SessionStatus::Planned,
+            SessionStatus::Preparing,
+            SessionStatus::Active,
+            SessionStatus::Verifying,
+        ] {
+            let error =
+                SessionReport::new(test_session_plan(), status).expect_err("session report");
+
+            assert_eq!(error, SessionReportError::NonReportableStatus { status });
+        }
     }
 
     #[test]
