@@ -16,7 +16,7 @@ pub struct Cli {
     pub version: bool,
 
     /// Print placeholder output as JSON.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub json: bool,
 
     /// Optional top-level command.

@@ -99,3 +99,22 @@ fn prints_command_group_placeholders() {
         insta::assert_snapshot!(format!("command_group_{command}"), output);
     }
 }
+
+#[test]
+fn prints_command_group_json_placeholders() {
+    for command in Command::PLACEHOLDER_GROUPS {
+        let command = command.name();
+        let output = kply_cmd()
+            .args([command, "--json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+
+        let output = String::from_utf8(output).expect("stdout should be UTF-8");
+        let value: serde_json::Value =
+            serde_json::from_str(&output).expect("stdout should be JSON");
+        insta::assert_json_snapshot!(format!("command_group_{command}_json"), value);
+    }
+}
