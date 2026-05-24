@@ -1082,6 +1082,18 @@ mod tests {
     }
 
     #[test]
+    fn creates_header_route_selector_with_exact_max_value_length() {
+        let value = "a".repeat(ROUTE_HEADER_VALUE_MAX_LEN);
+        let selector =
+            RouteSelector::header("x-kply-session", value.as_str()).expect("route selector");
+
+        assert_eq!(
+            selector.header_parts(),
+            Some(("x-kply-session", value.as_str()))
+        );
+    }
+
+    #[test]
     fn creates_host_route_selector() {
         let selector =
             RouteSelector::host("session-123.preview.example.com").expect("route selector");
@@ -1090,6 +1102,18 @@ mod tests {
         assert_eq!(selector.header_parts(), None);
         assert_eq!(selector.hostname(), Some("session-123.preview.example.com"));
         assert_eq!(selector.to_string(), "host:session-123.preview.example.com");
+    }
+
+    #[test]
+    fn creates_host_route_selector_with_exact_max_length() {
+        let label = "a".repeat(ROUTE_HOST_LABEL_MAX_LEN);
+        let final_label = "a".repeat(ROUTE_HOST_LABEL_MAX_LEN - 2);
+        let host = format!("{label}.{label}.{label}.{final_label}");
+        assert_eq!(host.len(), ROUTE_HOST_MAX_LEN);
+
+        let selector = RouteSelector::host(host.as_str()).expect("route selector");
+
+        assert_eq!(selector.hostname(), Some(host.as_str()));
     }
 
     #[test]
@@ -1160,6 +1184,19 @@ mod tests {
             error,
             RouteSelectorError::HeaderValue(RouteHeaderValueError::InvalidCharacter {
                 character: '\n'
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_space_route_header_value_character() {
+        let error =
+            RouteSelector::header("x-kply-session", "session 123").expect_err("header value");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderValue(RouteHeaderValueError::InvalidCharacter {
+                character: ' '
             })
         );
     }
