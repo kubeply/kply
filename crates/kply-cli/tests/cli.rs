@@ -27,11 +27,16 @@ fn prints_placeholder_json() {
 
 #[test]
 fn prints_version_text() {
-    kply_cmd()
+    let output = kply_cmd()
         .arg("--version")
         .assert()
         .success()
-        .stdout(format!("kply {}\n", env!("CARGO_PKG_VERSION")));
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("version_text", output);
 }
 
 #[test]
