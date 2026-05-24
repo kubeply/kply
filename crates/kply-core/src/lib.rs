@@ -350,16 +350,17 @@ impl SessionPolicy {
 
     /// Create the default sandbox-only [`SessionPolicy`].
     pub fn sandbox() -> Self {
-        Self {
-            allowed_operations: vec![
-                SessionOperation::Inspect,
-                SessionOperation::Plan,
-                SessionOperation::Prepare,
-                SessionOperation::Route,
-                SessionOperation::Verify,
-                SessionOperation::Cleanup,
-            ],
-        }
+        let mut allowed_operations = vec![
+            SessionOperation::Inspect,
+            SessionOperation::Plan,
+            SessionOperation::Prepare,
+            SessionOperation::Route,
+            SessionOperation::Verify,
+            SessionOperation::Cleanup,
+        ];
+        allowed_operations.sort_unstable();
+
+        Self { allowed_operations }
     }
 
     /// Borrow the policy's allowed operations in stable order.
