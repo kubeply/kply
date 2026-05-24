@@ -158,15 +158,8 @@ fn covers_every_top_level_flag() {
         "update CLI flag tests when the top-level flag surface changes"
     );
 
-    for args in [
-        &["--help"][..],
-        &["--json"],
-        &["--no-color"],
-        &["--quiet"],
-        &["--verbose"],
-        &["--version"],
-    ] {
-        kply_cmd().args(args).assert().success();
+    for flag_name in &flag_names {
+        kply_cmd().arg(format!("--{flag_name}")).assert().success();
     }
 }
 
