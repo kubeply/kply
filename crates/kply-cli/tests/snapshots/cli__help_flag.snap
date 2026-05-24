@@ -17,4 +17,5 @@ Commands:
 Options:
       --version  Print the kply version
       --json     Print placeholder output as JSON
+      --quiet    Suppress nonessential human-readable output
   -h, --help     Print help
