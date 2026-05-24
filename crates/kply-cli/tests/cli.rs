@@ -118,3 +118,40 @@ fn prints_command_group_json_placeholders() {
         insta::assert_json_snapshot!(format!("command_group_{command}_json"), value);
     }
 }
+
+#[test]
+fn suppresses_placeholder_text_when_quiet() {
+    kply_cmd().arg("--quiet").assert().success().stdout("");
+}
+
+#[test]
+fn suppresses_command_group_text_when_quiet() {
+    for command in Command::PLACEHOLDER_GROUPS {
+        kply_cmd()
+            .args([command.name(), "--quiet"])
+            .assert()
+            .success()
+            .stdout("");
+    }
+}
+
+#[test]
+fn keeps_requested_outputs_when_quiet() {
+    kply_cmd()
+        .args(["--version", "--quiet"])
+        .assert()
+        .success()
+        .stdout(format!("kply {}\n", env!("CARGO_PKG_VERSION")));
+
+    let output = kply_cmd()
+        .args(["--json", "--quiet"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("quiet_json", value);
+}

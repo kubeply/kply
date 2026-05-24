@@ -21,8 +21,10 @@ fn main() -> Result<()> {
                 });
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
-                println!("kply {}", command.name());
-                println!("Command group is defined but behavior is intentionally pending.");
+                if !cli.quiet {
+                    println!("kply {}", command.name());
+                    println!("Command group is defined but behavior is intentionally pending.");
+                }
             }
             return Ok(());
         }
@@ -50,7 +52,7 @@ fn main() -> Result<()> {
             "status": "placeholder"
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
-    } else {
+    } else if !cli.quiet {
         println!("kply {}", env!("CARGO_PKG_VERSION"));
         println!("Placeholder CLI. Roadmap and commands are intentionally pending.");
     }

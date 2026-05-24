@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Suppress nonessential human-readable output.
+    #[arg(long, global = true)]
+    pub quiet: bool,
+
     /// Optional top-level command.
     #[command(subcommand)]
     pub command: Option<Command>,
