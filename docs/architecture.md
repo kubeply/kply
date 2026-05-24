@@ -35,8 +35,11 @@ Rules:
   `cluster`, and `report`.
 - Prefer explicit verbs for subcommands once behavior exists, such as `show`,
   `validate`, `plan`, `start`, `verify`, and `cleanup`.
-- Keep mutation verbs explicit. A command that can change infrastructure must
-  make that behavior visible in its name or require an explicit apply flag.
+- Keep mutation verbs explicit for user-facing destructive commands, such as
+  `session delete` or `resource destroy`.
+- Reserve plan or preview commands for non-mutating output by default. If a
+  plan command can later perform the planned change, the canonical confirmation
+  flag is `--apply`, for example `session plan --apply`.
 - Avoid hidden aliases until the primary command surface is stable.
 - Do not reuse a command name for different resource types.
 - Keep JSON field names aligned with command names when the command produces
