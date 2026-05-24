@@ -61,6 +61,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Print deterministic debug context when verbose mode is enabled.
 fn print_verbose_trace(cli: &Cli) {
     if !cli.verbose {
         return;
