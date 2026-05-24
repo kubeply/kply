@@ -52,6 +52,64 @@ impl fmt::Display for SessionName {
     }
 }
 
+/// Lifecycle status for a future Kply session.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SessionStatus {
+    /// Session inputs have been accepted but no cluster preparation has started.
+    Planned,
+    /// Kply is preparing sandbox resources or route isolation.
+    Preparing,
+    /// The sandbox session is available for agent or test traffic.
+    Active,
+    /// Kply is running checks against the active session.
+    Verifying,
+    /// The session cannot proceed until an explicit issue is resolved.
+    Blocked,
+    /// The session passed checks and is ready for promotion or human approval.
+    Ready,
+    /// Kply has removed the temporary session resources.
+    CleanedUp,
+    /// The session failed and requires inspection.
+    Failed,
+}
+
+impl SessionStatus {
+    /// Return every session lifecycle status in declaration order, including terminal states.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Planned,
+            Self::Preparing,
+            Self::Active,
+            Self::Verifying,
+            Self::Blocked,
+            Self::Ready,
+            Self::CleanedUp,
+            Self::Failed,
+        ]
+    }
+
+    /// Return the stable snake_case status name used in agent-readable output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Preparing => "preparing",
+            Self::Active => "active",
+            Self::Verifying => "verifying",
+            Self::Blocked => "blocked",
+            Self::Ready => "ready",
+            Self::CleanedUp => "cleaned_up",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl fmt::Display for SessionStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -190,7 +248,10 @@ fn is_session_token_boundary(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName, SessionNameError};
+    use super::{
+        SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName, SessionNameError,
+        SessionStatus,
+    };
 
     #[test]
     fn creates_session_id_from_valid_value() {
@@ -278,5 +339,45 @@ mod tests {
         let error = SessionName::new("check_out").expect_err("underscore should be rejected");
 
         assert_eq!(error, SessionNameError::InvalidCharacter { character: '_' });
+    }
+
+    #[test]
+    fn lists_session_statuses_in_lifecycle_order() {
+        assert_eq!(
+            SessionStatus::all(),
+            &[
+                SessionStatus::Planned,
+                SessionStatus::Preparing,
+                SessionStatus::Active,
+                SessionStatus::Verifying,
+                SessionStatus::Blocked,
+                SessionStatus::Ready,
+                SessionStatus::CleanedUp,
+                SessionStatus::Failed,
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_session_status_names() {
+        let status_names = SessionStatus::all()
+            .iter()
+            .map(SessionStatus::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            status_names,
+            [
+                "planned",
+                "preparing",
+                "active",
+                "verifying",
+                "blocked",
+                "ready",
+                "cleaned_up",
+                "failed",
+            ]
+        );
+        assert_eq!(SessionStatus::CleanedUp.to_string(), "cleaned_up");
     }
 }
