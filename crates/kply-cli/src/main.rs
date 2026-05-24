@@ -6,15 +6,15 @@ use clap::{CommandFactory, Parser};
 use kply_cli::cli::{Cli, Command};
 use std::process::ExitCode;
 
-const EXIT_USAGE: u8 = 2;
-const EXIT_INTERNAL: u8 = 3;
+const EXIT_USAGE: i32 = 2;
+const EXIT_INTERNAL: i32 = 3;
 
 fn main() -> ExitCode {
     match run() {
         Ok(exit_code) => exit_code,
         Err(error) => {
             eprintln!("kply error: internal\n\n{error:#}");
-            ExitCode::from(EXIT_INTERNAL)
+            exit_code(EXIT_INTERNAL)
         }
     }
 }
@@ -89,9 +89,15 @@ fn render_parse_error(error: clap::Error) -> ExitCode {
         }
         _ => {
             eprintln!("kply error: usage\n\n{error}");
-            ExitCode::from(EXIT_USAGE)
+            exit_code(EXIT_USAGE)
         }
     }
+}
+
+/// Convert documented small integer exit codes into process exit codes.
+fn exit_code(code: i32) -> ExitCode {
+    let code = u8::try_from(code).expect("documented exit code should fit in u8");
+    ExitCode::from(code)
 }
 
 /// Print deterministic debug context when verbose mode is enabled.
