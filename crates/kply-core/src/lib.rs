@@ -1959,41 +1959,13 @@ mod tests {
     }
 
     #[test]
-    fn serializes_session_plan_to_stable_json_fields() {
+    fn snapshots_session_plan_json_contract() {
         let route_selector =
             RouteSelector::header("x-kply-session", "session-123").expect("route selector");
         let plan = test_session_plan().with_route_selector(route_selector);
-        let value = serde_json::to_value(&plan).expect("session plan should serialize");
+        let value = serde_json::to_value(plan).expect("session plan should serialize");
 
-        assert_eq!(
-            value,
-            json!({
-                "id": "session-123",
-                "name": "checkout-test",
-                "workload": {
-                    "namespace": "checkout",
-                    "kind": "Deployment",
-                    "name": "checkout-api"
-                },
-                "image": "registry.example.com/checkout/api:v2",
-                "route_selector": {
-                    "kind": "header",
-                    "name": "x-kply-session",
-                    "value": "session-123"
-                },
-                "policy": {
-                    "allowed_operations": [
-                        "inspect",
-                        "plan",
-                        "prepare",
-                        "route",
-                        "verify",
-                        "cleanup"
-                    ]
-                },
-                "status": "planned"
-            })
-        );
+        insta::assert_json_snapshot!("session_plan_json_contract", value);
     }
 
     #[test]
@@ -2065,6 +2037,15 @@ mod tests {
             serde_json::from_value(value).expect("session report should deserialize");
 
         assert_eq!(deserialized, report);
+    }
+
+    #[test]
+    fn snapshots_session_report_json_contract() {
+        let report =
+            SessionReport::new(test_session_plan(), SessionStatus::Ready).expect("session report");
+        let value = serde_json::to_value(report).expect("session report should serialize");
+
+        insta::assert_json_snapshot!("session_report_json_contract", value);
     }
 
     #[test]

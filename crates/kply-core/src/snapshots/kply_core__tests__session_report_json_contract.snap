@@ -1,0 +1,29 @@
+---
+source: crates/kply-core/src/lib.rs
+expression: value
+---
+{
+  "plan": {
+    "id": "session-123",
+    "image": "registry.example.com/checkout/api:v2",
+    "name": "checkout-test",
+    "policy": {
+      "allowed_operations": [
+        "inspect",
+        "plan",
+        "prepare",
+        "route",
+        "verify",
+        "cleanup"
+      ]
+    },
+    "route_selector": null,
+    "status": "planned",
+    "workload": {
+      "kind": "Deployment",
+      "name": "checkout-api",
+      "namespace": "checkout"
+    }
+  },
+  "status": "ready"
+}

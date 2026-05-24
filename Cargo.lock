@@ -307,6 +307,7 @@ version = "0.1.0"
 name = "kply-core"
 version = "0.1.0"
 dependencies = [
+ "insta",
  "serde",
  "serde_json",
 ]
