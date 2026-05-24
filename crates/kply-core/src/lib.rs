@@ -496,6 +496,17 @@ fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
         return Err(ImageRefError::InvalidCharacter { character });
     }
 
+    let repository = value
+        .split([':', '@'])
+        .next()
+        .ok_or(ImageRefError::MissingName)?;
+    if let Some(character) = repository
+        .chars()
+        .find(|character| !is_image_ref_repository_character(*character))
+    {
+        return Err(ImageRefError::InvalidCharacter { character });
+    }
+
     if value
         .split(['/', ':', '@'])
         .any(|component| component.is_empty())
@@ -508,6 +519,12 @@ fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
 
 fn is_image_ref_character(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '/' | ':' | '@')
+}
+
+fn is_image_ref_repository_character(character: char) -> bool {
+    character.is_ascii_lowercase()
+        || character.is_ascii_digit()
+        || matches!(character, '.' | '_' | '-' | '/')
 }
 
 fn is_image_ref_boundary(character: char) -> bool {
@@ -795,6 +812,17 @@ mod tests {
     }
 
     #[test]
+    fn creates_image_ref_with_mixed_case_tag() {
+        let image_ref =
+            ImageRef::new("registry.example.com/platform/checkout-api:BuildA").expect("image ref");
+
+        assert_eq!(
+            image_ref.as_str(),
+            "registry.example.com/platform/checkout-api:BuildA"
+        );
+    }
+
+    #[test]
     fn rejects_empty_image_ref() {
         let error = ImageRef::new("").expect_err("empty image ref should be rejected");
 
@@ -828,6 +856,14 @@ mod tests {
         let error = ImageRef::new("checkout api:1.2.3").expect_err("space should be rejected");
 
         assert_eq!(error, ImageRefError::InvalidCharacter { character: ' ' });
+    }
+
+    #[test]
+    fn rejects_image_ref_with_uppercase_repository() {
+        let error =
+            ImageRef::new("registry.example.com/platform/Checkout-api:1.2.3").expect_err("image");
+
+        assert_eq!(error, ImageRefError::InvalidCharacter { character: 'C' });
     }
 
     #[test]
