@@ -783,13 +783,7 @@ fn validate_route_host(value: &str) -> Result<(), RouteHostError> {
             });
         }
 
-        let mut label_characters = label.chars();
-        let Some(label_first_character) = label_characters.next() else {
-            unreachable!("route host label is non-empty per the preceding check");
-        };
-        let label_last_character = label_characters
-            .next_back()
-            .unwrap_or(label_first_character);
+        let (label_first_character, label_last_character) = route_host_label_boundaries(label)?;
 
         if !is_route_host_boundary(label_first_character)
             || !is_route_host_boundary(label_last_character)
@@ -799,6 +793,16 @@ fn validate_route_host(value: &str) -> Result<(), RouteHostError> {
     }
 
     Ok(())
+}
+
+fn route_host_label_boundaries(label: &str) -> Result<(char, char), RouteHostError> {
+    let mut label_characters = label.chars();
+    let label_first_character = label_characters.next().ok_or(RouteHostError::EmptyLabel)?;
+    let label_last_character = label_characters
+        .next_back()
+        .unwrap_or(label_first_character);
+
+    Ok((label_first_character, label_last_character))
 }
 
 fn is_route_host_character(character: char) -> bool {
