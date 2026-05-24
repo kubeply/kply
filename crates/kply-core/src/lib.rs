@@ -820,6 +820,34 @@ mod tests {
     }
 
     #[test]
+    fn creates_image_ref_from_simple_name() {
+        let image_ref = ImageRef::new("nginx").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "nginx");
+    }
+
+    #[test]
+    fn creates_image_ref_from_library_path() {
+        let image_ref = ImageRef::new("library/nginx:latest").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "library/nginx:latest");
+    }
+
+    #[test]
+    fn creates_image_ref_with_repository_underscore() {
+        let image_ref = ImageRef::new("my_image:v1").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "my_image:v1");
+    }
+
+    #[test]
+    fn creates_image_ref_from_deep_repository_path() {
+        let image_ref = ImageRef::new("registry.io/a/b/c/image:tag").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "registry.io/a/b/c/image:tag");
+    }
+
+    #[test]
     fn creates_image_ref_from_digest_reference() {
         let image_ref = ImageRef::new("registry.example.com/platform/checkout-api@sha256:abcdef")
             .expect("image ref");
