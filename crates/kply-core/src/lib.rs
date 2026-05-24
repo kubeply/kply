@@ -496,20 +496,14 @@ fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
         return Err(ImageRefError::InvalidCharacter { character });
     }
 
-    let repository = value.split([':', '@']).next().unwrap_or(value);
-    if let Some(character) = repository
-        .chars()
-        .find(|character| !is_image_ref_repository_character(*character))
-    {
-        return Err(ImageRefError::InvalidCharacter { character });
-    }
-
     if value
         .split(['/', ':', '@'])
         .any(|component| component.is_empty())
     {
         return Err(ImageRefError::MissingName);
     }
+
+    validate_image_repository_components(value)?;
 
     Ok(())
 }
@@ -521,11 +515,50 @@ fn is_image_ref_character(character: char) -> bool {
 fn is_image_ref_repository_character(character: char) -> bool {
     character.is_ascii_lowercase()
         || character.is_ascii_digit()
-        || matches!(character, '.' | '_' | '-' | '/')
+        || matches!(character, '.' | '_' | '-')
+}
+
+fn is_image_registry_character(character: char) -> bool {
+    character.is_ascii_lowercase()
+        || character.is_ascii_digit()
+        || matches!(character, '.' | '-' | ':')
 }
 
 fn is_image_ref_boundary(character: char) -> bool {
     character.is_ascii_alphanumeric()
+}
+
+fn validate_image_repository_components(value: &str) -> Result<(), ImageRefError> {
+    let image_without_digest = value.split('@').next().unwrap_or(value);
+    let components = image_without_digest.split('/').collect::<Vec<_>>();
+    let last_component_index = components.len().saturating_sub(1);
+
+    for (index, component) in components.iter().enumerate() {
+        let component = if index == last_component_index {
+            component.split(':').next().unwrap_or(component)
+        } else {
+            component
+        };
+
+        let valid_character = if index == 0 && is_registry_component(component) {
+            is_image_registry_character
+        } else {
+            is_image_ref_repository_character
+        };
+
+        if let Some(character) = component
+            .chars()
+            .find(|character| !valid_character(*character))
+        {
+            return Err(ImageRefError::InvalidCharacter { character });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_registry_component(component: &str) -> bool {
+    component == "localhost" || component.contains('.') || component.contains(':')
 }
 
 fn validate_workload_kind(value: &str) -> Result<(), WorkloadKindError> {
@@ -861,6 +894,13 @@ mod tests {
             ImageRef::new("registry.example.com/platform/Checkout-api:1.2.3").expect_err("image");
 
         assert_eq!(error, ImageRefError::InvalidCharacter { character: 'C' });
+    }
+
+    #[test]
+    fn rejects_uppercase_in_path_after_registry_port() {
+        let error = ImageRef::new("localhost:5000/Platform/checkout-api:1.2.3").expect_err("image");
+
+        assert_eq!(error, ImageRefError::InvalidCharacter { character: 'P' });
     }
 
     #[test]
