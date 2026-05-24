@@ -1843,6 +1843,61 @@ mod tests {
     }
 
     #[test]
+    fn every_non_terminal_session_status_has_valid_outgoing_transition() {
+        for (from, to) in [
+            (SessionStatus::Planned, SessionStatus::Preparing),
+            (SessionStatus::Preparing, SessionStatus::Active),
+            (SessionStatus::Active, SessionStatus::Verifying),
+            (SessionStatus::Verifying, SessionStatus::Ready),
+            (SessionStatus::Blocked, SessionStatus::Preparing),
+            (SessionStatus::Ready, SessionStatus::CleanedUp),
+            (SessionStatus::Failed, SessionStatus::CleanedUp),
+        ] {
+            assert!(
+                from.can_transition_to(to),
+                "{from} should transition to {to}"
+            );
+            assert_eq!(from.validate_transition_to(to), Ok(()));
+        }
+    }
+
+    #[test]
+    fn cleaned_up_session_status_has_no_outgoing_transitions() {
+        for status in SessionStatus::all() {
+            let error = SessionStatus::CleanedUp
+                .validate_transition_to(*status)
+                .expect_err("cleaned up sessions should be terminal");
+
+            assert!(!SessionStatus::CleanedUp.can_transition_to(*status));
+            assert_eq!(
+                error,
+                SessionTransitionError::Invalid {
+                    from: SessionStatus::CleanedUp,
+                    to: *status
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn session_status_self_transitions_are_rejected() {
+        for status in SessionStatus::all() {
+            let error = status
+                .validate_transition_to(*status)
+                .expect_err("self-transition should be rejected");
+
+            assert!(!status.can_transition_to(*status));
+            assert_eq!(
+                error,
+                SessionTransitionError::Invalid {
+                    from: *status,
+                    to: *status
+                }
+            );
+        }
+    }
+
+    #[test]
     fn lists_session_event_kinds_in_lifecycle_order() {
         assert_eq!(
             SessionEventKind::all(),
