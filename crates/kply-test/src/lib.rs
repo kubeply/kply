@@ -133,7 +133,7 @@ pub fn kply_stdout(args: &[&str]) -> String {
     String::from_utf8(output).expect("kply stdout should be UTF-8")
 }
 
-/// Run `kply` and return the process output for exit-code assertions.
+/// Run `kply` and return the [`Output`] for exit-code assertions.
 pub fn kply_output(args: &[&str]) -> Output {
     kply_cmd()
         .args(args)
@@ -141,7 +141,7 @@ pub fn kply_output(args: &[&str]) -> Output {
         .expect("kply command should execute")
 }
 
-/// Assert a process output exited with the expected code.
+/// Assert an [`Output`] exited with the expected code.
 pub fn assert_exit_code(output: &Output, expected_code: i32) {
     assert_eq!(
         output.status.code(),
@@ -152,7 +152,7 @@ pub fn assert_exit_code(output: &Output, expected_code: i32) {
     );
 }
 
-/// Run `kply` and assert the expected exit code.
+/// Run `kply`, assert the expected exit code, and return the [`Output`].
 pub fn assert_kply_exit_code(args: &[&str], expected_code: i32) -> Output {
     let output = kply_output(args);
     assert_exit_code(&output, expected_code);
@@ -285,9 +285,7 @@ mod tests {
 
     #[test]
     fn asserts_kply_exit_codes() {
-        let output = assert_kply_exit_code(&["--json"], EXIT_SUCCESS);
-
-        assert_exit_code(&output, EXIT_SUCCESS);
+        assert_kply_exit_code(&["--json"], EXIT_SUCCESS);
         assert_exit_code(&kply_output(&[]), EXIT_SUCCESS);
     }
 
