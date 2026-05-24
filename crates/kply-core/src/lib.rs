@@ -1253,7 +1253,7 @@ struct WorkloadRefFields {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum RouteSelectorFields {
     Header { name: String, value: String },
     Host { hostname: String },
@@ -2328,6 +2328,46 @@ mod tests {
         assert_eq!(selector.header_parts(), None);
         assert_eq!(selector.hostname(), Some("session-123.preview.example.com"));
         assert_eq!(selector.to_string(), "host:session-123.preview.example.com");
+    }
+
+    #[test]
+    fn rejects_route_selector_json_with_cross_variant_fields() {
+        for value in [
+            json!({
+                "kind": "header",
+                "name": "x-kply-session",
+                "value": "session-123",
+                "hostname": "session-123.preview.example.com"
+            }),
+            json!({
+                "kind": "host",
+                "hostname": "session-123.preview.example.com",
+                "name": "x-kply-session"
+            }),
+        ] {
+            serde_json::from_value::<RouteSelector>(value)
+                .expect_err("cross-variant route selector fields should be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_route_selector_json_with_unknown_kind_or_field() {
+        for value in [
+            json!({
+                "kind": "cookie",
+                "name": "kply-session",
+                "value": "session-123"
+            }),
+            json!({
+                "kind": "header",
+                "name": "x-kply-session",
+                "value": "session-123",
+                "extra": true
+            }),
+        ] {
+            serde_json::from_value::<RouteSelector>(value)
+                .expect_err("unknown route selector shape should be rejected");
+        }
     }
 
     #[test]
