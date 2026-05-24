@@ -261,13 +261,25 @@ macro_rules! __assert_json_snapshot {
 #[cfg(test)]
 mod tests {
     use super::{
-        EXIT_SUCCESS, fake_kubeconfig, fake_kubeconfig_with_context, fixture_path, fixture_root,
-        kply_stdout, normalize_absolute_paths, normalize_generated_ids,
-        normalize_kubernetes_object_names, normalize_output, normalize_timestamps,
-        parse_json_output, temp_workspace, temp_workspace_dir, write_fake_kubeconfig,
-        write_temp_file,
+        EXIT_BLOCKING, EXIT_INTERNAL, EXIT_SUCCESS, EXIT_USAGE, fake_kubeconfig,
+        fake_kubeconfig_with_context, fixture_path, fixture_root, kply_stdout,
+        normalize_absolute_paths, normalize_generated_ids, normalize_kubernetes_object_names,
+        normalize_output, normalize_timestamps, parse_json_output, temp_workspace,
+        temp_workspace_dir, write_fake_kubeconfig, write_temp_file,
     };
     use super::{assert_exit_code, assert_kply_exit_code, kply_output};
+    use std::process::Output;
+
+    #[cfg(unix)]
+    fn output_with_exit_code(code: i32) -> Output {
+        use std::os::unix::process::ExitStatusExt;
+
+        Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
 
     #[test]
     fn resolves_fixture_paths_from_repo_root() {
@@ -287,6 +299,14 @@ mod tests {
     fn asserts_kply_exit_codes() {
         assert_kply_exit_code(&["--json"], EXIT_SUCCESS);
         assert_exit_code(&kply_output(&[]), EXIT_SUCCESS);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn asserts_non_success_exit_codes() {
+        assert_exit_code(&output_with_exit_code(EXIT_BLOCKING), EXIT_BLOCKING);
+        assert_exit_code(&output_with_exit_code(EXIT_USAGE), EXIT_USAGE);
+        assert_exit_code(&output_with_exit_code(EXIT_INTERNAL), EXIT_INTERNAL);
     }
 
     #[test]
