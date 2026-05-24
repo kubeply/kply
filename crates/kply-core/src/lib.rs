@@ -269,6 +269,142 @@ impl fmt::Display for RouteSelector {
     }
 }
 
+/// Operation that a future Kply session policy may allow.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SessionOperation {
+    /// Read workload and cluster state without mutating resources.
+    Inspect,
+    /// Produce a dry-run session plan.
+    Plan,
+    /// Create or update temporary sandbox resources.
+    Prepare,
+    /// Configure temporary test traffic routing.
+    Route,
+    /// Run checks against the active sandbox session.
+    Verify,
+    /// Remove temporary session resources.
+    Cleanup,
+    /// Promote a verified change outside the sandbox boundary.
+    Promote,
+}
+
+impl SessionOperation {
+    /// Return every known session operation in declaration order.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Inspect,
+            Self::Plan,
+            Self::Prepare,
+            Self::Route,
+            Self::Verify,
+            Self::Cleanup,
+            Self::Promote,
+        ]
+    }
+
+    /// Return the stable snake_case operation name used in agent-readable output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Inspect => "inspect",
+            Self::Plan => "plan",
+            Self::Prepare => "prepare",
+            Self::Route => "route",
+            Self::Verify => "verify",
+            Self::Cleanup => "cleanup",
+            Self::Promote => "promote",
+        }
+    }
+}
+
+impl fmt::Display for SessionOperation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Allowed operation set for a future Kply session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionPolicy {
+    allowed_operations: Vec<SessionOperation>,
+}
+
+impl SessionPolicy {
+    /// Create a [`SessionPolicy`] from a non-empty list of unique operations.
+    pub fn new(
+        allowed_operations: impl IntoIterator<Item = SessionOperation>,
+    ) -> Result<Self, SessionPolicyError> {
+        let mut allowed_operations = allowed_operations.into_iter().collect::<Vec<_>>();
+
+        if allowed_operations.is_empty() {
+            return Err(SessionPolicyError::Empty);
+        }
+
+        allowed_operations.sort_unstable();
+        if let Some(operation) = duplicate_session_operation(&allowed_operations) {
+            return Err(SessionPolicyError::Duplicate { operation });
+        }
+
+        Ok(Self { allowed_operations })
+    }
+
+    /// Create the default sandbox-only [`SessionPolicy`].
+    pub fn sandbox() -> Self {
+        let mut allowed_operations = vec![
+            SessionOperation::Inspect,
+            SessionOperation::Plan,
+            SessionOperation::Prepare,
+            SessionOperation::Route,
+            SessionOperation::Verify,
+            SessionOperation::Cleanup,
+        ];
+        allowed_operations.sort_unstable();
+
+        Self { allowed_operations }
+    }
+
+    /// Borrow the policy's allowed operations in stable order.
+    pub fn allowed_operations(&self) -> &[SessionOperation] {
+        &self.allowed_operations
+    }
+
+    /// Return whether the policy allows the given operation.
+    pub fn allows(&self, operation: SessionOperation) -> bool {
+        self.allowed_operations.binary_search(&operation).is_ok()
+    }
+}
+
+impl Default for SessionPolicy {
+    fn default() -> Self {
+        Self::sandbox()
+    }
+}
+
+/// Error returned when a [`SessionPolicy`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionPolicyError {
+    /// Session policies must allow at least one operation.
+    Empty,
+    /// Session policies cannot contain the same operation more than once.
+    Duplicate { operation: SessionOperation },
+}
+
+impl fmt::Display for SessionPolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("session policy cannot be empty"),
+            Self::Duplicate { operation } => {
+                write!(
+                    formatter,
+                    "session policy contains duplicate operation `{operation}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SessionPolicyError {}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -640,6 +776,17 @@ enum SessionTokenError {
     InvalidCharacter { character: char },
 }
 
+/// Find the first duplicate operation in a sorted slice.
+///
+/// This only checks adjacent elements, so callers must sort operations first.
+/// Returns [`None`] when all adjacent operations are unique.
+fn duplicate_session_operation(operations: &[SessionOperation]) -> Option<SessionOperation> {
+    operations
+        .windows(2)
+        .find(|window| window[0] == window[1])
+        .map(|window| window[0])
+}
+
 fn validate_session_token(value: &str) -> Result<(), SessionTokenError> {
     if value.is_empty() {
         return Err(SessionTokenError::Empty);
@@ -947,8 +1094,9 @@ mod tests {
         ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
         RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteSelector,
         RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName,
-        SessionNameError, SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        SessionNameError, SessionOperation, SessionPolicy, SessionPolicyError, SessionStatus,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
 
     #[test]
@@ -1077,6 +1225,102 @@ mod tests {
             ]
         );
         assert_eq!(SessionStatus::CleanedUp.to_string(), "cleaned_up");
+    }
+
+    #[test]
+    fn lists_session_operations_in_declaration_order() {
+        assert_eq!(
+            SessionOperation::all(),
+            &[
+                SessionOperation::Inspect,
+                SessionOperation::Plan,
+                SessionOperation::Prepare,
+                SessionOperation::Route,
+                SessionOperation::Verify,
+                SessionOperation::Cleanup,
+                SessionOperation::Promote,
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_session_operation_names() {
+        let operation_names = SessionOperation::all()
+            .iter()
+            .map(SessionOperation::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            operation_names,
+            [
+                "inspect", "plan", "prepare", "route", "verify", "cleanup", "promote",
+            ]
+        );
+        assert_eq!(SessionOperation::Promote.to_string(), "promote");
+    }
+
+    #[test]
+    fn creates_session_policy_with_stable_operation_order() {
+        let policy = SessionPolicy::new([
+            SessionOperation::Verify,
+            SessionOperation::Inspect,
+            SessionOperation::Cleanup,
+        ])
+        .expect("session policy");
+
+        assert_eq!(
+            policy.allowed_operations(),
+            &[
+                SessionOperation::Inspect,
+                SessionOperation::Verify,
+                SessionOperation::Cleanup,
+            ]
+        );
+        assert!(policy.allows(SessionOperation::Verify));
+        assert!(!policy.allows(SessionOperation::Promote));
+    }
+
+    #[test]
+    fn creates_sandbox_session_policy_without_promotion() {
+        let policy = SessionPolicy::sandbox();
+
+        assert_eq!(
+            policy.allowed_operations(),
+            &[
+                SessionOperation::Inspect,
+                SessionOperation::Plan,
+                SessionOperation::Prepare,
+                SessionOperation::Route,
+                SessionOperation::Verify,
+                SessionOperation::Cleanup,
+            ]
+        );
+        assert_eq!(SessionPolicy::default(), policy);
+        assert!(!policy.allows(SessionOperation::Promote));
+    }
+
+    #[test]
+    fn rejects_empty_session_policy() {
+        let error = SessionPolicy::new([]).expect_err("empty policy");
+
+        assert_eq!(error, SessionPolicyError::Empty);
+    }
+
+    #[test]
+    fn rejects_duplicate_session_policy_operations() {
+        let error = SessionPolicy::new([
+            SessionOperation::Inspect,
+            SessionOperation::Verify,
+            SessionOperation::Inspect,
+        ])
+        .expect_err("duplicate policy operation");
+
+        assert_eq!(
+            error,
+            SessionPolicyError::Duplicate {
+                operation: SessionOperation::Inspect
+            }
+        );
     }
 
     #[test]
