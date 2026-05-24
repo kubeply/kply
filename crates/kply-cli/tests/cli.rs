@@ -172,6 +172,32 @@ fn covers_every_top_level_flag() {
 }
 
 #[test]
+fn rejects_hidden_aliases_until_command_surface_is_stable() {
+    let cli_command = Cli::command();
+
+    for command in cli_command.get_subcommands() {
+        let aliases = command.get_all_aliases().collect::<Vec<_>>();
+
+        assert!(
+            aliases.is_empty(),
+            "top-level command `{}` should not define aliases yet",
+            command.get_name()
+        );
+    }
+
+    for argument in cli_command.get_arguments() {
+        let long_aliases = argument.get_all_aliases().unwrap_or_default();
+        let short_aliases = argument.get_all_short_aliases().unwrap_or_default();
+
+        assert!(
+            long_aliases.is_empty() && short_aliases.is_empty(),
+            "top-level flag `--{}` should not define aliases yet",
+            argument.get_long().unwrap_or(argument.get_id().as_str())
+        );
+    }
+}
+
+#[test]
 fn suppresses_placeholder_text_when_quiet() {
     kply_cmd().arg("--quiet").assert().success().stdout("");
 }
