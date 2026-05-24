@@ -236,3 +236,31 @@ fn renders_unknown_command_as_usage_error() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
     insta::assert_snapshot!("unknown_command_usage_error", stderr);
 }
+
+#[test]
+fn renders_unknown_flag_as_json_usage_error() {
+    let output = assert_kply_exit_code(&["--json", "--bad-flag"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "JSON usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("unknown_flag_json_usage_error", value);
+}
+
+#[test]
+fn renders_unknown_command_as_json_usage_error() {
+    let output = assert_kply_exit_code(&["unknown", "--json"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "JSON usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("unknown_command_json_usage_error", value);
+}

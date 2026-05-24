@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use kply_cli::cli::{Cli, Command};
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 const EXIT_USAGE: i32 = 2;
@@ -20,9 +21,11 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
-    let cli = match Cli::try_parse() {
+    let args = std::env::args_os().collect::<Vec<_>>();
+    let wants_json = args_have_flag(&args, "--json");
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
-        Err(error) => return Ok(render_parse_error(error)),
+        Err(error) => return render_parse_error(error, wants_json),
     };
 
     print_verbose_trace(&cli);
@@ -81,17 +84,43 @@ fn run() -> Result<ExitCode> {
 }
 
 /// Render Clap parse results through Kply's stable exit-code contract.
-fn render_parse_error(error: clap::Error) -> ExitCode {
+fn render_parse_error(error: clap::Error, wants_json: bool) -> Result<ExitCode> {
     match error.kind() {
         ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
             print!("{error}");
-            ExitCode::SUCCESS
+            Ok(ExitCode::SUCCESS)
         }
         _ => {
-            eprintln!("kply error: usage\n\n{error}");
-            exit_code(EXIT_USAGE)
+            if wants_json {
+                render_json_usage_error(&error)?;
+            } else {
+                eprintln!("kply error: usage\n\n{error}");
+            }
+            Ok(exit_code(EXIT_USAGE))
         }
     }
+}
+
+/// Return true when a raw argument list includes a boolean flag.
+fn args_have_flag(args: &[OsString], flag: &str) -> bool {
+    args.iter().skip(1).any(|arg| arg == flag)
+}
+
+/// Render a usage error as structured JSON for agents.
+fn render_json_usage_error(error: &clap::Error) -> Result<()> {
+    let details = error.to_string();
+    let message = details.lines().next().unwrap_or("usage error");
+    let value = serde_json::json!({
+        "error": {
+            "code": "usage",
+            "exit_code": EXIT_USAGE,
+            "message": message,
+            "details": details
+        }
+    });
+
+    eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
 }
 
 /// Convert documented small integer exit codes into process exit codes.

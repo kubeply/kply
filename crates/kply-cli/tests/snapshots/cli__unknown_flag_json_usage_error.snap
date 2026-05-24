@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "error": {
+    "code": "usage",
+    "details": "error: unexpected argument '--bad-flag' found\n\nUsage: kply --json\n\nFor more information, try '--help'.\n",
+    "exit_code": 2,
+    "message": "error: unexpected argument '--bad-flag' found"
+  }
+}
