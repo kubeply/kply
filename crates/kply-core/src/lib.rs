@@ -757,19 +757,19 @@ fn validate_route_host(value: &str) -> Result<(), RouteHostError> {
         });
     }
 
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_route_host_character(*character))
+    {
+        return Err(RouteHostError::InvalidCharacter { character });
+    }
+
     let mut characters = value.chars();
     let first_character = characters.next().ok_or(RouteHostError::Empty)?;
     let last_character = characters.next_back().unwrap_or(first_character);
 
     if !is_route_host_boundary(first_character) || !is_route_host_boundary(last_character) {
         return Err(RouteHostError::InvalidBoundary);
-    }
-
-    if let Some(character) = value
-        .chars()
-        .find(|character| !is_route_host_character(*character))
-    {
-        return Err(RouteHostError::InvalidCharacter { character });
     }
 
     for label in value.split('.') {
@@ -1304,6 +1304,16 @@ mod tests {
         assert_eq!(
             error,
             RouteSelectorError::Host(RouteHostError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn rejects_route_host_uppercase() {
+        let error = RouteSelector::host("Session.example.com").expect_err("host");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::Host(RouteHostError::InvalidCharacter { character: 'S' })
         );
     }
 
