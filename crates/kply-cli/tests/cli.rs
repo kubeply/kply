@@ -155,3 +155,30 @@ fn keeps_requested_outputs_when_quiet() {
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("quiet_json", value);
 }
+
+#[test]
+fn prints_verbose_trace_to_stderr() {
+    let output = kply_cmd()
+        .arg("--verbose")
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("verbose_stderr", output);
+}
+
+#[test]
+fn keeps_json_stdout_clean_when_verbose() {
+    let assert = kply_cmd().args(["--json", "--verbose"]).assert().success();
+    let output = assert.get_output();
+
+    let stdout = String::from_utf8(output.stdout.clone()).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("verbose_json_stdout", value);
+
+    let stderr = String::from_utf8(output.stderr.clone()).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("verbose_json_stderr", stderr);
+}

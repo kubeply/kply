@@ -23,6 +23,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub quiet: bool,
 
+    /// Print local debugging details to stderr.
+    #[arg(long, global = true)]
+    pub verbose: bool,
+
     /// Optional top-level command.
     #[command(subcommand)]
     pub command: Option<Command>,

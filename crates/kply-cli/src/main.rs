@@ -6,6 +6,7 @@ use kply_cli::cli::{Cli, Command};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    print_verbose_trace(&cli);
 
     match cli.command {
         Some(Command::Help) => {
@@ -58,4 +59,16 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_verbose_trace(cli: &Cli) {
+    if !cli.verbose {
+        return;
+    }
+
+    let command = cli.command.map_or("<none>", |command| command.name());
+    eprintln!(
+        "debug: command={command} json={} quiet={}",
+        cli.json, cli.quiet
+    );
 }

@@ -1,0 +1,5 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+debug: command=<none> json=true quiet=false
