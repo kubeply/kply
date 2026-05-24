@@ -42,6 +42,11 @@ cargo test --all-targets --all-features --locked
 
 See [docs/implementation-roadmap.md](docs/implementation-roadmap.md).
 
+## CLI Contract
+
+See [docs/cli.md](docs/cli.md) for command contract notes, including exit
+codes.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
