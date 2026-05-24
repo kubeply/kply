@@ -163,6 +163,44 @@ impl SessionStatus {
             Self::Failed => "failed",
         }
     }
+
+    /// Return whether this status may transition to the next [`SessionStatus`].
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Planned, Self::Preparing)
+                | (Self::Planned, Self::Failed)
+                | (Self::Preparing, Self::Active)
+                | (Self::Preparing, Self::Blocked)
+                | (Self::Preparing, Self::Failed)
+                | (Self::Active, Self::Verifying)
+                | (Self::Active, Self::Blocked)
+                | (Self::Active, Self::CleanedUp)
+                | (Self::Active, Self::Failed)
+                | (Self::Verifying, Self::Ready)
+                | (Self::Verifying, Self::Blocked)
+                | (Self::Verifying, Self::Failed)
+                | (Self::Blocked, Self::Preparing)
+                | (Self::Blocked, Self::Active)
+                | (Self::Blocked, Self::CleanedUp)
+                | (Self::Blocked, Self::Failed)
+                | (Self::Ready, Self::CleanedUp)
+                | (Self::Ready, Self::Failed)
+                | (Self::Failed, Self::CleanedUp)
+        )
+    }
+
+    /// Validate that this status may transition to the next [`SessionStatus`].
+    pub const fn validate_transition_to(self, next: Self) -> Result<(), SessionTransitionError> {
+        if self.can_transition_to(next) {
+            Ok(())
+        } else {
+            Err(SessionTransitionError::Invalid {
+                from: self,
+                to: next,
+            })
+        }
+    }
 }
 
 impl fmt::Display for SessionStatus {
@@ -674,6 +712,33 @@ impl fmt::Display for SessionReportError {
 }
 
 impl std::error::Error for SessionReportError {}
+
+/// Error returned when a session status transition is not valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionTransitionError {
+    /// The requested transition is not allowed by the session lifecycle.
+    Invalid {
+        /// Current session status.
+        from: SessionStatus,
+        /// Requested next session status.
+        to: SessionStatus,
+    },
+}
+
+impl fmt::Display for SessionTransitionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid { from, to } => {
+                write!(
+                    formatter,
+                    "cannot transition session from `{from}` to `{to}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SessionTransitionError {}
 
 impl<'de> Deserialize<'de> for SessionReport {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -1575,8 +1640,8 @@ mod tests {
         RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionEvent, SessionEventKind, SessionId,
         SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
         SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -1716,6 +1781,120 @@ mod tests {
             ]
         );
         assert_eq!(SessionStatus::CleanedUp.to_string(), "cleaned_up");
+    }
+
+    #[test]
+    fn validates_representative_session_status_transition() {
+        assert!(SessionStatus::Planned.can_transition_to(SessionStatus::Preparing));
+        assert_eq!(
+            SessionStatus::Planned.validate_transition_to(SessionStatus::Preparing),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validates_additional_session_status_transitions() {
+        for (from, to) in [
+            (SessionStatus::Active, SessionStatus::CleanedUp),
+            (SessionStatus::Blocked, SessionStatus::Preparing),
+            (SessionStatus::Blocked, SessionStatus::Active),
+            (SessionStatus::Ready, SessionStatus::CleanedUp),
+            (SessionStatus::Failed, SessionStatus::CleanedUp),
+        ] {
+            assert!(
+                from.can_transition_to(to),
+                "{from} should transition to {to}"
+            );
+            assert_eq!(from.validate_transition_to(to), Ok(()));
+        }
+    }
+
+    #[test]
+    fn rejects_representative_session_status_transition() {
+        let error = SessionStatus::CleanedUp
+            .validate_transition_to(SessionStatus::Active)
+            .expect_err("cleaned up sessions are terminal");
+
+        assert_eq!(
+            error,
+            SessionTransitionError::Invalid {
+                from: SessionStatus::CleanedUp,
+                to: SessionStatus::Active
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_additional_session_status_transitions() {
+        for (from, to) in [
+            (SessionStatus::Ready, SessionStatus::Preparing),
+            (SessionStatus::Active, SessionStatus::Planned),
+            (SessionStatus::Ready, SessionStatus::Active),
+            (SessionStatus::Failed, SessionStatus::Ready),
+            (SessionStatus::CleanedUp, SessionStatus::Failed),
+        ] {
+            let error = from
+                .validate_transition_to(to)
+                .expect_err("transition should be rejected");
+
+            assert!(!from.can_transition_to(to));
+            assert_eq!(error, SessionTransitionError::Invalid { from, to });
+        }
+    }
+
+    #[test]
+    fn every_non_terminal_session_status_has_valid_outgoing_transition() {
+        for (from, to) in [
+            (SessionStatus::Planned, SessionStatus::Preparing),
+            (SessionStatus::Preparing, SessionStatus::Active),
+            (SessionStatus::Active, SessionStatus::Verifying),
+            (SessionStatus::Verifying, SessionStatus::Ready),
+            (SessionStatus::Blocked, SessionStatus::Preparing),
+            (SessionStatus::Ready, SessionStatus::CleanedUp),
+            (SessionStatus::Failed, SessionStatus::CleanedUp),
+        ] {
+            assert!(
+                from.can_transition_to(to),
+                "{from} should transition to {to}"
+            );
+            assert_eq!(from.validate_transition_to(to), Ok(()));
+        }
+    }
+
+    #[test]
+    fn cleaned_up_session_status_has_no_outgoing_transitions() {
+        for status in SessionStatus::all() {
+            let error = SessionStatus::CleanedUp
+                .validate_transition_to(*status)
+                .expect_err("cleaned up sessions should be terminal");
+
+            assert!(!SessionStatus::CleanedUp.can_transition_to(*status));
+            assert_eq!(
+                error,
+                SessionTransitionError::Invalid {
+                    from: SessionStatus::CleanedUp,
+                    to: *status
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn session_status_self_transitions_are_rejected() {
+        for status in SessionStatus::all() {
+            let error = status
+                .validate_transition_to(*status)
+                .expect_err("self-transition should be rejected");
+
+            assert!(!status.can_transition_to(*status));
+            assert_eq!(
+                error,
+                SessionTransitionError::Invalid {
+                    from: *status,
+                    to: *status
+                }
+            );
+        }
     }
 
     #[test]
