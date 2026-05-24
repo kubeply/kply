@@ -1,0 +1,6 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply cluster
+Command group is defined but behavior is intentionally pending.

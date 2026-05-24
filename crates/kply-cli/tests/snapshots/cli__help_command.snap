@@ -4,7 +4,15 @@ expression: output
 ---
 Top-level placeholder CLI options
 
-Usage: kply-cli [OPTIONS]
+Usage: kply-cli [OPTIONS] [COMMAND]
+
+Commands:
+  help     Print top-level help
+  session  Manage future sandbox sessions
+  app      Inspect future application targets
+  config   Manage future Kply configuration
+  cluster  Inspect future cluster capabilities
+  report   Read future session reports
 
 Options:
       --version  Print the kply version
