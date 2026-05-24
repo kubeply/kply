@@ -3,6 +3,7 @@
 use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
+const WORKLOAD_KIND_MAX_LEN: usize = 63;
 
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -110,6 +111,62 @@ impl fmt::Display for SessionStatus {
     }
 }
 
+/// Kubernetes workload target for a future Kply session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WorkloadRef {
+    namespace: String,
+    kind: String,
+    name: String,
+}
+
+impl WorkloadRef {
+    /// Create a [`WorkloadRef`] from validated namespace, kind, and name parts.
+    pub fn new(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, WorkloadRefError> {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        let name = name.into();
+
+        validate_session_token(&namespace)
+            .map_err(WorkloadTokenError::from)
+            .map_err(WorkloadRefError::Namespace)?;
+        validate_workload_kind(&kind).map_err(WorkloadRefError::Kind)?;
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(WorkloadRefError::Name)?;
+
+        Ok(Self {
+            namespace,
+            kind,
+            name,
+        })
+    }
+
+    /// Borrow the workload namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the workload kind.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Borrow the workload name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for WorkloadRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}/{}", self.namespace, self.kind, self.name)
+    }
+}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -175,6 +232,97 @@ impl fmt::Display for SessionNameError {
 
 impl std::error::Error for SessionNameError {}
 
+/// Error returned when a [`WorkloadRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkloadRefError {
+    /// Workload namespaces use the same token rules as session names and identifiers.
+    Namespace(WorkloadTokenError),
+    /// Workload kinds must be non-empty Kubernetes-style kind identifiers.
+    Kind(WorkloadKindError),
+    /// Workload names use the same token rules as session names and identifiers.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for WorkloadRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(error) => {
+                write!(formatter, "invalid workload namespace: {error}")
+            }
+            Self::Kind(error) => write!(formatter, "invalid workload kind: {error}"),
+            Self::Name(error) => write!(formatter, "invalid workload name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for WorkloadRefError {}
+
+/// Error returned when a workload namespace or name is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkloadTokenError {
+    /// Workload namespace and name values cannot be empty.
+    Empty,
+    /// Workload namespace and name values must fit common Kubernetes name limits.
+    TooLong { max_len: usize },
+    /// Workload namespace and name values must start and end with a lowercase ASCII letter or digit.
+    InvalidBoundary,
+    /// Workload namespace and name values only allow lowercase ASCII letters, digits, and hyphens.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for WorkloadTokenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("value cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(formatter, "value cannot exceed {max_len} characters")
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("value must start and end with a lowercase ASCII letter or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(formatter, "value contains invalid character `{character}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WorkloadTokenError {}
+
+/// Error returned when a workload kind is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkloadKindError {
+    /// Workload kinds cannot be empty.
+    Empty,
+    /// Workload kinds must stay bounded for stable reports and labels.
+    TooLong { max_len: usize },
+    /// Workload kinds must start and end with an ASCII letter or digit.
+    InvalidBoundary,
+    /// Workload kinds only allow ASCII letters, digits, dots, and hyphens.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for WorkloadKindError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("workload kind cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "workload kind cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("workload kind must start and end with an ASCII letter or digit"),
+            Self::InvalidCharacter { character } => write!(
+                formatter,
+                "workload kind contains invalid character `{character}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WorkloadKindError {}
+
 impl From<SessionTokenError> for SessionIdError {
     fn from(error: SessionTokenError) -> Self {
         match error {
@@ -189,6 +337,19 @@ impl From<SessionTokenError> for SessionIdError {
 }
 
 impl From<SessionTokenError> for SessionNameError {
+    fn from(error: SessionTokenError) -> Self {
+        match error {
+            SessionTokenError::Empty => Self::Empty,
+            SessionTokenError::TooLong { max_len } => Self::TooLong { max_len },
+            SessionTokenError::InvalidBoundary => Self::InvalidBoundary,
+            SessionTokenError::InvalidCharacter { character } => {
+                Self::InvalidCharacter { character }
+            }
+        }
+    }
+}
+
+impl From<SessionTokenError> for WorkloadTokenError {
     fn from(error: SessionTokenError) -> Self {
         match error {
             SessionTokenError::Empty => Self::Empty,
@@ -246,11 +407,45 @@ fn is_session_token_boundary(character: char) -> bool {
     character.is_ascii_lowercase() || character.is_ascii_digit()
 }
 
+fn validate_workload_kind(value: &str) -> Result<(), WorkloadKindError> {
+    if value.is_empty() {
+        return Err(WorkloadKindError::Empty);
+    }
+
+    if value.len() > WORKLOAD_KIND_MAX_LEN {
+        return Err(WorkloadKindError::TooLong {
+            max_len: WORKLOAD_KIND_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(WorkloadKindError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+
+    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+        return Err(WorkloadKindError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_workload_kind_character(*character))
+    {
+        return Err(WorkloadKindError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_workload_kind_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '.' || character == '-'
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName, SessionNameError,
-        SessionStatus,
+        SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
 
     #[test]
@@ -379,5 +574,79 @@ mod tests {
             ]
         );
         assert_eq!(SessionStatus::CleanedUp.to_string(), "cleaned_up");
+    }
+
+    #[test]
+    fn creates_workload_ref_from_valid_parts() {
+        let workload =
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref");
+
+        assert_eq!(workload.namespace(), "checkout");
+        assert_eq!(workload.kind(), "Deployment");
+        assert_eq!(workload.name(), "checkout-api");
+        assert_eq!(workload.to_string(), "checkout/Deployment/checkout-api");
+    }
+
+    #[test]
+    fn creates_workload_ref_for_custom_resource_kind() {
+        let workload = WorkloadRef::new("platform", "Rollout.argoproj.io", "api-rollout")
+            .expect("workload ref");
+
+        assert_eq!(workload.kind(), "Rollout.argoproj.io");
+    }
+
+    #[test]
+    fn rejects_workload_ref_with_invalid_namespace() {
+        let error =
+            WorkloadRef::new("Checkout", "Deployment", "checkout-api").expect_err("namespace");
+
+        assert_eq!(
+            error,
+            WorkloadRefError::Namespace(WorkloadTokenError::InvalidBoundary)
+        );
+    }
+
+    #[test]
+    fn rejects_workload_ref_with_invalid_name() {
+        let error = WorkloadRef::new("checkout", "Deployment", "checkout_api").expect_err("name");
+
+        assert_eq!(
+            error,
+            WorkloadRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn rejects_workload_ref_with_invalid_kind_boundary() {
+        let error =
+            WorkloadRef::new("checkout", "-Deployment", "checkout-api").expect_err("kind boundary");
+
+        assert_eq!(
+            error,
+            WorkloadRefError::Kind(WorkloadKindError::InvalidBoundary)
+        );
+    }
+
+    #[test]
+    fn rejects_workload_ref_with_invalid_kind_character() {
+        let error = WorkloadRef::new("checkout", "Deploy_ment", "checkout-api").expect_err("kind");
+
+        assert_eq!(
+            error,
+            WorkloadRefError::Kind(WorkloadKindError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn rejects_workload_ref_with_long_kind() {
+        let kind = "A".repeat(WORKLOAD_KIND_MAX_LEN + 1);
+        let error = WorkloadRef::new("checkout", kind, "checkout-api").expect_err("long kind");
+
+        assert_eq!(
+            error,
+            WorkloadRefError::Kind(WorkloadKindError::TooLong {
+                max_len: WORKLOAD_KIND_MAX_LEN
+            })
+        );
     }
 }
