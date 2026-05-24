@@ -369,7 +369,7 @@ impl SessionPolicy {
 
     /// Return whether the policy allows the given operation.
     pub fn allows(&self, operation: SessionOperation) -> bool {
-        self.allowed_operations.contains(&operation)
+        self.allowed_operations.binary_search(&operation).is_ok()
     }
 }
 
