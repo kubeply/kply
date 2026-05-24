@@ -784,7 +784,9 @@ fn validate_route_host(value: &str) -> Result<(), RouteHostError> {
         }
 
         let mut label_characters = label.chars();
-        let label_first_character = label_characters.next().ok_or(RouteHostError::EmptyLabel)?;
+        let label_first_character = label_characters
+            .next()
+            .expect("route host label is non-empty");
         let label_last_character = label_characters
             .next_back()
             .unwrap_or(label_first_character);
