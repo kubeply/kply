@@ -268,13 +268,12 @@ mod tests {
         temp_workspace_dir, write_fake_kubeconfig, write_temp_file,
     };
     use super::{assert_exit_code, assert_kply_exit_code, kply_output};
-    use std::process::Output;
 
     #[cfg(unix)]
-    fn output_with_exit_code(code: i32) -> Output {
+    fn output_with_exit_code(code: i32) -> super::Output {
         use std::os::unix::process::ExitStatusExt;
 
-        Output {
+        super::Output {
             status: std::process::ExitStatus::from_raw(code << 8),
             stdout: Vec::new(),
             stderr: Vec::new(),
