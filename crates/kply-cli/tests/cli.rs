@@ -1,5 +1,6 @@
 //! CLI placeholder behavior tests for Kply.
 
+use kply_cli::cli::Command;
 use kply_test::kply_cmd;
 
 #[test]
@@ -80,4 +81,21 @@ fn prints_help_command() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("help_command", output);
+}
+
+#[test]
+fn prints_command_group_placeholders() {
+    for command in Command::PLACEHOLDER_GROUPS {
+        let command = command.name();
+        let output = kply_cmd()
+            .arg(command)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+
+        let output = String::from_utf8(output).expect("stdout should be UTF-8");
+        insta::assert_snapshot!(format!("command_group_{command}"), output);
+    }
 }

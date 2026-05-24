@@ -1,18 +1,24 @@
 //! Command-line entrypoint for the Kply placeholder CLI.
 
-mod cli;
-
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command};
+use kply_cli::cli::{Cli, Command};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if matches!(cli.command, Some(Command::Help)) {
-        Cli::command().print_help()?;
-        println!();
-        return Ok(());
+    match cli.command {
+        Some(Command::Help) => {
+            Cli::command().print_help()?;
+            println!();
+            return Ok(());
+        }
+        Some(command) => {
+            println!("kply {}", command.name());
+            println!("Command group is defined but behavior is intentionally pending.");
+            return Ok(());
+        }
+        None => {}
     }
 
     if cli.version {

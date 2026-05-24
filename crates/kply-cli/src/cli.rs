@@ -25,8 +25,41 @@ pub struct Cli {
 }
 
 /// Top-level placeholder CLI commands.
-#[derive(Debug, Subcommand)]
+#[derive(Clone, Copy, Debug, Subcommand)]
 pub enum Command {
     /// Print top-level help.
     Help,
+    /// Manage future sandbox sessions.
+    Session,
+    /// Inspect future application targets.
+    App,
+    /// Manage future Kply configuration.
+    Config,
+    /// Inspect future cluster capabilities.
+    Cluster,
+    /// Read future session reports.
+    Report,
+}
+
+impl Command {
+    /// Placeholder command groups that intentionally have no behavior yet.
+    pub const PLACEHOLDER_GROUPS: &'static [Self] = &[
+        Self::Session,
+        Self::App,
+        Self::Config,
+        Self::Cluster,
+        Self::Report,
+    ];
+
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Help => "help",
+            Self::Session => "session",
+            Self::App => "app",
+            Self::Config => "config",
+            Self::Cluster => "cluster",
+            Self::Report => "report",
+        }
+    }
 }
