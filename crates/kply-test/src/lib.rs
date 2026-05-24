@@ -164,6 +164,43 @@ pub fn parse_json_output(output: impl AsRef<[u8]>) -> Value {
     serde_json::from_slice(output.as_ref()).expect("output should be valid JSON")
 }
 
+/// Return a JSON value with object keys sorted recursively.
+pub fn stable_json_value(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(stable_json_value).collect()),
+        Value::Object(object) => {
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+
+            let mut stable_object = serde_json::Map::new();
+
+            for key in keys {
+                stable_object.insert(key.clone(), stable_json_value(&object[key]));
+            }
+
+            Value::Object(stable_object)
+        }
+        scalar => scalar.clone(),
+    }
+}
+
+/// Serialize a JSON value with recursively stable object ordering.
+pub fn stable_json_string(value: &Value) -> String {
+    serde_json::to_string_pretty(&stable_json_value(value))
+        .expect("stable JSON value should serialize")
+}
+
+/// Assert two JSON values match after recursively stable object ordering.
+pub fn assert_stable_json_eq(actual: &Value, expected: &Value) {
+    assert_eq!(
+        stable_json_value(actual),
+        stable_json_value(expected),
+        "JSON values differ; actual: {}; expected: {}",
+        stable_json_string(actual),
+        stable_json_string(expected)
+    );
+}
+
 /// Normalize values that commonly make snapshots unstable.
 pub fn normalize_output(output: &str) -> String {
     let output = normalize_timestamps(output);
@@ -261,11 +298,12 @@ macro_rules! __assert_json_snapshot {
 #[cfg(test)]
 mod tests {
     use super::{
-        EXIT_BLOCKING, EXIT_INTERNAL, EXIT_SUCCESS, EXIT_USAGE, fake_kubeconfig,
-        fake_kubeconfig_with_context, fixture_path, fixture_root, kply_stdout,
+        EXIT_BLOCKING, EXIT_INTERNAL, EXIT_SUCCESS, EXIT_USAGE, assert_stable_json_eq,
+        fake_kubeconfig, fake_kubeconfig_with_context, fixture_path, fixture_root, kply_stdout,
         normalize_absolute_paths, normalize_generated_ids, normalize_kubernetes_object_names,
-        normalize_output, normalize_timestamps, parse_json_output, temp_workspace,
-        temp_workspace_dir, write_fake_kubeconfig, write_temp_file,
+        normalize_output, normalize_timestamps, parse_json_output, stable_json_string,
+        stable_json_value, temp_workspace, temp_workspace_dir, write_fake_kubeconfig,
+        write_temp_file,
     };
     use super::{assert_exit_code, assert_kply_exit_code, kply_output};
 
@@ -347,6 +385,22 @@ mod tests {
         let value = parse_json_output(br#"{"status":"placeholder"}"#);
 
         assert_eq!(value["status"], "placeholder");
+    }
+
+    #[test]
+    fn stabilizes_json_object_ordering() {
+        let value =
+            parse_json_output(br#"{"z":1,"nested":{"b":true,"a":false},"items":[{"d":4,"c":3}]}"#);
+        let stable = stable_json_value(&value);
+
+        assert_eq!(
+            stable_json_string(&stable),
+            "{\n  \"items\": [\n    {\n      \"c\": 3,\n      \"d\": 4\n    }\n  ],\n  \"nested\": {\n    \"a\": false,\n    \"b\": true\n  },\n  \"z\": 1\n}"
+        );
+
+        let expected =
+            parse_json_output(br#"{"items":[{"c":3,"d":4}],"nested":{"a":false,"b":true},"z":1}"#);
+        assert_stable_json_eq(&value, &expected);
     }
 
     #[test]
