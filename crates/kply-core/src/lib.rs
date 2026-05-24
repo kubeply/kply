@@ -71,8 +71,9 @@ fn validate_session_id(value: &str) -> Result<(), SessionIdError> {
         });
     }
 
-    let first_character = value.chars().next().ok_or(SessionIdError::Empty)?;
-    let last_character = value.chars().next_back().ok_or(SessionIdError::Empty)?;
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(SessionIdError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
 
     if !is_session_id_boundary(first_character) || !is_session_id_boundary(last_character) {
         return Err(SessionIdError::InvalidBoundary);
