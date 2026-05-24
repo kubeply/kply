@@ -33,3 +33,18 @@ fn prints_version_text() {
         .success()
         .stdout(format!("kply {}\n", env!("CARGO_PKG_VERSION")));
 }
+
+#[test]
+fn prints_version_json() {
+    let output = kply_cmd()
+        .args(["--version", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("stdout should be JSON");
+    assert_eq!(value["name"], "kply");
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+}
