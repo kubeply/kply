@@ -861,6 +861,14 @@ mod tests {
     }
 
     #[test]
+    fn creates_image_ref_with_tag_and_digest() {
+        let image = "registry.example.com/platform/checkout-api:1.2.3@sha256:abcdef";
+        let image_ref = ImageRef::new(image).expect("image ref");
+
+        assert_eq!(image_ref.as_str(), image);
+    }
+
+    #[test]
     fn creates_image_ref_with_registry_port() {
         let image_ref = ImageRef::new("localhost:5000/platform/checkout-api:dev")
             .expect("image ref with registry port");
