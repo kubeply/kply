@@ -1793,6 +1793,23 @@ mod tests {
     }
 
     #[test]
+    fn validates_additional_session_status_transitions() {
+        for (from, to) in [
+            (SessionStatus::Active, SessionStatus::CleanedUp),
+            (SessionStatus::Blocked, SessionStatus::Preparing),
+            (SessionStatus::Blocked, SessionStatus::Active),
+            (SessionStatus::Ready, SessionStatus::CleanedUp),
+            (SessionStatus::Failed, SessionStatus::CleanedUp),
+        ] {
+            assert!(
+                from.can_transition_to(to),
+                "{from} should transition to {to}"
+            );
+            assert_eq!(from.validate_transition_to(to), Ok(()));
+        }
+    }
+
+    #[test]
     fn rejects_representative_session_status_transition() {
         let error = SessionStatus::CleanedUp
             .validate_transition_to(SessionStatus::Active)
@@ -1805,6 +1822,24 @@ mod tests {
                 to: SessionStatus::Active
             }
         );
+    }
+
+    #[test]
+    fn rejects_additional_session_status_transitions() {
+        for (from, to) in [
+            (SessionStatus::Ready, SessionStatus::Preparing),
+            (SessionStatus::Active, SessionStatus::Planned),
+            (SessionStatus::Ready, SessionStatus::Active),
+            (SessionStatus::Failed, SessionStatus::Ready),
+            (SessionStatus::CleanedUp, SessionStatus::Failed),
+        ] {
+            let error = from
+                .validate_transition_to(to)
+                .expect_err("transition should be rejected");
+
+            assert!(!from.can_transition_to(to));
+            assert_eq!(error, SessionTransitionError::Invalid { from, to });
+        }
     }
 
     #[test]
