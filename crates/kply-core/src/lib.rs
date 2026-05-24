@@ -1511,12 +1511,19 @@ mod tests {
 
     #[test]
     fn creates_session_report_for_reportable_status() {
-        let plan = test_session_plan();
-        let report = SessionReport::new(plan.clone(), SessionStatus::Ready)
-            .expect("session report should be valid");
+        for status in [
+            SessionStatus::Blocked,
+            SessionStatus::Ready,
+            SessionStatus::CleanedUp,
+            SessionStatus::Failed,
+        ] {
+            let plan = test_session_plan();
+            let report =
+                SessionReport::new(plan.clone(), status).expect("session report should be valid");
 
-        assert_eq!(report.plan(), &plan);
-        assert_eq!(report.status(), SessionStatus::Ready);
+            assert_eq!(report.plan(), &plan);
+            assert_eq!(report.status(), status);
+        }
     }
 
     #[test]
