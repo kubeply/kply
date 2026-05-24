@@ -45,6 +45,5 @@ fn prints_version_json() {
         .clone();
 
     let value: serde_json::Value = serde_json::from_slice(&output).expect("stdout should be JSON");
-    assert_eq!(value["name"], "kply");
-    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+    insta::assert_json_snapshot!("version_json", value);
 }
