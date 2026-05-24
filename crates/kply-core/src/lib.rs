@@ -620,7 +620,7 @@ pub struct SessionEvent {
 
 impl SessionEvent {
     /// Create a [`SessionEvent`] from a session id, sequence, and event kind.
-    pub const fn new(session_id: SessionId, sequence: u64, kind: SessionEventKind) -> Self {
+    pub fn new(session_id: SessionId, sequence: u64, kind: SessionEventKind) -> Self {
         Self {
             session_id,
             sequence,
