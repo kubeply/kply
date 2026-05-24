@@ -784,9 +784,9 @@ fn validate_route_host(value: &str) -> Result<(), RouteHostError> {
         }
 
         let mut label_characters = label.chars();
-        let label_first_character = label_characters
-            .next()
-            .expect("route host label is non-empty");
+        let Some(label_first_character) = label_characters.next() else {
+            return Err(RouteHostError::EmptyLabel);
+        };
         let label_last_character = label_characters
             .next_back()
             .unwrap_or(label_first_character);
@@ -1272,6 +1272,18 @@ mod tests {
     #[test]
     fn rejects_route_host_invalid_boundary() {
         for host in ["-session.example.com", "session-.example.com"] {
+            let error = RouteSelector::host(host).expect_err("host");
+
+            assert_eq!(
+                error,
+                RouteSelectorError::Host(RouteHostError::InvalidBoundary)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_route_host_invalid_internal_label_boundary() {
+        for host in ["session.-example.com", "session.example-.com"] {
             let error = RouteSelector::host(host).expect_err("host");
 
             assert_eq!(
