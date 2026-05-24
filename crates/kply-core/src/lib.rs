@@ -736,6 +736,8 @@ fn validate_route_header_value(value: &str) -> Result<(), RouteHeaderValueError>
     Ok(())
 }
 
+// Route selectors use deterministic token-like header values, so spaces are
+// rejected even though HTTP permits broader field values.
 fn is_route_header_value_character(character: char) -> bool {
     character.is_ascii_graphic()
 }
@@ -1091,6 +1093,15 @@ mod tests {
             selector.header_parts(),
             Some(("x-kply-session", value.as_str()))
         );
+    }
+
+    #[test]
+    fn creates_header_route_selector_with_special_token_characters() {
+        for name in ["x_kply", "x.kply", "x+kply", "x~kply", "x!#$%&'*^`|kply"] {
+            let selector = RouteSelector::header(name, "session-123").expect("route selector");
+
+            assert_eq!(selector.header_parts(), Some((name, "session-123")));
+        }
     }
 
     #[test]
