@@ -96,7 +96,9 @@ fn render_parse_error(error: clap::Error) -> ExitCode {
 
 /// Convert documented small integer exit codes into process exit codes.
 fn exit_code(code: i32) -> ExitCode {
-    let code = u8::try_from(code).expect("documented exit code should fit in u8");
+    let Ok(code) = u8::try_from(code) else {
+        return ExitCode::from(EXIT_INTERNAL as u8);
+    };
     ExitCode::from(code)
 }
 
