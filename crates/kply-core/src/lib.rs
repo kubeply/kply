@@ -405,6 +405,84 @@ impl fmt::Display for SessionPolicyError {
 
 impl std::error::Error for SessionPolicyError {}
 
+/// Dry-run description of a future Kply session.
+///
+/// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
+/// proposed [`ImageRef`], optional [`RouteSelector`], [`SessionPolicy`], and
+/// initial [`SessionStatus`] for a session that has not yet been executed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionPlan {
+    id: SessionId,
+    name: SessionName,
+    workload: WorkloadRef,
+    image: ImageRef,
+    route_selector: Option<RouteSelector>,
+    policy: SessionPolicy,
+    status: SessionStatus,
+}
+
+impl SessionPlan {
+    /// Create a [`SessionPlan`] for a future sandbox session.
+    pub fn new(
+        id: SessionId,
+        name: SessionName,
+        workload: WorkloadRef,
+        image: ImageRef,
+        policy: SessionPolicy,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            workload,
+            image,
+            route_selector: None,
+            policy,
+            status: SessionStatus::Planned,
+        }
+    }
+
+    /// Return a copy of this plan with a test traffic [`RouteSelector`].
+    pub fn with_route_selector(mut self, route_selector: RouteSelector) -> Self {
+        self.route_selector = Some(route_selector);
+        self
+    }
+
+    /// Borrow the [`SessionId`].
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// Borrow the [`SessionName`].
+    pub fn name(&self) -> &SessionName {
+        &self.name
+    }
+
+    /// Borrow the target [`WorkloadRef`].
+    pub fn workload(&self) -> &WorkloadRef {
+        &self.workload
+    }
+
+    /// Borrow the proposed sandbox [`ImageRef`].
+    pub fn image(&self) -> &ImageRef {
+        &self.image
+    }
+
+    /// Borrow the optional [`RouteSelector`].
+    pub fn route_selector(&self) -> Option<&RouteSelector> {
+        self.route_selector.as_ref()
+    }
+
+    /// Borrow the [`SessionPolicy`].
+    pub fn policy(&self) -> &SessionPolicy {
+        &self.policy
+    }
+
+    /// Return the planned [`SessionStatus`].
+    pub const fn status(&self) -> SessionStatus {
+        self.status
+    }
+}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -1094,8 +1172,8 @@ mod tests {
         ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
         RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteSelector,
         RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName,
-        SessionNameError, SessionOperation, SessionPolicy, SessionPolicyError, SessionStatus,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
+        SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
         WorkloadTokenError,
     };
 
@@ -1321,6 +1399,47 @@ mod tests {
                 operation: SessionOperation::Inspect
             }
         );
+    }
+
+    #[test]
+    fn creates_session_plan_for_dry_run_output() {
+        let id = SessionId::new("session-123").expect("session id");
+        let name = SessionName::new("checkout-test").expect("session name");
+        let workload =
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref");
+        let image = ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref");
+        let policy = SessionPolicy::sandbox();
+        let plan = SessionPlan::new(
+            id.clone(),
+            name.clone(),
+            workload.clone(),
+            image.clone(),
+            policy.clone(),
+        );
+
+        assert_eq!(plan.id(), &id);
+        assert_eq!(plan.name(), &name);
+        assert_eq!(plan.workload(), &workload);
+        assert_eq!(plan.image(), &image);
+        assert_eq!(plan.route_selector(), None);
+        assert_eq!(plan.policy(), &policy);
+        assert_eq!(plan.status(), SessionStatus::Planned);
+    }
+
+    #[test]
+    fn creates_session_plan_with_route_selector() {
+        let route_selector =
+            RouteSelector::header("x-kply-session", "session-123").expect("route selector");
+        let plan = SessionPlan::new(
+            SessionId::new("session-123").expect("session id"),
+            SessionName::new("checkout-test").expect("session name"),
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+            SessionPolicy::sandbox(),
+        )
+        .with_route_selector(route_selector.clone());
+
+        assert_eq!(plan.route_selector(), Some(&route_selector));
     }
 
     #[test]
