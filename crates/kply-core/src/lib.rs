@@ -610,7 +610,7 @@ impl fmt::Display for SessionEventKind {
 }
 
 /// Deterministic audit event for future Kply session history.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionEvent {
     session_id: SessionId,
     sequence: u64,
