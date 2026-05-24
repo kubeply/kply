@@ -10,9 +10,10 @@ promoted.
 
 ## Status
 
-Early scaffold. The current code intentionally contains placeholders only:
+Early scaffold. Most product crates intentionally contain placeholders only:
 workspace structure, crate boundaries, basic CLI entrypoint, tests, CI, release
-planning, and OpenSpec context.
+planning, and OpenSpec context. `kply-core` has started the future Kply session
+domain model.
 
 Sessions are not implemented yet.
 

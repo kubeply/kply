@@ -742,12 +742,11 @@ fn collect_crate_sources(root: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
 }
 
 fn check_placeholders() -> Result<()> {
-    // Product crates are intentionally fixed while the scaffold is placeholder-only.
-    // CLI, test, and xtask crates need real support code to enforce the scaffold.
+    // Product crates that have not reached their roadmap work remain placeholder-only.
+    // CLI, core, test, and xtask crates need real support code for active milestones.
     let product_crates = [
         "crates/kply-checks/src/lib.rs",
         "crates/kply-config/src/lib.rs",
-        "crates/kply-core/src/lib.rs",
         "crates/kply-k8s/src/lib.rs",
         "crates/kply-routing/src/lib.rs",
     ];
