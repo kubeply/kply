@@ -48,7 +48,8 @@ Rules:
   acceptable, but two unrelated resource concepts should not both be named
   `session`.
 - Keep JSON field names aligned with command names when the command produces
-  machine-readable output.
+  machine-readable output. Convert kebab-case command terms to snake_case JSON
+  keys, for example `route-header` becomes `route_header`.
 
 ## Future Session
 
