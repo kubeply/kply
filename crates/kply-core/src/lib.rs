@@ -53,6 +53,7 @@ impl fmt::Display for SessionName {
 }
 
 /// Lifecycle status for a future Kply session.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SessionStatus {
     /// Session inputs have been accepted but no cluster preparation has started.
@@ -74,7 +75,7 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
-    /// Return every initial session lifecycle status in declaration order.
+    /// Return every session lifecycle status in declaration order, including terminal states.
     pub const fn all() -> &'static [Self] {
         &[
             Self::Planned,
