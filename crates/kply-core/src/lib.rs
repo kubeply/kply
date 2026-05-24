@@ -3,8 +3,10 @@
 use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
-const IMAGE_REF_MAX_LEN: usize = 255;
 const WORKLOAD_KIND_MAX_LEN: usize = 63;
+
+/// Maximum allowed length for an [`ImageRef`] value.
+pub const IMAGE_REF_MAX_LEN: usize = 255;
 
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
