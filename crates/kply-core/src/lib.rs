@@ -7,6 +7,14 @@ const WORKLOAD_KIND_MAX_LEN: usize = 63;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
+/// Maximum allowed length for a route header name.
+pub const ROUTE_HEADER_NAME_MAX_LEN: usize = 63;
+/// Maximum allowed length for a route header value.
+pub const ROUTE_HEADER_VALUE_MAX_LEN: usize = 255;
+/// Maximum allowed length for a route host.
+pub const ROUTE_HOST_MAX_LEN: usize = 253;
+/// Maximum allowed length for a route host label.
+pub const ROUTE_HOST_LABEL_MAX_LEN: usize = 63;
 
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -194,6 +202,73 @@ impl fmt::Display for ImageRef {
     }
 }
 
+/// Traffic selector for routing future test requests to a sandbox workload.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RouteSelector {
+    /// Match requests by HTTP header name and value.
+    Header { name: String, value: String },
+    /// Match requests by host name.
+    Host { hostname: String },
+}
+
+impl RouteSelector {
+    /// Create a header-based [`RouteSelector`].
+    pub fn header(
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, RouteSelectorError> {
+        let name = name.into();
+        let value = value.into();
+
+        validate_route_header_name(&name).map_err(RouteSelectorError::HeaderName)?;
+        validate_route_header_value(&value).map_err(RouteSelectorError::HeaderValue)?;
+
+        Ok(Self::Header { name, value })
+    }
+
+    /// Create a host-based [`RouteSelector`].
+    pub fn host(hostname: impl Into<String>) -> Result<Self, RouteSelectorError> {
+        let hostname = hostname.into();
+        validate_route_host(&hostname).map_err(RouteSelectorError::Host)?;
+
+        Ok(Self::Host { hostname })
+    }
+
+    /// Return the stable selector kind used in agent-readable output.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Header { .. } => "header",
+            Self::Host { .. } => "host",
+        }
+    }
+
+    /// Borrow the header selector parts when this selector matches by header.
+    pub fn header_parts(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Header { name, value } => Some((name, value)),
+            Self::Host { .. } => None,
+        }
+    }
+
+    /// Borrow the host name when this selector matches by host.
+    pub fn hostname(&self) -> Option<&str> {
+        match self {
+            Self::Header { .. } => None,
+            Self::Host { hostname } => Some(hostname),
+        }
+    }
+}
+
+impl fmt::Display for RouteSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Header { name, value } => write!(formatter, "header:{name}={value}"),
+            Self::Host { hostname } => write!(formatter, "host:{hostname}"),
+        }
+    }
+}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -296,6 +371,136 @@ impl fmt::Display for ImageRefError {
 }
 
 impl std::error::Error for ImageRefError {}
+
+/// Error returned when a [`RouteSelector`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteSelectorError {
+    /// Header selector names must be valid HTTP field names.
+    HeaderName(RouteHeaderNameError),
+    /// Header selector values must be printable ASCII values.
+    HeaderValue(RouteHeaderValueError),
+    /// Host selectors must be lowercase DNS host names.
+    Host(RouteHostError),
+}
+
+impl fmt::Display for RouteSelectorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HeaderName(error) => write!(formatter, "invalid route header name: {error}"),
+            Self::HeaderValue(error) => write!(formatter, "invalid route header value: {error}"),
+            Self::Host(error) => write!(formatter, "invalid route host: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RouteSelectorError {}
+
+/// Error returned when a route header name is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteHeaderNameError {
+    /// Header names cannot be empty.
+    Empty,
+    /// Header names must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Header names only allow ASCII HTTP token characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RouteHeaderNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("route header name cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "route header name cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => write!(
+                formatter,
+                "route header name contains invalid character `{character}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RouteHeaderNameError {}
+
+/// Error returned when a route header value is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteHeaderValueError {
+    /// Header values cannot be empty.
+    Empty,
+    /// Header values must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Header values only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RouteHeaderValueError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("route header value cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "route header value cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => write!(
+                formatter,
+                "route header value contains invalid character `{character}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RouteHeaderValueError {}
+
+/// Error returned when a route host is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteHostError {
+    /// Hosts cannot be empty.
+    Empty,
+    /// Hosts must stay within DNS host length limits.
+    TooLong { max_len: usize },
+    /// Host labels must stay within DNS label length limits.
+    LabelTooLong { max_len: usize },
+    /// Hosts cannot contain empty labels.
+    EmptyLabel,
+    /// Hosts must start and end with a lowercase ASCII letter or digit.
+    InvalidBoundary,
+    /// Hosts only allow lowercase ASCII letters, digits, dots, and hyphens.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RouteHostError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("route host cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(formatter, "route host cannot exceed {max_len} characters")
+            }
+            Self::LabelTooLong { max_len } => {
+                write!(
+                    formatter,
+                    "route host label cannot exceed {max_len} characters"
+                )
+            }
+            Self::EmptyLabel => formatter.write_str("route host cannot contain empty labels"),
+            Self::InvalidBoundary => formatter
+                .write_str("route host must start and end with a lowercase ASCII letter or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "route host contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RouteHostError {}
 
 /// Error returned when a [`WorkloadRef`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -472,6 +677,145 @@ fn is_session_token_boundary(character: char) -> bool {
     character.is_ascii_lowercase() || character.is_ascii_digit()
 }
 
+fn validate_route_header_name(value: &str) -> Result<(), RouteHeaderNameError> {
+    if value.is_empty() {
+        return Err(RouteHeaderNameError::Empty);
+    }
+
+    if value.len() > ROUTE_HEADER_NAME_MAX_LEN {
+        return Err(RouteHeaderNameError::TooLong {
+            max_len: ROUTE_HEADER_NAME_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_route_header_name_character(*character))
+    {
+        return Err(RouteHeaderNameError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_route_header_name_character(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(
+            character,
+            '!' | '#'
+                | '$'
+                | '%'
+                | '&'
+                | '\''
+                | '*'
+                | '+'
+                | '-'
+                | '.'
+                | '^'
+                | '_'
+                | '`'
+                | '|'
+                | '~'
+        )
+}
+
+fn validate_route_header_value(value: &str) -> Result<(), RouteHeaderValueError> {
+    if value.is_empty() {
+        return Err(RouteHeaderValueError::Empty);
+    }
+
+    if value.len() > ROUTE_HEADER_VALUE_MAX_LEN {
+        return Err(RouteHeaderValueError::TooLong {
+            max_len: ROUTE_HEADER_VALUE_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_route_header_value_character(*character))
+    {
+        return Err(RouteHeaderValueError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+// Route selectors use deterministic token-like header values, so spaces are
+// rejected even though HTTP permits broader field values.
+fn is_route_header_value_character(character: char) -> bool {
+    character.is_ascii_graphic()
+}
+
+fn validate_route_host(value: &str) -> Result<(), RouteHostError> {
+    if value.is_empty() {
+        return Err(RouteHostError::Empty);
+    }
+
+    if value.len() > ROUTE_HOST_MAX_LEN {
+        return Err(RouteHostError::TooLong {
+            max_len: ROUTE_HOST_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_route_host_character(*character))
+    {
+        return Err(RouteHostError::InvalidCharacter { character });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(RouteHostError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+
+    if !is_route_host_boundary(first_character) || !is_route_host_boundary(last_character) {
+        return Err(RouteHostError::InvalidBoundary);
+    }
+
+    for label in value.split('.') {
+        if label.is_empty() {
+            return Err(RouteHostError::EmptyLabel);
+        }
+
+        if label.len() > ROUTE_HOST_LABEL_MAX_LEN {
+            return Err(RouteHostError::LabelTooLong {
+                max_len: ROUTE_HOST_LABEL_MAX_LEN,
+            });
+        }
+
+        let (label_first_character, label_last_character) = route_host_label_boundaries(label)?;
+
+        if !is_route_host_boundary(label_first_character)
+            || !is_route_host_boundary(label_last_character)
+        {
+            return Err(RouteHostError::InvalidBoundary);
+        }
+    }
+
+    Ok(())
+}
+
+fn route_host_label_boundaries(label: &str) -> Result<(char, char), RouteHostError> {
+    let mut label_characters = label.chars();
+    let label_first_character = label_characters.next().ok_or(RouteHostError::EmptyLabel)?;
+    let label_last_character = label_characters
+        .next_back()
+        .unwrap_or(label_first_character);
+
+    Ok((label_first_character, label_last_character))
+}
+
+fn is_route_host_character(character: char) -> bool {
+    character.is_ascii_lowercase()
+        || character.is_ascii_digit()
+        || character == '-'
+        || character == '.'
+}
+
+fn is_route_host_boundary(character: char) -> bool {
+    character.is_ascii_lowercase() || character.is_ascii_digit()
+}
+
 fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
     if value.is_empty() {
         return Err(ImageRefError::Empty);
@@ -599,9 +943,12 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, SESSION_TOKEN_MAX_LEN, SessionId,
-        SessionIdError, SessionName, SessionNameError, SessionStatus, WORKLOAD_KIND_MAX_LEN,
-        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
+        IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, ROUTE_HEADER_NAME_MAX_LEN,
+        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
+        RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteSelector,
+        RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName,
+        SessionNameError, SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
 
     #[test]
@@ -730,6 +1077,244 @@ mod tests {
             ]
         );
         assert_eq!(SessionStatus::CleanedUp.to_string(), "cleaned_up");
+    }
+
+    #[test]
+    fn creates_header_route_selector() {
+        let selector =
+            RouteSelector::header("x-kply-session", "session-123").expect("route selector");
+
+        assert_eq!(selector.kind(), "header");
+        assert_eq!(
+            selector.header_parts(),
+            Some(("x-kply-session", "session-123"))
+        );
+        assert_eq!(selector.hostname(), None);
+        assert_eq!(selector.to_string(), "header:x-kply-session=session-123");
+    }
+
+    #[test]
+    fn creates_header_route_selector_with_exact_max_value_length() {
+        let value = "a".repeat(ROUTE_HEADER_VALUE_MAX_LEN);
+        let selector =
+            RouteSelector::header("x-kply-session", value.as_str()).expect("route selector");
+
+        assert_eq!(
+            selector.header_parts(),
+            Some(("x-kply-session", value.as_str()))
+        );
+    }
+
+    #[test]
+    fn creates_header_route_selector_with_exact_max_name_length() {
+        let name = "a".repeat(ROUTE_HEADER_NAME_MAX_LEN);
+        let selector = RouteSelector::header(name.as_str(), "session-123").expect("route selector");
+
+        assert_eq!(
+            selector.header_parts(),
+            Some((name.as_str(), "session-123"))
+        );
+    }
+
+    #[test]
+    fn creates_header_route_selector_with_special_token_characters() {
+        for name in ["x_kply", "x.kply", "x+kply", "x~kply", "x!#$%&'*^`|kply"] {
+            let selector = RouteSelector::header(name, "session-123").expect("route selector");
+
+            assert_eq!(selector.header_parts(), Some((name, "session-123")));
+        }
+    }
+
+    #[test]
+    fn creates_host_route_selector() {
+        let selector =
+            RouteSelector::host("session-123.preview.example.com").expect("route selector");
+
+        assert_eq!(selector.kind(), "host");
+        assert_eq!(selector.header_parts(), None);
+        assert_eq!(selector.hostname(), Some("session-123.preview.example.com"));
+        assert_eq!(selector.to_string(), "host:session-123.preview.example.com");
+    }
+
+    #[test]
+    fn creates_host_route_selector_with_exact_max_length() {
+        let label = "a".repeat(ROUTE_HOST_LABEL_MAX_LEN);
+        let final_label = "a".repeat(ROUTE_HOST_LABEL_MAX_LEN - 2);
+        let host = format!("{label}.{label}.{label}.{final_label}");
+        assert_eq!(host.len(), ROUTE_HOST_MAX_LEN);
+
+        let selector = RouteSelector::host(host.as_str()).expect("route selector");
+
+        assert_eq!(selector.hostname(), Some(host.as_str()));
+    }
+
+    #[test]
+    fn rejects_empty_route_header_name() {
+        let error = RouteSelector::header("", "session-123").expect_err("header name");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderName(RouteHeaderNameError::Empty)
+        );
+    }
+
+    #[test]
+    fn rejects_long_route_header_name() {
+        let name = "a".repeat(ROUTE_HEADER_NAME_MAX_LEN + 1);
+        let error = RouteSelector::header(name, "session-123").expect_err("header name");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderName(RouteHeaderNameError::TooLong {
+                max_len: ROUTE_HEADER_NAME_MAX_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_route_header_name_character() {
+        let error =
+            RouteSelector::header("x kply session", "session-123").expect_err("header name");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderName(RouteHeaderNameError::InvalidCharacter {
+                character: ' '
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_route_header_value() {
+        let error = RouteSelector::header("x-kply-session", "").expect_err("header value");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderValue(RouteHeaderValueError::Empty)
+        );
+    }
+
+    #[test]
+    fn rejects_long_route_header_value() {
+        let value = "a".repeat(ROUTE_HEADER_VALUE_MAX_LEN + 1);
+        let error = RouteSelector::header("x-kply-session", value).expect_err("header value");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderValue(RouteHeaderValueError::TooLong {
+                max_len: ROUTE_HEADER_VALUE_MAX_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_control_route_header_value_character() {
+        let error =
+            RouteSelector::header("x-kply-session", "session\n123").expect_err("header value");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderValue(RouteHeaderValueError::InvalidCharacter {
+                character: '\n'
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_space_route_header_value_character() {
+        let error =
+            RouteSelector::header("x-kply-session", "session 123").expect_err("header value");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::HeaderValue(RouteHeaderValueError::InvalidCharacter {
+                character: ' '
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_route_host() {
+        let error = RouteSelector::host("").expect_err("host");
+
+        assert_eq!(error, RouteSelectorError::Host(RouteHostError::Empty));
+    }
+
+    #[test]
+    fn rejects_long_route_host() {
+        let host = format!("{}.example.com", "a".repeat(ROUTE_HOST_MAX_LEN));
+        let error = RouteSelector::host(host).expect_err("host");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::Host(RouteHostError::TooLong {
+                max_len: ROUTE_HOST_MAX_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_route_host_label() {
+        let host = format!("{}.example.com", "a".repeat(ROUTE_HOST_LABEL_MAX_LEN + 1));
+        let error = RouteSelector::host(host).expect_err("host");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::Host(RouteHostError::LabelTooLong {
+                max_len: ROUTE_HOST_LABEL_MAX_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_route_host_empty_label() {
+        let error = RouteSelector::host("session..example.com").expect_err("host");
+
+        assert_eq!(error, RouteSelectorError::Host(RouteHostError::EmptyLabel));
+    }
+
+    #[test]
+    fn rejects_route_host_invalid_boundary() {
+        for host in ["-session.example.com", "session-.example.com"] {
+            let error = RouteSelector::host(host).expect_err("host");
+
+            assert_eq!(
+                error,
+                RouteSelectorError::Host(RouteHostError::InvalidBoundary)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_route_host_invalid_internal_label_boundary() {
+        for host in ["session.-example.com", "session.example-.com"] {
+            let error = RouteSelector::host(host).expect_err("host");
+
+            assert_eq!(
+                error,
+                RouteSelectorError::Host(RouteHostError::InvalidBoundary)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_route_host_invalid_character() {
+        let error = RouteSelector::host("session.exa_mple.com").expect_err("host");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::Host(RouteHostError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn rejects_route_host_uppercase() {
+        let error = RouteSelector::host("Session.example.com").expect_err("host");
+
+        assert_eq!(
+            error,
+            RouteSelectorError::Host(RouteHostError::InvalidCharacter { character: 'S' })
+        );
     }
 
     #[test]
