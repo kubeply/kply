@@ -3,11 +3,17 @@
 mod cli;
 
 use anyhow::Result;
-use clap::Parser;
-use cli::Cli;
+use clap::{CommandFactory, Parser};
+use cli::{Cli, Command};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if matches!(cli.command, Some(Command::Help)) {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    }
 
     if cli.version {
         if cli.json {
