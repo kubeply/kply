@@ -5,6 +5,9 @@ use std::fmt;
 const SESSION_TOKEN_MAX_LEN: usize = 63;
 const WORKLOAD_KIND_MAX_LEN: usize = 63;
 
+/// Maximum allowed length for an [`ImageRef`] value.
+pub const IMAGE_REF_MAX_LEN: usize = 255;
+
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionId(String);
@@ -167,6 +170,30 @@ impl fmt::Display for WorkloadRef {
     }
 }
 
+/// Container image reference proposed for a future sandbox workload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ImageRef(String);
+
+impl ImageRef {
+    /// Create an [`ImageRef`] from a validated image reference string.
+    pub fn new(value: impl Into<String>) -> Result<Self, ImageRefError> {
+        let value = value.into();
+        validate_image_ref(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Borrow the image reference as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ImageRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -231,6 +258,44 @@ impl fmt::Display for SessionNameError {
 }
 
 impl std::error::Error for SessionNameError {}
+
+/// Error returned when an [`ImageRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageRefError {
+    /// Image references cannot be empty.
+    Empty,
+    /// Image references must stay bounded for stable reports and labels.
+    TooLong { max_len: usize },
+    /// Image references must include a non-empty image name component.
+    MissingName,
+    /// Image references must start and end with an ASCII letter, digit, or digest value.
+    InvalidBoundary,
+    /// Image references only allow ASCII image reference characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for ImageRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("image ref cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(formatter, "image ref cannot exceed {max_len} characters")
+            }
+            Self::MissingName => formatter.write_str("image ref must include an image name"),
+            Self::InvalidBoundary => {
+                formatter.write_str("image ref has an invalid boundary character")
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "image ref contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImageRefError {}
 
 /// Error returned when a [`WorkloadRef`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,6 +472,97 @@ fn is_session_token_boundary(character: char) -> bool {
     character.is_ascii_lowercase() || character.is_ascii_digit()
 }
 
+fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
+    if value.is_empty() {
+        return Err(ImageRefError::Empty);
+    }
+
+    if value.len() > IMAGE_REF_MAX_LEN {
+        return Err(ImageRefError::TooLong {
+            max_len: IMAGE_REF_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(ImageRefError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+
+    if !is_image_ref_boundary(first_character) || !is_image_ref_boundary(last_character) {
+        return Err(ImageRefError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_image_ref_character(*character))
+    {
+        return Err(ImageRefError::InvalidCharacter { character });
+    }
+
+    if value
+        .split(['/', ':', '@'])
+        .any(|component| component.is_empty())
+    {
+        return Err(ImageRefError::MissingName);
+    }
+
+    validate_image_repository_components(value)?;
+
+    Ok(())
+}
+
+fn is_image_ref_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '/' | ':' | '@')
+}
+
+fn is_image_ref_repository_character(character: char) -> bool {
+    character.is_ascii_lowercase()
+        || character.is_ascii_digit()
+        || matches!(character, '.' | '_' | '-')
+}
+
+fn is_image_registry_character(character: char) -> bool {
+    character.is_ascii_lowercase()
+        || character.is_ascii_digit()
+        || matches!(character, '.' | '-' | ':')
+}
+
+fn is_image_ref_boundary(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+}
+
+fn validate_image_repository_components(value: &str) -> Result<(), ImageRefError> {
+    let image_without_digest = value.split('@').next().unwrap_or(value);
+    let components = image_without_digest.split('/').collect::<Vec<_>>();
+    let last_component_index = components.len().saturating_sub(1);
+
+    for (index, component) in components.iter().enumerate() {
+        let component = if index == last_component_index {
+            component.split(':').next().unwrap_or(component)
+        } else {
+            component
+        };
+
+        let valid_character = if index == 0 && is_registry_component(component) {
+            is_image_registry_character
+        } else {
+            is_image_ref_repository_character
+        };
+
+        if let Some(character) = component
+            .chars()
+            .find(|character| !valid_character(*character))
+        {
+            return Err(ImageRefError::InvalidCharacter { character });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_registry_component(component: &str) -> bool {
+    component == "localhost" || component.contains('.') || component.contains(':')
+}
+
 fn validate_workload_kind(value: &str) -> Result<(), WorkloadKindError> {
     if value.is_empty() {
         return Err(WorkloadKindError::Empty);
@@ -443,9 +599,9 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName, SessionNameError,
-        SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, SESSION_TOKEN_MAX_LEN, SessionId,
+        SessionIdError, SessionName, SessionNameError, SessionStatus, WORKLOAD_KIND_MAX_LEN,
+        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
     };
 
     #[test]
@@ -648,5 +804,148 @@ mod tests {
                 max_len: WORKLOAD_KIND_MAX_LEN
             })
         );
+    }
+
+    #[test]
+    fn creates_image_ref_from_tagged_reference() {
+        let image_ref =
+            ImageRef::new("registry.example.com/platform/checkout-api:1.2.3").expect("image ref");
+
+        assert_eq!(
+            image_ref.as_str(),
+            "registry.example.com/platform/checkout-api:1.2.3"
+        );
+        assert_eq!(
+            image_ref.to_string(),
+            "registry.example.com/platform/checkout-api:1.2.3"
+        );
+    }
+
+    #[test]
+    fn creates_image_ref_from_simple_name() {
+        let image_ref = ImageRef::new("nginx").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "nginx");
+    }
+
+    #[test]
+    fn creates_image_ref_from_library_path() {
+        let image_ref = ImageRef::new("library/nginx:latest").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "library/nginx:latest");
+    }
+
+    #[test]
+    fn creates_image_ref_with_repository_underscore() {
+        let image_ref = ImageRef::new("my_image:v1").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "my_image:v1");
+    }
+
+    #[test]
+    fn creates_image_ref_from_deep_repository_path() {
+        let image_ref = ImageRef::new("registry.io/a/b/c/image:tag").expect("image ref");
+
+        assert_eq!(image_ref.as_str(), "registry.io/a/b/c/image:tag");
+    }
+
+    #[test]
+    fn creates_image_ref_from_digest_reference() {
+        let image_ref = ImageRef::new("registry.example.com/platform/checkout-api@sha256:abcdef")
+            .expect("image ref");
+
+        assert_eq!(
+            image_ref.as_str(),
+            "registry.example.com/platform/checkout-api@sha256:abcdef"
+        );
+    }
+
+    #[test]
+    fn creates_image_ref_with_tag_and_digest() {
+        let image = "registry.example.com/platform/checkout-api:1.2.3@sha256:abcdef";
+        let image_ref = ImageRef::new(image).expect("image ref");
+
+        assert_eq!(image_ref.as_str(), image);
+    }
+
+    #[test]
+    fn creates_image_ref_with_registry_port() {
+        let image_ref = ImageRef::new("localhost:5000/platform/checkout-api:dev")
+            .expect("image ref with registry port");
+
+        assert_eq!(
+            image_ref.as_str(),
+            "localhost:5000/platform/checkout-api:dev"
+        );
+    }
+
+    #[test]
+    fn creates_image_ref_with_mixed_case_tag() {
+        let image_ref =
+            ImageRef::new("registry.example.com/platform/checkout-api:BuildA").expect("image ref");
+
+        assert_eq!(
+            image_ref.as_str(),
+            "registry.example.com/platform/checkout-api:BuildA"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_image_ref() {
+        let error = ImageRef::new("").expect_err("empty image ref should be rejected");
+
+        assert_eq!(error, ImageRefError::Empty);
+    }
+
+    #[test]
+    fn rejects_long_image_ref() {
+        let value = "a".repeat(IMAGE_REF_MAX_LEN + 1);
+        let error = ImageRef::new(value).expect_err("long image ref should be rejected");
+
+        assert_eq!(
+            error,
+            ImageRefError::TooLong {
+                max_len: IMAGE_REF_MAX_LEN
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_image_ref_with_invalid_boundary() {
+        for value in ["/checkout-api:1.2.3", "checkout-api:"] {
+            let error = ImageRef::new(value).expect_err("boundary should be rejected");
+
+            assert_eq!(error, ImageRefError::InvalidBoundary);
+        }
+    }
+
+    #[test]
+    fn rejects_image_ref_with_invalid_character() {
+        let error = ImageRef::new("checkout api:1.2.3").expect_err("space should be rejected");
+
+        assert_eq!(error, ImageRefError::InvalidCharacter { character: ' ' });
+    }
+
+    #[test]
+    fn rejects_image_ref_with_uppercase_repository() {
+        let error =
+            ImageRef::new("registry.example.com/platform/Checkout-api:1.2.3").expect_err("image");
+
+        assert_eq!(error, ImageRefError::InvalidCharacter { character: 'C' });
+    }
+
+    #[test]
+    fn rejects_uppercase_in_path_after_registry_port() {
+        let error = ImageRef::new("localhost:5000/Platform/checkout-api:1.2.3").expect_err("image");
+
+        assert_eq!(error, ImageRefError::InvalidCharacter { character: 'P' });
+    }
+
+    #[test]
+    fn rejects_image_ref_with_empty_component() {
+        let error = ImageRef::new("registry.example.com//checkout-api:1.2.3")
+            .expect_err("empty path component should be rejected");
+
+        assert_eq!(error, ImageRefError::MissingName);
     }
 }
