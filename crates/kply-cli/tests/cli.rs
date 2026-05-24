@@ -49,6 +49,7 @@ fn prints_version_json() {
         .stdout
         .clone();
 
-    let value: serde_json::Value = serde_json::from_slice(&output).expect("stdout should be JSON");
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("version_json", value);
 }
