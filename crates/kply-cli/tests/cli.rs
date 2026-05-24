@@ -24,3 +24,12 @@ fn prints_placeholder_json() {
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("placeholder_json", value);
 }
+
+#[test]
+fn prints_version_text() {
+    kply_cmd()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(format!("kply {}\n", env!("CARGO_PKG_VERSION")));
+}

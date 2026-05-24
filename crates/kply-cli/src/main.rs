@@ -9,6 +9,11 @@ use cli::Cli;
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if cli.version {
+        println!("kply {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     if cli.json {
         let value = serde_json::json!({
             "name": "kply",

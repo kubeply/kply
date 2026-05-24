@@ -6,6 +6,10 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(author, about, disable_version_flag = true)]
 pub struct Cli {
+    /// Print the kply version.
+    #[arg(long)]
+    pub version: bool,
+
     /// Print placeholder output as JSON.
     #[arg(long)]
     pub json: bool,
