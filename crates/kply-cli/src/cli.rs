@@ -25,7 +25,7 @@ pub struct Cli {
 }
 
 /// Top-level placeholder CLI commands.
-#[derive(Debug, Subcommand)]
+#[derive(Clone, Copy, Debug, Subcommand)]
 pub enum Command {
     /// Print top-level help.
     Help,
@@ -42,8 +42,17 @@ pub enum Command {
 }
 
 impl Command {
+    /// Placeholder command groups that intentionally have no behavior yet.
+    pub const PLACEHOLDER_GROUPS: &'static [Self] = &[
+        Self::Session,
+        Self::App,
+        Self::Config,
+        Self::Cluster,
+        Self::Report,
+    ];
+
     /// Return the stable command name used in CLI output.
-    pub(crate) const fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             Self::Help => "help",
             Self::Session => "session",

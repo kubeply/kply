@@ -1,5 +1,6 @@
 //! CLI placeholder behavior tests for Kply.
 
+use kply_cli::cli::Command;
 use kply_test::kply_cmd;
 
 #[test]
@@ -84,7 +85,8 @@ fn prints_help_command() {
 
 #[test]
 fn prints_command_group_placeholders() {
-    for command in ["session", "app", "config", "cluster", "report"] {
+    for command in Command::PLACEHOLDER_GROUPS {
+        let command = command.name();
         let output = kply_cmd()
             .arg(command)
             .assert()

@@ -1,10 +1,8 @@
 //! Command-line entrypoint for the Kply placeholder CLI.
 
-mod cli;
-
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command};
+use kply_cli::cli::{Cli, Command};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
