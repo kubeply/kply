@@ -1,5 +1,7 @@
 //! CLI placeholder behavior tests for Kply.
 
+use clap::CommandFactory;
+use kply_cli::cli::Cli;
 use kply_cli::cli::Command;
 use kply_test::{EXIT_USAGE, assert_kply_exit_code, kply_cmd};
 
@@ -116,6 +118,48 @@ fn prints_command_group_json_placeholders() {
         let value: serde_json::Value =
             serde_json::from_str(&output).expect("stdout should be JSON");
         insta::assert_json_snapshot!(format!("command_group_{command}_json"), value);
+    }
+}
+
+#[test]
+fn covers_every_top_level_command() {
+    let mut command_names = Cli::command()
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["app", "cluster", "config", "help", "report", "session"],
+        "update CLI command tests when the top-level command surface changes"
+    );
+
+    kply_cmd().arg("help").assert().success();
+
+    for command in Command::PLACEHOLDER_GROUPS {
+        kply_cmd().arg(command.name()).assert().success();
+    }
+}
+
+#[test]
+fn covers_every_top_level_flag() {
+    let mut flag_names = Cli::command()
+        .get_arguments()
+        .filter_map(|argument| argument.get_long())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    flag_names.push("help".to_owned());
+    flag_names.sort_unstable();
+
+    assert_eq!(
+        flag_names,
+        ["help", "json", "no-color", "quiet", "verbose", "version"],
+        "update CLI flag tests when the top-level flag surface changes"
+    );
+
+    for flag_name in &flag_names {
+        kply_cmd().arg(format!("--{flag_name}")).assert().success();
     }
 }
 
