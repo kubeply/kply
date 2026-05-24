@@ -14,8 +14,16 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Some(command) => {
-            println!("kply {}", command.name());
-            println!("Command group is defined but behavior is intentionally pending.");
+            if cli.json {
+                let value = serde_json::json!({
+                    "command": command.name(),
+                    "status": "placeholder"
+                });
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            } else {
+                println!("kply {}", command.name());
+                println!("Command group is defined but behavior is intentionally pending.");
+            }
             return Ok(());
         }
         None => {}

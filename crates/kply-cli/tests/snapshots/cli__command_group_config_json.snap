@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "command": "config",
+  "status": "placeholder"
+}
