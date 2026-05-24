@@ -537,6 +537,119 @@ impl fmt::Display for SessionReportError {
 
 impl std::error::Error for SessionReportError {}
 
+/// Audit event kind for future Kply session history.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SessionEventKind {
+    /// A session plan was created.
+    Planned,
+    /// Temporary sandbox resources are being prepared.
+    Preparing,
+    /// The session became active for test traffic.
+    Active,
+    /// Session verification started.
+    Verifying,
+    /// The session became blocked.
+    Blocked,
+    /// The session became ready for approval or promotion.
+    Ready,
+    /// Temporary session resources were cleaned up.
+    CleanedUp,
+    /// The session failed.
+    Failed,
+}
+
+impl SessionEventKind {
+    /// Return every known session event kind in declaration order.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Planned,
+            Self::Preparing,
+            Self::Active,
+            Self::Verifying,
+            Self::Blocked,
+            Self::Ready,
+            Self::CleanedUp,
+            Self::Failed,
+        ]
+    }
+
+    /// Return the stable snake_case event kind name used in agent-readable output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Preparing => "preparing",
+            Self::Active => "active",
+            Self::Verifying => "verifying",
+            Self::Blocked => "blocked",
+            Self::Ready => "ready",
+            Self::CleanedUp => "cleaned_up",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// Return the [`SessionStatus`] represented by this event kind.
+    pub const fn status(&self) -> SessionStatus {
+        match self {
+            Self::Planned => SessionStatus::Planned,
+            Self::Preparing => SessionStatus::Preparing,
+            Self::Active => SessionStatus::Active,
+            Self::Verifying => SessionStatus::Verifying,
+            Self::Blocked => SessionStatus::Blocked,
+            Self::Ready => SessionStatus::Ready,
+            Self::CleanedUp => SessionStatus::CleanedUp,
+            Self::Failed => SessionStatus::Failed,
+        }
+    }
+}
+
+impl fmt::Display for SessionEventKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Deterministic audit event for future Kply session history.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionEvent {
+    session_id: SessionId,
+    sequence: u64,
+    kind: SessionEventKind,
+    status: SessionStatus,
+}
+
+impl SessionEvent {
+    /// Create a [`SessionEvent`] from a session id, sequence, and event kind.
+    pub const fn new(session_id: SessionId, sequence: u64, kind: SessionEventKind) -> Self {
+        Self {
+            session_id,
+            sequence,
+            kind,
+            status: kind.status(),
+        }
+    }
+
+    /// Borrow the event [`SessionId`].
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    /// Return the event sequence number.
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Return the [`SessionEventKind`].
+    pub const fn kind(&self) -> SessionEventKind {
+        self.kind
+    }
+
+    /// Return the event [`SessionStatus`].
+    pub const fn status(&self) -> SessionStatus {
+        self.status
+    }
+}
+
 /// Error returned when a [`SessionId`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIdError {
@@ -1235,10 +1348,11 @@ mod tests {
         IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, ROUTE_HEADER_NAME_MAX_LEN,
         ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
         RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteSelector,
-        RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionId, SessionIdError, SessionName,
-        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
-        SessionReport, SessionReportError, SessionStatus, WORKLOAD_KIND_MAX_LEN, WorkloadKindError,
-        WorkloadRef, WorkloadRefError, WorkloadTokenError,
+        RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionEvent, SessionEventKind, SessionId,
+        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
+        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
 
     fn test_session_plan() -> SessionPlan {
@@ -1377,6 +1491,67 @@ mod tests {
             ]
         );
         assert_eq!(SessionStatus::CleanedUp.to_string(), "cleaned_up");
+    }
+
+    #[test]
+    fn lists_session_event_kinds_in_lifecycle_order() {
+        assert_eq!(
+            SessionEventKind::all(),
+            &[
+                SessionEventKind::Planned,
+                SessionEventKind::Preparing,
+                SessionEventKind::Active,
+                SessionEventKind::Verifying,
+                SessionEventKind::Blocked,
+                SessionEventKind::Ready,
+                SessionEventKind::CleanedUp,
+                SessionEventKind::Failed,
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_session_event_kind_names() {
+        let kind_names = SessionEventKind::all()
+            .iter()
+            .map(SessionEventKind::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            kind_names,
+            [
+                "planned",
+                "preparing",
+                "active",
+                "verifying",
+                "blocked",
+                "ready",
+                "cleaned_up",
+                "failed",
+            ]
+        );
+        assert_eq!(SessionEventKind::CleanedUp.to_string(), "cleaned_up");
+    }
+
+    #[test]
+    fn maps_session_event_kinds_to_statuses() {
+        let statuses = SessionEventKind::all()
+            .iter()
+            .map(SessionEventKind::status)
+            .collect::<Vec<_>>();
+
+        assert_eq!(statuses, SessionStatus::all());
+    }
+
+    #[test]
+    fn creates_session_event_for_audit_history() {
+        let session_id = SessionId::new("session-123").expect("session id");
+        let event = SessionEvent::new(session_id.clone(), 7, SessionEventKind::Verifying);
+
+        assert_eq!(event.session_id(), &session_id);
+        assert_eq!(event.sequence(), 7);
+        assert_eq!(event.kind(), SessionEventKind::Verifying);
+        assert_eq!(event.status(), SessionStatus::Verifying);
     }
 
     #[test]
