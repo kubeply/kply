@@ -4,13 +4,17 @@ use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
 const WORKLOAD_KIND_MAX_LEN: usize = 63;
-const ROUTE_HEADER_NAME_MAX_LEN: usize = 63;
-const ROUTE_HEADER_VALUE_MAX_LEN: usize = 255;
-const ROUTE_HOST_MAX_LEN: usize = 253;
-const ROUTE_HOST_LABEL_MAX_LEN: usize = 63;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
+/// Maximum allowed length for a route header name.
+pub const ROUTE_HEADER_NAME_MAX_LEN: usize = 63;
+/// Maximum allowed length for a route header value.
+pub const ROUTE_HEADER_VALUE_MAX_LEN: usize = 255;
+/// Maximum allowed length for a route host.
+pub const ROUTE_HOST_MAX_LEN: usize = 253;
+/// Maximum allowed length for a route host label.
+pub const ROUTE_HOST_LABEL_MAX_LEN: usize = 63;
 
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1092,6 +1096,17 @@ mod tests {
         assert_eq!(
             selector.header_parts(),
             Some(("x-kply-session", value.as_str()))
+        );
+    }
+
+    #[test]
+    fn creates_header_route_selector_with_exact_max_name_length() {
+        let name = "a".repeat(ROUTE_HEADER_NAME_MAX_LEN);
+        let selector = RouteSelector::header(name.as_str(), "session-123").expect("route selector");
+
+        assert_eq!(
+            selector.header_parts(),
+            Some((name.as_str(), "session-123"))
         );
     }
 
