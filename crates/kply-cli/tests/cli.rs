@@ -131,7 +131,15 @@ fn covers_every_top_level_command() {
 
     assert_eq!(
         command_names,
-        ["app", "cluster", "config", "help", "report", "session"],
+        [
+            "app",
+            "cluster",
+            "completion",
+            "config",
+            "help",
+            "report",
+            "session"
+        ],
         "update CLI command tests when the top-level command surface changes"
     );
 
