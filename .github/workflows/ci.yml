@@ -56,6 +56,9 @@ jobs:
       - name: Test
         run: cargo test --all-targets --all-features --locked
 
+      - name: Test fixture helpers
+        run: cargo test -p kply-test --locked
+
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
 
