@@ -496,10 +496,7 @@ fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
         return Err(ImageRefError::InvalidCharacter { character });
     }
 
-    let repository = value
-        .split([':', '@'])
-        .next()
-        .ok_or(ImageRefError::MissingName)?;
+    let repository = value.split([':', '@']).next().unwrap_or(value);
     if let Some(character) = repository
         .chars()
         .find(|character| !is_image_ref_repository_character(*character))
