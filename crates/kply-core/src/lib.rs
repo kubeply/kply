@@ -406,6 +406,10 @@ impl fmt::Display for SessionPolicyError {
 impl std::error::Error for SessionPolicyError {}
 
 /// Dry-run description of a future Kply session.
+///
+/// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
+/// proposed [`ImageRef`], optional [`RouteSelector`], [`SessionPolicy`], and
+/// initial [`SessionStatus`] for a session that has not yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionPlan {
     id: SessionId,
@@ -437,43 +441,43 @@ impl SessionPlan {
         }
     }
 
-    /// Return a copy of this plan with a test traffic route selector.
+    /// Return a copy of this plan with a test traffic [`RouteSelector`].
     pub fn with_route_selector(mut self, route_selector: RouteSelector) -> Self {
         self.route_selector = Some(route_selector);
         self
     }
 
-    /// Borrow the session identifier.
+    /// Borrow the [`SessionId`].
     pub fn id(&self) -> &SessionId {
         &self.id
     }
 
-    /// Borrow the session name.
+    /// Borrow the [`SessionName`].
     pub fn name(&self) -> &SessionName {
         &self.name
     }
 
-    /// Borrow the target workload.
+    /// Borrow the target [`WorkloadRef`].
     pub fn workload(&self) -> &WorkloadRef {
         &self.workload
     }
 
-    /// Borrow the proposed sandbox image.
+    /// Borrow the proposed sandbox [`ImageRef`].
     pub fn image(&self) -> &ImageRef {
         &self.image
     }
 
-    /// Borrow the optional route selector.
+    /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
     }
 
-    /// Borrow the allowed session policy.
+    /// Borrow the [`SessionPolicy`].
     pub fn policy(&self) -> &SessionPolicy {
         &self.policy
     }
 
-    /// Return the planned lifecycle status.
+    /// Return the planned [`SessionStatus`].
     pub const fn status(&self) -> SessionStatus {
         self.status
     }
