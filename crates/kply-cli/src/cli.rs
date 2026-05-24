@@ -27,6 +27,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub verbose: bool,
 
+    /// Disable ANSI color output.
+    #[arg(long, global = true)]
+    pub no_color: bool,
+
     /// Optional top-level command.
     #[command(subcommand)]
     pub command: Option<Command>,

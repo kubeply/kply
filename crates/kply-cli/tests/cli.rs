@@ -182,3 +182,31 @@ fn keeps_json_stdout_clean_when_verbose() {
     let stderr = String::from_utf8(output.stderr.clone()).expect("stderr should be UTF-8");
     insta::assert_snapshot!("verbose_json_stderr", stderr);
 }
+
+#[test]
+fn accepts_no_color_for_deterministic_output() {
+    let output = kply_cmd()
+        .arg("--no-color")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("no_color_placeholder_text", output);
+}
+
+#[test]
+fn includes_no_color_in_verbose_trace() {
+    let output = kply_cmd()
+        .args(["--verbose", "--no-color"])
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("verbose_no_color_stderr", output);
+}

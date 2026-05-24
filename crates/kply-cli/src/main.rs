@@ -68,7 +68,7 @@ fn print_verbose_trace(cli: &Cli) {
 
     let command = cli.command.map_or("<none>", |command| command.name());
     eprintln!(
-        "debug: command={command} json={} quiet={}",
-        cli.json, cli.quiet
+        "debug: command={command} json={} quiet={} no_color={}",
+        cli.json, cli.quiet, cli.no_color
     );
 }
