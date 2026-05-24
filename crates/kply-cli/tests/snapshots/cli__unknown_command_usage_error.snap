@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: usage
+
+error: unrecognized subcommand 'unknown'
+
+Usage: kply [OPTIONS] [COMMAND]
+
+For more information, try '--help'.

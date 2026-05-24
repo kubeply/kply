@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: usage
+
+error: unexpected argument '--bad-flag' found
+
+Usage: kply [OPTIONS] [COMMAND]
+
+For more information, try '--help'.

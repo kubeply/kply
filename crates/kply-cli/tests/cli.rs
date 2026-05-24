@@ -1,7 +1,7 @@
 //! CLI placeholder behavior tests for Kply.
 
 use kply_cli::cli::Command;
-use kply_test::kply_cmd;
+use kply_test::{EXIT_USAGE, assert_kply_exit_code, kply_cmd};
 
 #[test]
 fn prints_placeholder_text() {
@@ -209,4 +209,30 @@ fn includes_no_color_in_verbose_trace() {
 
     let output = String::from_utf8(output).expect("stderr should be UTF-8");
     insta::assert_snapshot!("verbose_no_color_stderr", output);
+}
+
+#[test]
+fn renders_unknown_flag_as_usage_error() {
+    let output = assert_kply_exit_code(&["--bad-flag"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("unknown_flag_usage_error", stderr);
+}
+
+#[test]
+fn renders_unknown_command_as_usage_error() {
+    let output = assert_kply_exit_code(&["unknown"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("unknown_command_usage_error", stderr);
 }
