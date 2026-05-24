@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+Top-level placeholder CLI options
+
+Usage: kply [OPTIONS]
+
+Options:
+      --version  Print the kply version
+      --json     Print placeholder output as JSON
+  -h, --help     Print help

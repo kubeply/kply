@@ -53,3 +53,31 @@ fn prints_version_json() {
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("version_json", value);
 }
+
+#[test]
+fn prints_help_flag() {
+    let output = kply_cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("help_flag", output);
+}
+
+#[test]
+fn prints_help_command() {
+    let output = kply_cmd()
+        .arg("help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("help_command", output);
+}
