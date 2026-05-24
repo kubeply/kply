@@ -9,6 +9,20 @@ use cli::Cli;
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if cli.version {
+        if cli.json {
+            let value = serde_json::json!({
+                "name": "kply",
+                "version": env!("CARGO_PKG_VERSION")
+            });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            return Ok(());
+        }
+
+        println!("kply {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     if cli.json {
         let value = serde_json::json!({
             "name": "kply",
