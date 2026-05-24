@@ -1,5 +1,7 @@
 //! Core domain model for future Kply session primitives.
 
+use serde::de::Error as DeserializeError;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
@@ -17,7 +19,7 @@ pub const ROUTE_HOST_MAX_LEN: usize = 253;
 pub const ROUTE_HOST_LABEL_MAX_LEN: usize = 63;
 
 /// Stable identifier for a future Kply session.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct SessionId(String);
 
 impl SessionId {
@@ -40,8 +42,31 @@ impl fmt::Display for SessionId {
     }
 }
 
+impl TryFrom<String> for SessionId {
+    type Error = SessionIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<SessionId> for String {
+    fn from(value: SessionId) -> Self {
+        value.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_validated_string(deserializer, Self::new)
+    }
+}
+
 /// Stable user-facing name for a future Kply session.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct SessionName(String);
 
 impl SessionName {
@@ -64,9 +89,33 @@ impl fmt::Display for SessionName {
     }
 }
 
+impl TryFrom<String> for SessionName {
+    type Error = SessionNameError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<SessionName> for String {
+    fn from(value: SessionName) -> Self {
+        value.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_validated_string(deserializer, Self::new)
+    }
+}
+
 /// Lifecycle status for a future Kply session.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     /// Session inputs have been accepted but no cluster preparation has started.
     Planned,
@@ -123,7 +172,7 @@ impl fmt::Display for SessionStatus {
 }
 
 /// Kubernetes workload target for a future Kply session.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct WorkloadRef {
     namespace: String,
     kind: String,
@@ -178,8 +227,18 @@ impl fmt::Display for WorkloadRef {
     }
 }
 
+impl<'de> Deserialize<'de> for WorkloadRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = WorkloadRefFields::deserialize(deserializer)?;
+        Self::new(fields.namespace, fields.kind, fields.name).map_err(D::Error::custom)
+    }
+}
+
 /// Container image reference proposed for a future sandbox workload.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct ImageRef(String);
 
 impl ImageRef {
@@ -202,9 +261,33 @@ impl fmt::Display for ImageRef {
     }
 }
 
+impl TryFrom<String> for ImageRef {
+    type Error = ImageRefError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<ImageRef> for String {
+    fn from(value: ImageRef) -> Self {
+        value.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ImageRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_validated_string(deserializer, Self::new)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RouteSelector {
     /// Match requests by HTTP header name and value.
     Header { name: String, value: String },
@@ -269,9 +352,26 @@ impl fmt::Display for RouteSelector {
     }
 }
 
+impl<'de> Deserialize<'de> for RouteSelector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match RouteSelectorFields::deserialize(deserializer)? {
+            RouteSelectorFields::Header { name, value } => {
+                Self::header(name, value).map_err(D::Error::custom)
+            }
+            RouteSelectorFields::Host { hostname } => {
+                Self::host(hostname).map_err(D::Error::custom)
+            }
+        }
+    }
+}
+
 /// Operation that a future Kply session policy may allow.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionOperation {
     /// Read workload and cluster state without mutating resources.
     Inspect,
@@ -324,7 +424,7 @@ impl fmt::Display for SessionOperation {
 }
 
 /// Allowed operation set for a future Kply session.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPolicy {
     allowed_operations: Vec<SessionOperation>,
 }
@@ -380,6 +480,16 @@ impl Default for SessionPolicy {
     }
 }
 
+impl<'de> Deserialize<'de> for SessionPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SessionPolicyFields::deserialize(deserializer)?;
+        Self::new(fields.allowed_operations).map_err(D::Error::custom)
+    }
+}
+
 /// Error returned when a [`SessionPolicy`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionPolicyError {
@@ -410,7 +520,7 @@ impl std::error::Error for SessionPolicyError {}
 /// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
 /// proposed [`ImageRef`], optional [`RouteSelector`], [`SessionPolicy`], and
 /// initial [`SessionStatus`] for a session that has not yet been executed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
     name: SessionName,
@@ -483,12 +593,40 @@ impl SessionPlan {
     }
 }
 
+impl<'de> Deserialize<'de> for SessionPlan {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SessionPlanFields::deserialize(deserializer)?;
+        if fields.status != SessionStatus::Planned {
+            return Err(D::Error::custom(format!(
+                "session plan status `{}` is not planned",
+                fields.status
+            )));
+        }
+
+        let mut plan = Self::new(
+            fields.id,
+            fields.name,
+            fields.workload,
+            fields.image,
+            fields.policy,
+        );
+        if let Some(route_selector) = fields.route_selector {
+            plan = plan.with_route_selector(route_selector);
+        }
+
+        Ok(plan)
+    }
+}
+
 /// Final report for an executed [`SessionPlan`].
 ///
 /// A report preserves the original [`SessionPlan`] and records a reportable
 /// [`SessionStatus`] such as [`SessionStatus::Ready`], [`SessionStatus::Blocked`],
 /// [`SessionStatus::CleanedUp`], or [`SessionStatus::Failed`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionReport {
     plan: SessionPlan,
     status: SessionStatus,
@@ -537,9 +675,20 @@ impl fmt::Display for SessionReportError {
 
 impl std::error::Error for SessionReportError {}
 
+impl<'de> Deserialize<'de> for SessionReport {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SessionReportFields::deserialize(deserializer)?;
+        Self::new(fields.plan, fields.status).map_err(D::Error::custom)
+    }
+}
+
 /// Audit event kind for future Kply session history.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionEventKind {
     /// A session plan was created.
     Planned,
@@ -610,7 +759,7 @@ impl fmt::Display for SessionEventKind {
 }
 
 /// Deterministic audit event for future Kply session history.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct SessionEvent {
     session_id: SessionId,
     sequence: u64,
@@ -647,6 +796,24 @@ impl SessionEvent {
     /// Return the event [`SessionStatus`].
     pub const fn status(&self) -> SessionStatus {
         self.status
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SessionEventFields::deserialize(deserializer)?;
+        let event = Self::new(fields.session_id, fields.sequence, fields.kind);
+        if event.status != fields.status {
+            return Err(D::Error::custom(format!(
+                "session event status `{}` does not match kind `{}`",
+                fields.status, fields.kind
+            )));
+        }
+
+        Ok(event)
     }
 }
 
@@ -1013,12 +1180,69 @@ impl From<SessionTokenError> for WorkloadTokenError {
     }
 }
 
+#[derive(Deserialize)]
+struct WorkloadRefFields {
+    namespace: String,
+    kind: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RouteSelectorFields {
+    Header { name: String, value: String },
+    Host { hostname: String },
+}
+
+#[derive(Deserialize)]
+struct SessionPolicyFields {
+    allowed_operations: Vec<SessionOperation>,
+}
+
+#[derive(Deserialize)]
+struct SessionPlanFields {
+    id: SessionId,
+    name: SessionName,
+    workload: WorkloadRef,
+    image: ImageRef,
+    route_selector: Option<RouteSelector>,
+    policy: SessionPolicy,
+    status: SessionStatus,
+}
+
+#[derive(Deserialize)]
+struct SessionReportFields {
+    plan: SessionPlan,
+    status: SessionStatus,
+}
+
+#[derive(Deserialize)]
+struct SessionEventFields {
+    session_id: SessionId,
+    sequence: u64,
+    kind: SessionEventKind,
+    status: SessionStatus,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionTokenError {
     Empty,
     TooLong { max_len: usize },
     InvalidBoundary,
     InvalidCharacter { character: char },
+}
+
+fn deserialize_validated_string<'de, D, T, E, F>(
+    deserializer: D,
+    constructor: F,
+) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    E: fmt::Display,
+    F: FnOnce(String) -> Result<T, E>,
+{
+    let value = String::deserialize(deserializer)?;
+    constructor(value).map_err(D::Error::custom)
 }
 
 /// Find the first duplicate operation in a sorted slice.
@@ -1354,6 +1578,7 @@ mod tests {
         WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
         WorkloadTokenError,
     };
+    use serde_json::json;
 
     fn test_session_plan() -> SessionPlan {
         SessionPlan::new(
@@ -1552,6 +1777,178 @@ mod tests {
         assert_eq!(event.sequence(), 7);
         assert_eq!(event.kind(), SessionEventKind::Verifying);
         assert_eq!(event.status(), SessionStatus::Verifying);
+    }
+
+    #[test]
+    fn serializes_session_plan_to_stable_json_fields() {
+        let route_selector =
+            RouteSelector::header("x-kply-session", "session-123").expect("route selector");
+        let plan = test_session_plan().with_route_selector(route_selector);
+        let value = serde_json::to_value(&plan).expect("session plan should serialize");
+
+        assert_eq!(
+            value,
+            json!({
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": {
+                    "kind": "header",
+                    "name": "x-kply-session",
+                    "value": "session-123"
+                },
+                "policy": {
+                    "allowed_operations": [
+                        "inspect",
+                        "plan",
+                        "prepare",
+                        "route",
+                        "verify",
+                        "cleanup"
+                    ]
+                },
+                "status": "planned"
+            })
+        );
+    }
+
+    #[test]
+    fn deserializes_session_plan_with_validated_fields() {
+        let plan: SessionPlan = serde_json::from_value(json!({
+            "id": "session-123",
+            "name": "checkout-test",
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "image": "registry.example.com/checkout/api:v2",
+            "route_selector": {
+                "kind": "host",
+                "hostname": "session-123.preview.example.com"
+            },
+            "policy": {
+                "allowed_operations": [
+                    "inspect",
+                    "plan",
+                    "prepare",
+                    "route",
+                    "verify",
+                    "cleanup"
+                ]
+            },
+            "status": "planned"
+        }))
+        .expect("session plan should deserialize");
+
+        assert_eq!(plan.id().as_str(), "session-123");
+        assert_eq!(plan.name().as_str(), "checkout-test");
+        assert_eq!(
+            plan.route_selector().and_then(RouteSelector::hostname),
+            Some("session-123.preview.example.com")
+        );
+        assert_eq!(plan.status(), SessionStatus::Planned);
+    }
+
+    #[test]
+    fn rejects_invalid_session_plan_json() {
+        let error = serde_json::from_value::<SessionPlan>(json!({
+            "id": "Session-123",
+            "name": "checkout-test",
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "image": "registry.example.com/checkout/api:v2",
+            "route_selector": null,
+            "policy": {
+                "allowed_operations": ["inspect"]
+            },
+            "status": "planned"
+        }))
+        .expect_err("invalid session id should be rejected");
+
+        assert!(error.to_string().contains("session id"));
+    }
+
+    #[test]
+    fn round_trips_session_report_json() {
+        let report =
+            SessionReport::new(test_session_plan(), SessionStatus::Ready).expect("session report");
+        let value = serde_json::to_value(&report).expect("session report should serialize");
+        let deserialized: SessionReport =
+            serde_json::from_value(value).expect("session report should deserialize");
+
+        assert_eq!(deserialized, report);
+    }
+
+    #[test]
+    fn rejects_session_report_json_with_non_reportable_status() {
+        let error = serde_json::from_value::<SessionReport>(json!({
+            "plan": {
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": null,
+                "policy": {
+                    "allowed_operations": ["inspect"]
+                },
+                "status": "planned"
+            },
+            "status": "active"
+        }))
+        .expect_err("non-reportable report status should be rejected");
+
+        assert!(error.to_string().contains("not reportable"));
+    }
+
+    #[test]
+    fn round_trips_session_event_json() {
+        let event = SessionEvent::new(
+            SessionId::new("session-123").expect("session id"),
+            3,
+            SessionEventKind::Ready,
+        );
+        let value = serde_json::to_value(&event).expect("session event should serialize");
+
+        assert_eq!(
+            value,
+            json!({
+                "session_id": "session-123",
+                "sequence": 3,
+                "kind": "ready",
+                "status": "ready"
+            })
+        );
+
+        let deserialized: SessionEvent =
+            serde_json::from_value(value).expect("session event should deserialize");
+
+        assert_eq!(deserialized, event);
+    }
+
+    #[test]
+    fn rejects_session_event_json_with_mismatched_status() {
+        let error = serde_json::from_value::<SessionEvent>(json!({
+            "session_id": "session-123",
+            "sequence": 3,
+            "kind": "ready",
+            "status": "failed"
+        }))
+        .expect_err("mismatched event status should be rejected");
+
+        assert!(error.to_string().contains("does not match kind"));
     }
 
     #[test]
