@@ -35,7 +35,7 @@ pub enum SessionIdError {
     Empty,
     /// Session identifiers must fit common Kubernetes label value limits.
     TooLong { max_len: usize },
-    /// Session identifiers must start and end with an ASCII letter or digit.
+    /// Session identifiers must start and end with a lowercase ASCII letter or digit.
     InvalidBoundary,
     /// Session identifiers only allow lowercase ASCII letters, digits, and hyphens.
     InvalidCharacter { character: char },
@@ -48,9 +48,8 @@ impl fmt::Display for SessionIdError {
             Self::TooLong { max_len } => {
                 write!(formatter, "session id cannot exceed {max_len} characters")
             }
-            Self::InvalidBoundary => {
-                formatter.write_str("session id must start and end with an ASCII letter or digit")
-            }
+            Self::InvalidBoundary => formatter
+                .write_str("session id must start and end with a lowercase ASCII letter or digit"),
             Self::InvalidCharacter { character } => write!(
                 formatter,
                 "session id contains invalid character `{character}`"
@@ -72,14 +71,10 @@ fn validate_session_id(value: &str) -> Result<(), SessionIdError> {
         });
     }
 
-    let Some(first_character) = value.chars().next() else {
-        return Err(SessionIdError::Empty);
-    };
-    let Some(last_character) = value.chars().next_back() else {
-        return Err(SessionIdError::Empty);
-    };
+    let first_character = value.chars().next().ok_or(SessionIdError::Empty)?;
+    let last_character = value.chars().next_back().ok_or(SessionIdError::Empty)?;
 
-    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+    if !is_session_id_boundary(first_character) || !is_session_id_boundary(last_character) {
         return Err(SessionIdError::InvalidBoundary);
     }
 
@@ -95,6 +90,10 @@ fn validate_session_id(value: &str) -> Result<(), SessionIdError> {
 
 fn is_session_id_character(character: char) -> bool {
     character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+}
+
+fn is_session_id_boundary(character: char) -> bool {
+    character.is_ascii_lowercase() || character.is_ascii_digit()
 }
 
 #[cfg(test)]
@@ -131,14 +130,16 @@ mod tests {
 
     #[test]
     fn rejects_session_id_with_invalid_boundary() {
-        let error = SessionId::new("-session").expect_err("leading hyphen should be rejected");
+        for value in ["-session", "Session", "session-"] {
+            let error = SessionId::new(value).expect_err("boundary should be rejected");
 
-        assert_eq!(error, SessionIdError::InvalidBoundary);
+            assert_eq!(error, SessionIdError::InvalidBoundary);
+        }
     }
 
     #[test]
     fn rejects_session_id_with_invalid_character() {
-        let error = SessionId::new("Session").expect_err("uppercase should be rejected");
+        let error = SessionId::new("sesSion").expect_err("uppercase should be rejected");
 
         assert_eq!(error, SessionIdError::InvalidCharacter { character: 'S' });
     }
