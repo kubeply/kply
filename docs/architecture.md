@@ -100,7 +100,9 @@ Current provisional pre-`1.0.0` app graph fields:
   deterministic order.
 - `warnings`: list of graph-building warnings, serialized in deterministic
   order. Current warnings include `ambiguous_service_selector`, which names the
-  Service and candidate workloads when a selector is not specific enough.
+  Service and candidate workloads when a selector is not specific enough, and
+  `missing_route`, which names a selected Service with no discovered route
+  reference.
 
 Current provisional pre-`1.0.0` session plan fields:
 
