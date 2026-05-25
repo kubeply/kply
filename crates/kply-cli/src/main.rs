@@ -9,8 +9,8 @@ use kply_config::{
 };
 use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
-    PlannedCheck, RelationshipConfidence, RouteSelector, ServiceRef, SessionId, SessionName,
-    SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
+    PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RouteSelector, ServiceRef, SessionId,
+    SessionName, SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
@@ -198,6 +198,13 @@ fn render_session_plan(
             println!("  check: {check}");
         }
         println!(
+            "planned_cleanup_steps: {}",
+            plan.planned_cleanup_steps().len()
+        );
+        for step in plan.planned_cleanup_steps() {
+            println!("  cleanup: {step}");
+        }
+        println!(
             "route_selector: {}",
             plan.route_selector()
                 .map_or("<none>".to_owned(), ToString::to_string)
@@ -319,6 +326,13 @@ fn session_plan_from_config(
     .map_err(|error| {
         SessionPlanBuildError::Config(format!("invalid planned check metadata: {error}"))
     })?;
+    let planned_cleanup_steps =
+        planned_session_cleanup_steps(namespace, app.workload_kind(), session_id.as_str())
+            .map_err(|error| {
+                SessionPlanBuildError::Config(format!(
+                    "invalid planned cleanup step metadata: {error}"
+                ))
+            })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -333,6 +347,7 @@ fn session_plan_from_config(
     })?;
     plan = plan.with_planned_annotations(planned_annotations);
     plan = plan.with_planned_checks(planned_checks);
+    plan = plan.with_planned_cleanup_steps(planned_cleanup_steps);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -416,6 +431,44 @@ fn planned_session_checks(
     ]
     .into_iter()
     .map(|(name, target)| PlannedCheck::new(name, target).map_err(|error| error.to_string()))
+    .collect()
+}
+
+fn planned_session_cleanup_steps(
+    namespace: &str,
+    workload_kind: &str,
+    session_id: &str,
+) -> std::result::Result<Vec<PlannedCleanupStep>, String> {
+    let workload = KubernetesResourceRef::new(
+        namespace,
+        workload_kind,
+        planned_resource_token(session_id, "workload"),
+    )
+    .map_err(|error| error.to_string())?
+    .to_string();
+    let service = KubernetesResourceRef::new(
+        namespace,
+        "Service",
+        planned_resource_token(session_id, "service"),
+    )
+    .map_err(|error| error.to_string())?
+    .to_string();
+    let route = KubernetesResourceRef::new(
+        namespace,
+        "HTTPRoute",
+        planned_resource_token(session_id, "route"),
+    )
+    .map_err(|error| error.to_string())?
+    .to_string();
+    [
+        ("delete_route", route.as_str()),
+        ("delete_service", service.as_str()),
+        ("delete_workload", workload.as_str()),
+    ]
+    .into_iter()
+    .map(|(action, target)| {
+        PlannedCleanupStep::new(action, target).map_err(|error| error.to_string())
+    })
     .collect()
 }
 
@@ -939,7 +992,8 @@ fn print_verbose_trace(cli: &Cli) {
 mod tests {
     use super::{
         planned_resource_token, planned_session_annotations, planned_session_checks,
-        planned_session_labels, planned_session_resources, session_token,
+        planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
+        session_token,
     };
     use kply_core::{ImageRef, WorkloadRef};
 
@@ -1092,6 +1146,40 @@ mod tests {
         let image = ImageRef::new("myimage:v1").expect("image");
         let error = planned_session_checks("Bad_Namespace", &workload, &image, "header", "sess")
             .expect_err("invalid service ref should fail");
+
+        assert!(error.contains("namespace"));
+    }
+
+    #[test]
+    fn builds_planned_session_cleanup_steps() {
+        let steps = planned_session_cleanup_steps("ns", "Deployment", "sess")
+            .expect("planned cleanup steps");
+
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].action(), "delete_route");
+        assert_eq!(
+            steps[0].target(),
+            &format!("ns/HTTPRoute/{}", planned_resource_token("sess", "route"))
+        );
+        assert_eq!(steps[1].action(), "delete_service");
+        assert_eq!(
+            steps[1].target(),
+            &format!("ns/Service/{}", planned_resource_token("sess", "service"))
+        );
+        assert_eq!(steps[2].action(), "delete_workload");
+        assert_eq!(
+            steps[2].target(),
+            &format!(
+                "ns/Deployment/{}",
+                planned_resource_token("sess", "workload")
+            )
+        );
+    }
+
+    #[test]
+    fn planned_session_cleanup_steps_return_validation_errors() {
+        let error = planned_session_cleanup_steps("Bad_Namespace", "Deployment", "sess")
+            .expect_err("invalid cleanup resource should fail");
 
         assert!(error.contains("namespace"));
     }

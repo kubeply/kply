@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 5993
+assertion_line: 6239
 expression: value
 ---
 {
@@ -25,6 +25,16 @@ expression: value
     {
       "name": "workload_ready",
       "target": "checkout/Deployment/checkout-api"
+    }
+  ],
+  "planned_cleanup_steps": [
+    {
+      "action": "delete_workload",
+      "target": "checkout/Deployment/session-123-workload"
+    },
+    {
+      "action": "delete_service",
+      "target": "checkout/Service/session-123-service"
     }
   ],
   "planned_labels": [

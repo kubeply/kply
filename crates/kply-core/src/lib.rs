@@ -2,7 +2,7 @@
 
 use serde::de::Error as DeserializeError;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
@@ -11,6 +11,8 @@ const RESOURCE_QUANTITY_MAX_LEN: usize = 63;
 const METADATA_NAME_MAX_LEN: usize = 63;
 const PLANNED_CHECK_NAME_MAX_LEN: usize = 63;
 const PLANNED_CHECK_TARGET_MAX_LEN: usize = 255;
+const PLANNED_CLEANUP_ACTION_MAX_LEN: usize = 63;
+const PLANNED_CLEANUP_TARGET_MAX_LEN: usize = 255;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -1508,6 +1510,55 @@ impl<'de> Deserialize<'de> for PlannedCheck {
     }
 }
 
+/// Planned cleanup operation for a future sandbox session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct PlannedCleanupStep {
+    action: String,
+    target: String,
+}
+
+impl PlannedCleanupStep {
+    /// Create a [`PlannedCleanupStep`] from validated action and target parts.
+    pub fn new(
+        action: impl Into<String>,
+        target: impl Into<String>,
+    ) -> Result<Self, PlannedCleanupStepError> {
+        let action = action.into();
+        let target = target.into();
+
+        validate_planned_cleanup_action(&action).map_err(PlannedCleanupStepError::Action)?;
+        validate_planned_cleanup_target(&target).map_err(PlannedCleanupStepError::Target)?;
+
+        Ok(Self { action, target })
+    }
+
+    /// Borrow the planned cleanup action.
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+
+    /// Borrow the planned cleanup target.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+}
+
+impl fmt::Display for PlannedCleanupStep {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} -> {}", self.action, self.target)
+    }
+}
+
+impl<'de> Deserialize<'de> for PlannedCleanupStep {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = PlannedCleanupStepFields::deserialize(deserializer)?;
+        Self::new(fields.action, fields.target).map_err(D::Error::custom)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1744,7 +1795,8 @@ impl std::error::Error for SessionPolicyError {}
 /// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
 /// proposed [`ImageRef`], optional time-to-live, planned
 /// [`KubernetesResourceRef`] resources, planned [`MetadataEntry`] labels and
-/// annotations, planned [`PlannedCheck`] checks, optional [`RouteSelector`],
+/// annotations, planned [`PlannedCheck`] checks, planned
+/// [`PlannedCleanupStep`] cleanup steps, optional [`RouteSelector`],
 /// [`SessionPolicy`], and initial [`SessionStatus`] for a session that has not
 /// yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -1759,6 +1811,7 @@ pub struct SessionPlan {
     planned_labels: Vec<MetadataEntry>,
     planned_annotations: Vec<MetadataEntry>,
     planned_checks: Vec<PlannedCheck>,
+    planned_cleanup_steps: Vec<PlannedCleanupStep>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1783,6 +1836,7 @@ impl SessionPlan {
             planned_labels: Vec::new(),
             planned_annotations: Vec::new(),
             planned_checks: Vec::new(),
+            planned_cleanup_steps: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -1839,6 +1893,16 @@ impl SessionPlan {
         self
     }
 
+    /// Return a copy of this plan with planned [`PlannedCleanupStep`] steps.
+    pub fn with_planned_cleanup_steps(
+        mut self,
+        planned_cleanup_steps: impl IntoIterator<Item = PlannedCleanupStep>,
+    ) -> Self {
+        self.planned_cleanup_steps =
+            deduplicate_cleanup_steps_preserving_order(planned_cleanup_steps);
+        self
+    }
+
     /// Return a copy of this plan with a test traffic [`RouteSelector`].
     pub fn with_route_selector(mut self, route_selector: RouteSelector) -> Self {
         self.route_selector = Some(route_selector);
@@ -1890,6 +1954,11 @@ impl SessionPlan {
         &self.planned_checks
     }
 
+    /// Borrow planned [`PlannedCleanupStep`] steps in deterministic order.
+    pub fn planned_cleanup_steps(&self) -> &[PlannedCleanupStep] {
+        &self.planned_cleanup_steps
+    }
+
     /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
@@ -1938,6 +2007,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
             .map_err(D::Error::custom)?;
         plan = plan.with_planned_annotations(fields.planned_annotations);
         plan = plan.with_planned_checks(fields.planned_checks);
+        plan = plan.with_planned_cleanup_steps(fields.planned_cleanup_steps);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -2494,6 +2564,97 @@ impl fmt::Display for PlannedCheckTargetError {
 }
 
 impl std::error::Error for PlannedCheckTargetError {}
+
+/// Error returned when a [`PlannedCleanupStep`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCleanupStepError {
+    /// Planned cleanup actions must be valid.
+    Action(PlannedCleanupActionError),
+    /// Planned cleanup targets must be valid.
+    Target(PlannedCleanupTargetError),
+}
+
+impl fmt::Display for PlannedCleanupStepError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Action(error) => write!(formatter, "invalid planned cleanup action: {error}"),
+            Self::Target(error) => write!(formatter, "invalid planned cleanup target: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for PlannedCleanupStepError {}
+
+/// Error returned when a planned cleanup action is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCleanupActionError {
+    /// Planned cleanup actions cannot be empty.
+    Empty,
+    /// Planned cleanup actions must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Planned cleanup actions must start and end with an ASCII letter or digit.
+    InvalidBoundary,
+    /// Planned cleanup actions only allow ASCII cleanup action characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for PlannedCleanupActionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("planned cleanup action cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "planned cleanup action cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter.write_str(
+                "planned cleanup action must start and end with an ASCII letter or digit",
+            ),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "planned cleanup action contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlannedCleanupActionError {}
+
+/// Error returned when a planned cleanup target is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCleanupTargetError {
+    /// Planned cleanup targets cannot be empty.
+    Empty,
+    /// Planned cleanup targets must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Planned cleanup targets only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for PlannedCleanupTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("planned cleanup target cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "planned cleanup target cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "planned cleanup target contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlannedCleanupTargetError {}
 
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3065,6 +3226,8 @@ struct SessionPlanFields {
     planned_annotations: Vec<MetadataEntry>,
     #[serde(default)]
     planned_checks: Vec<PlannedCheck>,
+    #[serde(default)]
+    planned_cleanup_steps: Vec<PlannedCleanupStep>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -3079,6 +3242,13 @@ struct MetadataEntryFields {
 #[derive(Deserialize)]
 struct PlannedCheckFields {
     name: String,
+    target: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlannedCleanupStepFields {
+    action: String,
     target: String,
 }
 
@@ -3589,6 +3759,59 @@ fn validate_planned_check_target(value: &str) -> Result<(), PlannedCheckTargetEr
     Ok(())
 }
 
+fn validate_planned_cleanup_action(value: &str) -> Result<(), PlannedCleanupActionError> {
+    if value.is_empty() {
+        return Err(PlannedCleanupActionError::Empty);
+    }
+
+    if value.len() > PLANNED_CLEANUP_ACTION_MAX_LEN {
+        return Err(PlannedCleanupActionError::TooLong {
+            max_len: PLANNED_CLEANUP_ACTION_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(PlannedCleanupActionError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+        return Err(PlannedCleanupActionError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_planned_cleanup_action_character(*character))
+    {
+        return Err(PlannedCleanupActionError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_planned_cleanup_action_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+}
+
+fn validate_planned_cleanup_target(value: &str) -> Result<(), PlannedCleanupTargetError> {
+    if value.is_empty() {
+        return Err(PlannedCleanupTargetError::Empty);
+    }
+
+    if value.len() > PLANNED_CLEANUP_TARGET_MAX_LEN {
+        return Err(PlannedCleanupTargetError::TooLong {
+            max_len: PLANNED_CLEANUP_TARGET_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !character.is_ascii_graphic())
+    {
+        return Err(PlannedCleanupTargetError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
 fn deduplicate_metadata_by_key(
     metadata: impl IntoIterator<Item = MetadataEntry>,
 ) -> Vec<MetadataEntry> {
@@ -3602,6 +3825,19 @@ fn deduplicate_metadata_by_key(
 
 fn validate_planned_label_entry(entry: MetadataEntry) -> Result<MetadataEntry, MetadataEntryError> {
     MetadataEntry::new_label(entry.key, entry.value)
+}
+
+fn deduplicate_cleanup_steps_preserving_order(
+    planned_cleanup_steps: impl IntoIterator<Item = PlannedCleanupStep>,
+) -> Vec<PlannedCleanupStep> {
+    let mut seen = BTreeSet::new();
+    let mut deduplicated = Vec::new();
+    for step in planned_cleanup_steps {
+        if seen.insert(step.clone()) {
+            deduplicated.push(step);
+        }
+    }
+    deduplicated
 }
 
 fn validate_resource_quantity(value: &str) -> Result<(), ResourceQuantityError> {
@@ -3731,19 +3967,21 @@ mod tests {
         ImageFacts, ImageRef, ImageRefError, KubernetesResourceRef, KubernetesResourceRefError,
         METADATA_KEY_MAX_LEN, METADATA_VALUE_MAX_LEN, MetadataEntry, MetadataEntryError,
         MetadataKeyError, MetadataValueError, PLANNED_CHECK_NAME_MAX_LEN,
-        PLANNED_CHECK_TARGET_MAX_LEN, PlannedCheck, PlannedCheckError, PlannedCheckNameError,
-        PlannedCheckTargetError, PodRef, PodRefError, ProbeFacts, ProbeKind,
-        RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
-        ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts,
-        ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
-        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
-        SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError, SecretReference,
-        ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
-        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
-        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        PLANNED_CHECK_TARGET_MAX_LEN, PLANNED_CLEANUP_ACTION_MAX_LEN,
+        PLANNED_CLEANUP_TARGET_MAX_LEN, PlannedCheck, PlannedCheckError, PlannedCheckNameError,
+        PlannedCheckTargetError, PlannedCleanupActionError, PlannedCleanupStep,
+        PlannedCleanupStepError, PlannedCleanupTargetError, PodRef, PodRefError, ProbeFacts,
+        ProbeKind, RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN,
+        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
+        RelationshipConfidence, ResourceFacts, ResourceQuantity, ResourceQuantityError,
+        RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError,
+        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, SecretMetadataRef,
+        SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
+        SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
+        SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
+        SessionReportError, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
+        TimeToLive, TimeToLiveError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -5987,6 +6225,15 @@ mod tests {
                     .expect("planned check"),
                 PlannedCheck::new("route_ready", "header").expect("planned check"),
             ])
+            .with_planned_cleanup_steps([
+                PlannedCleanupStep::new(
+                    "delete_workload",
+                    "checkout/Deployment/session-123-workload",
+                )
+                .expect("cleanup step"),
+                PlannedCleanupStep::new("delete_service", "checkout/Service/session-123-service")
+                    .expect("cleanup step"),
+            ])
             .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
@@ -6047,6 +6294,20 @@ mod tests {
                     "target": "checkout/Deployment/checkout-api"
                 }
             ],
+            "planned_cleanup_steps": [
+                {
+                    "action": "delete_workload",
+                    "target": "checkout/Deployment/session-123-workload"
+                },
+                {
+                    "action": "delete_service",
+                    "target": "checkout/Service/session-123-service"
+                },
+                {
+                    "action": "delete_workload",
+                    "target": "checkout/Deployment/session-123-workload"
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -6077,6 +6338,18 @@ mod tests {
         assert_eq!(plan.planned_labels().len(), 2);
         assert_eq!(plan.planned_annotations().len(), 2);
         assert_eq!(plan.planned_checks().len(), 2);
+        assert_eq!(
+            plan.planned_cleanup_steps(),
+            [
+                PlannedCleanupStep::new(
+                    "delete_workload",
+                    "checkout/Deployment/session-123-workload"
+                )
+                .expect("planned cleanup step"),
+                PlannedCleanupStep::new("delete_service", "checkout/Service/session-123-service")
+                    .expect("planned cleanup step")
+            ]
+        );
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
 
@@ -6356,6 +6629,7 @@ mod tests {
         assert_eq!(plan.planned_labels(), []);
         assert_eq!(plan.planned_annotations(), []);
         assert_eq!(plan.planned_checks(), []);
+        assert_eq!(plan.planned_cleanup_steps(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
@@ -6442,6 +6716,25 @@ mod tests {
         ]);
 
         assert_eq!(plan.planned_checks(), [route_check, workload_check]);
+    }
+
+    #[test]
+    fn creates_session_plan_with_planned_cleanup_steps() {
+        let workload_step = PlannedCleanupStep::new(
+            "delete_workload",
+            "checkout/Deployment/session-123-workload",
+        )
+        .expect("cleanup step");
+        let route_step =
+            PlannedCleanupStep::new("delete_route", "checkout/HTTPRoute/session-123-route")
+                .expect("cleanup step");
+        let plan = test_session_plan().with_planned_cleanup_steps([
+            workload_step.clone(),
+            route_step.clone(),
+            workload_step.clone(),
+        ]);
+
+        assert_eq!(plan.planned_cleanup_steps(), [workload_step, route_step]);
     }
 
     #[test]
@@ -7046,6 +7339,22 @@ mod tests {
     }
 
     #[test]
+    fn creates_planned_cleanup_step_from_valid_parts() {
+        let step = PlannedCleanupStep::new(
+            "delete_workload",
+            "checkout/Deployment/session-123-workload",
+        )
+        .expect("cleanup step");
+
+        assert_eq!(step.action(), "delete_workload");
+        assert_eq!(step.target(), "checkout/Deployment/session-123-workload");
+        assert_eq!(
+            step.to_string(),
+            "delete_workload -> checkout/Deployment/session-123-workload"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_planned_check_parts() {
         assert_eq!(
             PlannedCheck::new("", "checkout/Deployment/checkout-api").unwrap_err(),
@@ -7083,6 +7392,63 @@ mod tests {
             PlannedCheck::new("workload_ready", "bad target").unwrap_err(),
             PlannedCheckError::Target(PlannedCheckTargetError::InvalidCharacter { character: ' ' })
         );
+    }
+
+    #[test]
+    fn rejects_invalid_planned_cleanup_step_parts() {
+        assert_eq!(
+            PlannedCleanupStep::new("", "checkout/Deployment/session-123-workload").unwrap_err(),
+            PlannedCleanupStepError::Action(PlannedCleanupActionError::Empty)
+        );
+        assert_eq!(
+            PlannedCleanupStep::new("delete_workload", "").unwrap_err(),
+            PlannedCleanupStepError::Target(PlannedCleanupTargetError::Empty)
+        );
+        assert_eq!(
+            PlannedCleanupStep::new("a".repeat(PLANNED_CLEANUP_ACTION_MAX_LEN + 1), "target")
+                .unwrap_err(),
+            PlannedCleanupStepError::Action(PlannedCleanupActionError::TooLong {
+                max_len: PLANNED_CLEANUP_ACTION_MAX_LEN
+            })
+        );
+        assert_eq!(
+            PlannedCleanupStep::new(
+                "delete_workload",
+                "a".repeat(PLANNED_CLEANUP_TARGET_MAX_LEN + 1)
+            )
+            .unwrap_err(),
+            PlannedCleanupStepError::Target(PlannedCleanupTargetError::TooLong {
+                max_len: PLANNED_CLEANUP_TARGET_MAX_LEN
+            })
+        );
+        assert_eq!(
+            PlannedCleanupStep::new("-bad", "target").unwrap_err(),
+            PlannedCleanupStepError::Action(PlannedCleanupActionError::InvalidBoundary)
+        );
+        assert_eq!(
+            PlannedCleanupStep::new("bad/action", "target").unwrap_err(),
+            PlannedCleanupStepError::Action(PlannedCleanupActionError::InvalidCharacter {
+                character: '/'
+            })
+        );
+        assert_eq!(
+            PlannedCleanupStep::new("delete_workload", "bad target").unwrap_err(),
+            PlannedCleanupStepError::Target(PlannedCleanupTargetError::InvalidCharacter {
+                character: ' '
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_planned_cleanup_step_json_fields() {
+        let error = serde_json::from_value::<PlannedCleanupStep>(json!({
+            "action": "delete_workload",
+            "target": "checkout/Deployment/session-123-workload",
+            "extra": "ignored"
+        }))
+        .expect_err("unknown cleanup step fields should be rejected");
+
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]
