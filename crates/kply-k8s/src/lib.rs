@@ -2,8 +2,10 @@
 
 use std::path::Path;
 
+use k8s_openapi::api::apps::v1::Deployment;
 use kube::{
-    Config,
+    Api, Client, Config, ResourceExt,
+    api::ListParams,
     config::{KubeConfigOptions, Kubeconfig, KubeconfigError},
 };
 use serde::Serialize;
@@ -15,6 +17,71 @@ pub struct ClusterInfo {
     pub cluster_url: String,
     /// Default namespace selected by the active kubeconfig context.
     pub default_namespace: String,
+}
+
+/// Read-only summary of a Kubernetes Deployment.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeploymentSummary {
+    /// Deployment namespace.
+    pub namespace: String,
+    /// Deployment name.
+    pub name: String,
+    /// Desired replica count from the Deployment spec.
+    pub replicas: Option<i32>,
+    /// Observed available replicas from Deployment status.
+    pub available_replicas: Option<i32>,
+    /// Observed ready replicas from Deployment status.
+    pub ready_replicas: Option<i32>,
+    /// Observed updated replicas from Deployment status.
+    pub updated_replicas: Option<i32>,
+    /// Declared container images in pod template order.
+    pub images: Vec<String>,
+}
+
+/// List Deployments in one namespace without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_deployments(
+    client: Client,
+    namespace: &str,
+) -> Result<Vec<DeploymentSummary>, kube::Error> {
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    let mut summaries = deployments
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .map(deployment_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
+}
+
+/// Convert a Kubernetes [`Deployment`] into a deterministic summary.
+pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
+    let spec = deployment.spec.as_ref();
+    let status = deployment.status.as_ref();
+    let images = spec
+        .and_then(|spec| spec.template.spec.as_ref())
+        .map(|pod_spec| {
+            pod_spec
+                .containers
+                .iter()
+                .map(|container| container.image.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    DeploymentSummary {
+        namespace: deployment.namespace().unwrap_or_default(),
+        name: deployment.name_any(),
+        replicas: spec.and_then(|spec| spec.replicas),
+        available_replicas: status.and_then(|status| status.available_replicas),
+        ready_replicas: status.and_then(|status| status.ready_replicas),
+        updated_replicas: status.and_then(|status| status.updated_replicas),
+        images,
+    }
 }
 
 impl From<Config> for ClusterInfo {
@@ -83,8 +150,15 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterInfo, load_kube_config_path, load_kube_config_with_options};
+    use super::{
+        ClusterInfo, DeploymentSummary, deployment_summary, load_kube_config_path,
+        load_kube_config_with_options,
+    };
+    use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStatus};
+    use k8s_openapi::api::core::v1::{Container, PodSpec, PodTemplateSpec};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
     use kube::config::KubeConfigOptions;
+    use std::collections::BTreeMap;
     use std::env;
     use tokio::sync::Mutex;
 
@@ -111,6 +185,52 @@ mod tests {
 
         assert_eq!(info.cluster_url, "https://127.0.0.1:6443/");
         assert_eq!(info.default_namespace, "default");
+    }
+
+    #[test]
+    fn summarizes_deployment_metadata_and_status() {
+        let deployment = fake_deployment("shop", "checkout-api", &["checkout:v2", "sidecar:v1"]);
+
+        let summary = deployment_summary(&deployment);
+
+        assert_eq!(
+            summary,
+            DeploymentSummary {
+                namespace: "shop".to_owned(),
+                name: "checkout-api".to_owned(),
+                replicas: Some(3),
+                available_replicas: Some(2),
+                ready_replicas: Some(2),
+                updated_replicas: Some(3),
+                images: vec!["checkout:v2".to_owned(), "sidecar:v1".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_minimal_deployment_without_optional_fields() {
+        let deployment = Deployment {
+            metadata: ObjectMeta {
+                name: Some("minimal".to_owned()),
+                ..ObjectMeta::default()
+            },
+            ..Deployment::default()
+        };
+
+        let summary = deployment_summary(&deployment);
+
+        assert_eq!(
+            summary,
+            DeploymentSummary {
+                namespace: String::new(),
+                name: "minimal".to_owned(),
+                replicas: None,
+                available_replicas: None,
+                ready_replicas: None,
+                updated_replicas: None,
+                images: Vec::new(),
+            }
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -208,5 +328,48 @@ current-context: context-a
         let config = result.expect("KUBECONFIG-selected fake kubeconfig should load");
 
         assert_eq!(config.cluster_url.to_string(), "https://127.0.0.1:6443/");
+    }
+
+    fn fake_deployment(namespace: &str, name: &str, images: &[&str]) -> Deployment {
+        let labels = BTreeMap::from([("app".to_owned(), name.to_owned())]);
+
+        Deployment {
+            metadata: ObjectMeta {
+                name: Some(name.to_owned()),
+                namespace: Some(namespace.to_owned()),
+                ..ObjectMeta::default()
+            },
+            spec: Some(DeploymentSpec {
+                replicas: Some(3),
+                selector: LabelSelector {
+                    match_labels: Some(labels.clone()),
+                    ..LabelSelector::default()
+                },
+                template: PodTemplateSpec {
+                    metadata: Some(ObjectMeta {
+                        labels: Some(labels),
+                        ..ObjectMeta::default()
+                    }),
+                    spec: Some(PodSpec {
+                        containers: images
+                            .iter()
+                            .map(|image| Container {
+                                name: image.replace([':', '/'], "-"),
+                                image: Some((*image).to_owned()),
+                                ..Container::default()
+                            })
+                            .collect(),
+                        ..PodSpec::default()
+                    }),
+                },
+                ..DeploymentSpec::default()
+            }),
+            status: Some(DeploymentStatus {
+                available_replicas: Some(2),
+                ready_replicas: Some(2),
+                updated_replicas: Some(3),
+                ..DeploymentStatus::default()
+            }),
+        }
     }
 }
