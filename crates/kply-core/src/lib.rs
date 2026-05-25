@@ -18,6 +18,8 @@ pub const ROUTE_HEADER_VALUE_MAX_LEN: usize = 255;
 pub const ROUTE_HOST_MAX_LEN: usize = 253;
 /// Maximum allowed length for a route host label.
 pub const ROUTE_HOST_LABEL_MAX_LEN: usize = 63;
+/// Maximum allowed length for a session time-to-live value.
+pub const TIME_TO_LIVE_MAX_LEN: usize = 32;
 
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1273,6 +1275,53 @@ impl<'de> Deserialize<'de> for ImageRef {
     }
 }
 
+/// Positive session lifetime using compact duration spelling.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct TimeToLive(String);
+
+impl TimeToLive {
+    /// Create a [`TimeToLive`] from a validated duration string.
+    pub fn new(value: impl Into<String>) -> Result<Self, TimeToLiveError> {
+        let value = value.into();
+        validate_time_to_live(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Borrow the duration value as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TimeToLive {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<String> for TimeToLive {
+    type Error = TimeToLiveError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<TimeToLive> for String {
+    fn from(value: TimeToLive) -> Self {
+        value.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TimeToLive {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_validated_string(deserializer, Self::new)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1507,14 +1556,17 @@ impl std::error::Error for SessionPolicyError {}
 /// Dry-run description of a future Kply session.
 ///
 /// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
-/// proposed [`ImageRef`], optional [`RouteSelector`], [`SessionPolicy`], and
-/// initial [`SessionStatus`] for a session that has not yet been executed.
+/// proposed [`ImageRef`], optional time-to-live, optional [`RouteSelector`],
+/// [`SessionPolicy`], and initial [`SessionStatus`] for a session that has not
+/// yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
     name: SessionName,
     workload: WorkloadRef,
     image: ImageRef,
+    #[serde(rename = "ttl")]
+    time_to_live: Option<TimeToLive>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1534,10 +1586,17 @@ impl SessionPlan {
             name,
             workload,
             image,
+            time_to_live: None,
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
         }
+    }
+
+    /// Return a copy of this plan with a session lifetime.
+    pub fn with_time_to_live(mut self, time_to_live: TimeToLive) -> Self {
+        self.time_to_live = Some(time_to_live);
+        self
     }
 
     /// Return a copy of this plan with a test traffic [`RouteSelector`].
@@ -1564,6 +1623,11 @@ impl SessionPlan {
     /// Borrow the proposed sandbox [`ImageRef`].
     pub fn image(&self) -> &ImageRef {
         &self.image
+    }
+
+    /// Borrow the optional session lifetime.
+    pub fn time_to_live(&self) -> Option<&TimeToLive> {
+        self.time_to_live.as_ref()
     }
 
     /// Borrow the optional [`RouteSelector`].
@@ -1604,6 +1668,9 @@ impl<'de> Deserialize<'de> for SessionPlan {
         );
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
+        }
+        if let Some(time_to_live) = fields.time_to_live {
+            plan = plan.with_time_to_live(time_to_live);
         }
 
         Ok(plan)
@@ -1935,6 +2002,44 @@ impl fmt::Display for ImageRefError {
 }
 
 impl std::error::Error for ImageRefError {}
+
+/// Error returned when a [`TimeToLive`] value is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimeToLiveError {
+    /// Time-to-live values cannot be empty.
+    Empty,
+    /// Time-to-live values cannot exceed the maximum length.
+    TooLong { max_len: usize },
+    /// Time-to-live values must end with a supported unit.
+    InvalidUnit { unit: char },
+    /// Time-to-live values must start with ASCII digits.
+    InvalidNumber,
+    /// Time-to-live values must be greater than zero.
+    Zero,
+}
+
+impl fmt::Display for TimeToLiveError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("ttl cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(formatter, "ttl cannot exceed {max_len} characters")
+            }
+            Self::InvalidUnit { unit } => {
+                write!(
+                    formatter,
+                    "invalid ttl unit `{unit}`; expected s, m, h, or d"
+                )
+            }
+            Self::InvalidNumber => {
+                formatter.write_str("invalid ttl; expected a positive integer duration")
+            }
+            Self::Zero => formatter.write_str("invalid ttl; duration must be greater than zero"),
+        }
+    }
+}
+
+impl std::error::Error for TimeToLiveError {}
 
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2464,6 +2569,8 @@ struct SessionPlanFields {
     name: SessionName,
     workload: WorkloadRef,
     image: ImageRef,
+    #[serde(default, rename = "ttl")]
+    time_to_live: Option<TimeToLive>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -2739,6 +2846,34 @@ fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
     Ok(())
 }
 
+fn validate_time_to_live(value: &str) -> Result<(), TimeToLiveError> {
+    if value.is_empty() {
+        return Err(TimeToLiveError::Empty);
+    }
+
+    if value.len() > TIME_TO_LIVE_MAX_LEN {
+        return Err(TimeToLiveError::TooLong {
+            max_len: TIME_TO_LIVE_MAX_LEN,
+        });
+    }
+
+    let unit = value.chars().last().ok_or(TimeToLiveError::Empty)?;
+    if !matches!(unit, 's' | 'm' | 'h' | 'd') {
+        return Err(TimeToLiveError::InvalidUnit { unit });
+    }
+
+    let digits = &value[..value.len() - unit.len_utf8()];
+    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+        return Err(TimeToLiveError::InvalidNumber);
+    }
+
+    if digits.trim_start_matches('0').is_empty() {
+        return Err(TimeToLiveError::Zero);
+    }
+
+    Ok(())
+}
+
 fn validate_resource_quantity(value: &str) -> Result<(), ResourceQuantityError> {
     if value.is_empty() {
         return Err(ResourceQuantityError::Empty);
@@ -2872,8 +3007,9 @@ mod tests {
         ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
         SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
         SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -5112,6 +5248,7 @@ mod tests {
                 "name": "checkout-api"
             },
             "image": "registry.example.com/checkout/api:v2",
+            "ttl": "30m",
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -5136,7 +5273,31 @@ mod tests {
             plan.route_selector().and_then(RouteSelector::hostname),
             Some("session-123.preview.example.com")
         );
+        assert_eq!(plan.time_to_live().map(TimeToLive::as_str), Some("30m"));
         assert_eq!(plan.status(), SessionStatus::Planned);
+    }
+
+    #[test]
+    fn rejects_invalid_session_plan_time_to_live_json() {
+        let error = serde_json::from_value::<SessionPlan>(json!({
+            "id": "session-123",
+            "name": "checkout-test",
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "image": "registry.example.com/checkout/api:v2",
+            "ttl": "forever",
+            "route_selector": null,
+            "policy": {
+                "allowed_operations": ["inspect"]
+            },
+            "status": "planned"
+        }))
+        .expect_err("invalid ttl should be rejected");
+
+        assert!(error.to_string().contains("ttl"));
     }
 
     #[test]
@@ -5858,6 +6019,42 @@ mod tests {
             error,
             ImageRefError::TooLong {
                 max_len: IMAGE_REF_MAX_LEN
+            }
+        );
+    }
+
+    #[test]
+    fn creates_time_to_live_from_duration_spelling() {
+        for value in ["1s", "30m", "12h", "7d"] {
+            let time_to_live = TimeToLive::new(value).expect("ttl should be valid");
+
+            assert_eq!(time_to_live.as_str(), value);
+            assert_eq!(time_to_live.to_string(), value);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_time_to_live_values() {
+        assert_eq!(TimeToLive::new("").unwrap_err(), TimeToLiveError::Empty);
+        assert_eq!(TimeToLive::new("0m").unwrap_err(), TimeToLiveError::Zero);
+        assert_eq!(
+            TimeToLive::new("30").unwrap_err(),
+            TimeToLiveError::InvalidUnit { unit: '0' }
+        );
+        assert_eq!(
+            TimeToLive::new("tenm").unwrap_err(),
+            TimeToLiveError::InvalidNumber
+        );
+        assert_eq!(
+            TimeToLive::new("1w").unwrap_err(),
+            TimeToLiveError::InvalidUnit { unit: 'w' }
+        );
+
+        let value = "1".repeat(TIME_TO_LIVE_MAX_LEN + 1);
+        assert_eq!(
+            TimeToLive::new(value).unwrap_err(),
+            TimeToLiveError::TooLong {
+                max_len: TIME_TO_LIVE_MAX_LEN
             }
         );
     }

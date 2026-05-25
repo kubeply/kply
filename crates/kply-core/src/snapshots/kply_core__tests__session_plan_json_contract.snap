@@ -1,5 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
+assertion_line: 5121
 expression: value
 ---
 {
@@ -22,6 +23,7 @@ expression: value
     "value": "session-123"
   },
   "status": "planned",
+  "ttl": null,
   "workload": {
     "kind": "Deployment",
     "name": "checkout-api",

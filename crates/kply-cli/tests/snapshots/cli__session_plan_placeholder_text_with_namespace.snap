@@ -1,8 +1,13 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 213
+assertion_line: 261
 expression: output
 ---
 kply session plan checkout
-Namespace: staging
-Session planning is defined but behavior is intentionally pending.
+id: checkout-plan
+name: checkout-session
+workload: staging/Deployment/checkout-api
+image: ghcr.io/acme/checkout:next
+route_selector: header:x-kply-session=checkout-plan
+policy_operations: 6
+status: planned

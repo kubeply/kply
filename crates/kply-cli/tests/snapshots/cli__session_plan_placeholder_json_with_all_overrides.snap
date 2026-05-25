@@ -1,14 +1,32 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 406
+assertion_line: 509
 expression: value
 ---
 {
-  "app": "checkout",
-  "command": "session plan",
+  "id": "checkout-plan",
   "image": "ghcr.io/kubeply/checkout:v2",
-  "namespace": "staging",
-  "route_strategy": "header",
-  "status": "placeholder",
-  "ttl": "30m"
+  "name": "checkout-session",
+  "policy": {
+    "allowed_operations": [
+      "inspect",
+      "plan",
+      "prepare",
+      "route",
+      "verify",
+      "cleanup"
+    ]
+  },
+  "route_selector": {
+    "kind": "header",
+    "name": "x-kply-session",
+    "value": "checkout-plan"
+  },
+  "status": "planned",
+  "ttl": "30m",
+  "workload": {
+    "kind": "Deployment",
+    "name": "checkout-api",
+    "namespace": "staging"
+  }
 }

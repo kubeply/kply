@@ -1,8 +1,13 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 278
+assertion_line: 361
 expression: output
 ---
 kply session plan checkout
-Route strategy: header
-Session planning is defined but behavior is intentionally pending.
+id: checkout-plan
+name: checkout-session
+workload: shop/Deployment/checkout-api
+image: ghcr.io/acme/checkout:next
+route_selector: host:checkout-plan.shop.kply.local
+policy_operations: 6
+status: planned
