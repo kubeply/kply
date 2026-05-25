@@ -59,6 +59,25 @@ impl KplyConfig {
     pub const fn policies(&self) -> &PolicyConfigs {
         &self.policies
     }
+
+    /// Validate the config model before it is used by session planning.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigValidationErrors`] when one or more fields are invalid.
+    pub fn validate(&self) -> Result<(), ConfigValidationErrors> {
+        let mut errors = Vec::new();
+
+        if let Err(error) = self.version.validate() {
+            errors.push(ConfigValidationError::UnsupportedVersion(error));
+        }
+
+        for (index, app) in self.apps.entries().iter().enumerate() {
+            errors.extend(app.validation_errors(index));
+        }
+
+        ConfigValidationErrors::from_errors(errors)
+    }
 }
 
 impl Default for KplyConfig {
@@ -165,6 +184,148 @@ impl fmt::Display for ConfigVersionError {
 
 impl error::Error for ConfigVersionError {}
 
+/// Non-empty collection of config validation errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigValidationErrors {
+    errors: Vec<ConfigValidationError>,
+}
+
+impl ConfigValidationErrors {
+    /// Create a validation error collection from one or more errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyConfigValidationErrors`] when `errors` is empty.
+    pub fn new(errors: Vec<ConfigValidationError>) -> Result<Self, EmptyConfigValidationErrors> {
+        if errors.is_empty() {
+            Err(EmptyConfigValidationErrors)
+        } else {
+            Ok(Self { errors })
+        }
+    }
+
+    /// Create a validation result from a possibly empty error collection.
+    fn from_errors(errors: Vec<ConfigValidationError>) -> Result<(), Self> {
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(Self { errors })
+        }
+    }
+
+    /// Borrow validation errors in deterministic discovery order.
+    pub fn errors(&self) -> &[ConfigValidationError] {
+        &self.errors
+    }
+
+    /// Return the number of validation errors.
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "ConfigValidationErrors cannot be empty by construction"
+    )]
+    pub fn len(&self) -> usize {
+        self.errors.len()
+    }
+}
+
+impl fmt::Display for ConfigValidationErrors {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // INVARIANT: ConfigValidationErrors::new rejects empty vectors and
+        // from_errors only constructs Self when errors is non-empty.
+        let (first, remaining) = self
+            .errors
+            .split_first()
+            .expect("invariant: ConfigValidationErrors cannot be empty");
+
+        if remaining.is_empty() {
+            write!(formatter, "{first}")
+        } else {
+            write!(
+                formatter,
+                "{} config validation errors; first error: {first}",
+                self.errors.len()
+            )
+        }
+    }
+}
+
+impl error::Error for ConfigValidationErrors {}
+
+/// Error returned when creating an empty validation error collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmptyConfigValidationErrors;
+
+impl fmt::Display for EmptyConfigValidationErrors {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("config validation error collection cannot be empty")
+    }
+}
+
+impl error::Error for EmptyConfigValidationErrors {}
+
+/// Single config validation error with field context.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigValidationError {
+    /// Config schema version is outside the supported range.
+    UnsupportedVersion(ConfigVersionError),
+    /// An app config field is required but blank.
+    EmptyAppField {
+        /// Zero-based app index in the top-level apps list.
+        app_index: usize,
+        /// App field that failed validation.
+        field: AppConfigField,
+    },
+}
+
+impl fmt::Display for ConfigValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedVersion(error) => write!(formatter, "version: {error}"),
+            Self::EmptyAppField { app_index, field } => {
+                write!(formatter, "apps[{app_index}].{field}: field is required")
+            }
+        }
+    }
+}
+
+impl error::Error for ConfigValidationError {}
+
+/// Field name for an app config validation error.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AppConfigField {
+    /// App `name` field.
+    Name,
+    /// App `namespace` field.
+    Namespace,
+    /// App `workload` field.
+    Workload,
+    /// App `service` field.
+    Service,
+    /// App `default_image` field.
+    DefaultImage,
+}
+
+impl AppConfigField {
+    /// Return the stable config spelling for this [`AppConfigField`].
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Namespace => "namespace",
+            Self::Workload => "workload",
+            Self::Service => "service",
+            Self::DefaultImage => "default_image",
+        }
+    }
+}
+
+impl fmt::Display for AppConfigField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Top-level application config collection.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AppConfigs {
@@ -247,6 +408,52 @@ impl AppConfig {
     /// Return the configured [`RouteStrategy`] for the app.
     pub const fn route_strategy(&self) -> RouteStrategy {
         self.route_strategy
+    }
+
+    fn validation_errors(&self, app_index: usize) -> Vec<ConfigValidationError> {
+        let mut errors = Vec::new();
+
+        push_empty_app_field_error(&mut errors, app_index, AppConfigField::Name, self.name());
+        push_empty_app_field_error(
+            &mut errors,
+            app_index,
+            AppConfigField::Namespace,
+            self.namespace(),
+        );
+        push_empty_app_field_error(
+            &mut errors,
+            app_index,
+            AppConfigField::Workload,
+            self.workload(),
+        );
+        push_empty_app_field_error(
+            &mut errors,
+            app_index,
+            AppConfigField::Service,
+            self.service(),
+        );
+
+        if let Some(default_image) = self.default_image() {
+            push_empty_app_field_error(
+                &mut errors,
+                app_index,
+                AppConfigField::DefaultImage,
+                default_image,
+            );
+        }
+
+        errors
+    }
+}
+
+fn push_empty_app_field_error(
+    errors: &mut Vec<ConfigValidationError>,
+    app_index: usize,
+    field: AppConfigField,
+    value: &str,
+) {
+    if value.trim().is_empty() {
+        errors.push(ConfigValidationError::EmptyAppField { app_index, field });
     }
 }
 
@@ -349,9 +556,10 @@ pub fn discover_config_path_from(start: impl AsRef<Path>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig, CheckConfigs, ConfigVersion,
-        ConfigVersionError, KplyConfig, PolicyConfig, PolicyConfigs, RouteStrategy, RoutingConfig,
-        discover_config_path_from,
+        AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
+        CheckConfigs, ConfigValidationError, ConfigValidationErrors, ConfigVersion,
+        ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig, PolicyConfigs,
+        RouteStrategy, RoutingConfig, discover_config_path_from,
     };
     use std::env;
     use std::fs;
@@ -433,6 +641,180 @@ mod tests {
                 max_supported: ConfigVersion::MAX_SUPPORTED,
             })
         );
+    }
+
+    #[test]
+    fn validates_complete_config_model() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::new(vec![app_config()]),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        );
+
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validates_app_config_without_default_image() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::new(vec![AppConfig::new(
+                "checkout",
+                "shop",
+                "checkout-api",
+                "checkout-http",
+                None,
+                RouteStrategy::Header,
+            )]),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        );
+
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_empty_config_validation_error_collection() {
+        assert_eq!(
+            ConfigValidationErrors::new(Vec::new()),
+            Err(EmptyConfigValidationErrors)
+        );
+    }
+
+    #[test]
+    fn reports_unsupported_config_version_with_field_context() {
+        let version = ConfigVersion::new(2);
+        let config = KplyConfig::new(
+            version,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        );
+
+        let errors = config.validate().expect_err("unsupported version");
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors.errors(),
+            &[ConfigValidationError::UnsupportedVersion(
+                ConfigVersionError::Unsupported {
+                    found: version,
+                    min_supported: ConfigVersion::MIN_SUPPORTED,
+                    max_supported: ConfigVersion::MAX_SUPPORTED,
+                }
+            )]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "version: unsupported config version 2; supported range is 1..=1"
+        );
+    }
+
+    #[test]
+    fn reports_empty_app_fields_with_paths() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::new(vec![AppConfig::new(
+                "",
+                " ",
+                "\t",
+                "",
+                Some(" ".to_string()),
+                RouteStrategy::Header,
+            )]),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        );
+
+        let errors = config.validate().expect_err("empty app fields");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
+                    field: AppConfigField::Name,
+                },
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
+                    field: AppConfigField::Namespace,
+                },
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
+                    field: AppConfigField::Workload,
+                },
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
+                    field: AppConfigField::Service,
+                },
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
+                    field: AppConfigField::DefaultImage,
+                },
+            ]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "5 config validation errors; first error: apps[0].name: field is required"
+        );
+    }
+
+    #[test]
+    fn reports_empty_app_fields_with_matching_app_indexes() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::new(vec![
+                AppConfig::new(
+                    "",
+                    "shop",
+                    "checkout-api",
+                    "checkout-http",
+                    None,
+                    RouteStrategy::Header,
+                ),
+                AppConfig::new(
+                    "catalog",
+                    "",
+                    "catalog-api",
+                    "catalog-http",
+                    None,
+                    RouteStrategy::Host,
+                ),
+            ]),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        );
+
+        let errors = config.validate().expect_err("empty app fields");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
+                    field: AppConfigField::Name,
+                },
+                ConfigValidationError::EmptyAppField {
+                    app_index: 1,
+                    field: AppConfigField::Namespace,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_app_field_names() {
+        assert_eq!(AppConfigField::Name.as_str(), "name");
+        assert_eq!(AppConfigField::Namespace.as_str(), "namespace");
+        assert_eq!(AppConfigField::Workload.as_str(), "workload");
+        assert_eq!(AppConfigField::Service.as_str(), "service");
+        assert_eq!(AppConfigField::DefaultImage.as_str(), "default_image");
     }
 
     #[test]
