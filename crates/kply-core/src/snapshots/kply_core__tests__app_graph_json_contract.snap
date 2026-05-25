@@ -51,5 +51,33 @@ expression: test_app_graph()
         "name": "checkout-api-private"
       }
     }
+  ],
+  "probe_facts": [
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "readiness_probe": true,
+      "liveness_probe": true,
+      "startup_probe": false
+    },
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "worker"
+      },
+      "readiness_probe": false,
+      "liveness_probe": true,
+      "startup_probe": false
+    }
   ]
 }
