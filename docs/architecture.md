@@ -190,6 +190,10 @@ Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and
 required app fields.
 
+Resolved config JSON serializes the top-level model with `apps`, `checks`, and
+`policies` as arrays, `routing` as an object, `version` as a number, and route
+strategies as stable snake_case strings.
+
 ## Current Workflow
 
 The current workflow is intentionally minimal:

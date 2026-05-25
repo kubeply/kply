@@ -1,5 +1,7 @@
 //! Configuration primitives for future Kply project and cluster settings.
 
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
@@ -8,7 +10,7 @@ use std::{error, fmt};
 pub const CANONICAL_CONFIG_FILENAME: &str = "kply.yaml";
 
 /// Top-level Kply project configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct KplyConfig {
     version: ConfigVersion,
     apps: AppConfigs,
@@ -149,6 +151,15 @@ impl Default for ConfigVersion {
 impl fmt::Display for ConfigVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.get())
+    }
+}
+
+impl Serialize for ConfigVersion {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u16(self.get())
     }
 }
 
@@ -349,8 +360,21 @@ impl AppConfigs {
     }
 }
 
+impl Serialize for AppConfigs {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.entries.len()))?;
+        for entry in &self.entries {
+            sequence.serialize_element(entry)?;
+        }
+        sequence.end()
+    }
+}
+
 /// Application target configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppConfig {
     name: String,
     namespace: String,
@@ -459,7 +483,8 @@ fn push_empty_app_field_error(
 
 /// Routing strategy requested for an application target.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RouteStrategy {
     /// Route sandbox traffic by matching a request header.
     Header,
@@ -484,6 +509,15 @@ impl RouteStrategy {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingConfig;
 
+impl Serialize for RoutingConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_map(Some(0))?.end()
+    }
+}
+
 /// Top-level check config collection.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CheckConfigs {
@@ -507,8 +541,21 @@ impl CheckConfigs {
     }
 }
 
+impl Serialize for CheckConfigs {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.entries.len()))?;
+        for entry in &self.entries {
+            sequence.serialize_element(entry)?;
+        }
+        sequence.end()
+    }
+}
+
 /// Placeholder for a future check config entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CheckConfig;
 
 /// Top-level policy config collection.
@@ -534,8 +581,21 @@ impl PolicyConfigs {
     }
 }
 
+impl Serialize for PolicyConfigs {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.entries.len()))?;
+        for entry in &self.entries {
+            sequence.serialize_element(entry)?;
+        }
+        sequence.end()
+    }
+}
+
 /// Placeholder for a future policy config entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PolicyConfig;
 
 /// Discover the nearest Kply project configuration from the current directory.
@@ -654,6 +714,65 @@ mod tests {
         );
 
         assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn serializes_resolved_config_to_stable_json() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::new(vec![app_config()]),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        );
+
+        let value = serde_json::to_value(config).expect("resolved config JSON");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "version": 1,
+                "apps": [
+                    {
+                        "name": "checkout",
+                        "namespace": "shop",
+                        "workload": "checkout-api",
+                        "service": "checkout-http",
+                        "default_image": "registry.example.com/shop/checkout:test",
+                        "route_strategy": "header",
+                    }
+                ],
+                "routing": {},
+                "checks": [],
+                "policies": [],
+            })
+        );
+    }
+
+    #[test]
+    fn serializes_missing_default_image_as_null() {
+        let config = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            None,
+            RouteStrategy::Preview,
+        );
+
+        let value = serde_json::to_value(config).expect("app config JSON");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "name": "checkout",
+                "namespace": "shop",
+                "workload": "checkout-api",
+                "service": "checkout-http",
+                "default_image": null,
+                "route_strategy": "preview",
+            })
+        );
     }
 
     #[test]
