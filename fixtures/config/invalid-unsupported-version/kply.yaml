@@ -1,0 +1,7 @@
+version: 2
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header

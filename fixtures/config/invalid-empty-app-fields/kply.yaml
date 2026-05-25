@@ -1,0 +1,8 @@
+version: 1
+apps:
+  - name: ""
+    namespace: "   "
+    workload: checkout-api
+    service: ""
+    default_image: ""
+    route_strategy: header
