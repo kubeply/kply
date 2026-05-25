@@ -42,6 +42,58 @@ pub struct DeploymentSummary {
     pub updated_replicas: Option<i32>,
     /// Declared container images in pod template order.
     pub images: Vec<String>,
+    /// Basic rollout status derived from Deployment status.
+    pub rollout: DeploymentRolloutSummary,
+}
+
+/// Basic rollout status for a Kubernetes Deployment.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeploymentRolloutSummary {
+    /// Rollout phase derived from observed Deployment status.
+    pub phase: DeploymentRolloutPhase,
+    /// Desired Deployment generation from object metadata.
+    pub generation: Option<i64>,
+    /// Observed Deployment generation from status.
+    pub observed_generation: Option<i64>,
+    /// Desired replica count from the Deployment spec.
+    pub desired_replicas: Option<i32>,
+    /// Observed ready replicas from Deployment status.
+    pub ready_replicas: Option<i32>,
+    /// Observed available replicas from Deployment status.
+    pub available_replicas: Option<i32>,
+    /// Observed updated replicas from Deployment status.
+    pub updated_replicas: Option<i32>,
+    /// Observed unavailable replicas from Deployment status.
+    pub unavailable_replicas: Option<i32>,
+    /// Deployment conditions in manifest order.
+    pub conditions: Vec<DeploymentConditionSummary>,
+}
+
+/// Basic Deployment rollout phase.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentRolloutPhase {
+    /// Status does not contain enough information to classify the rollout.
+    Unknown,
+    /// Rollout is still converging.
+    Progressing,
+    /// Rollout has no available replicas.
+    Unavailable,
+    /// Rollout is fully updated and available.
+    Complete,
+}
+
+/// Read-only summary of one Deployment condition.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeploymentConditionSummary {
+    /// Condition type, such as `Available` or `Progressing`.
+    pub type_: String,
+    /// Condition status, such as `True`, `False`, or `Unknown`.
+    pub status: String,
+    /// Optional condition reason.
+    pub reason: Option<String>,
+    /// Optional condition message.
+    pub message: Option<String>,
 }
 
 /// Read-only summary of a Kubernetes Service.
@@ -431,7 +483,93 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         ready_replicas: status.and_then(|status| status.ready_replicas),
         updated_replicas: status.and_then(|status| status.updated_replicas),
         images,
+        rollout: deployment_rollout_summary(deployment),
     }
+}
+
+/// Convert a Kubernetes [`Deployment`] into basic rollout status.
+pub fn deployment_rollout_summary(deployment: &Deployment) -> DeploymentRolloutSummary {
+    let spec = deployment.spec.as_ref();
+    let status = deployment.status.as_ref();
+    let desired_replicas = spec.and_then(|spec| spec.replicas);
+    let ready_replicas = status.and_then(|status| status.ready_replicas);
+    let available_replicas = status.and_then(|status| status.available_replicas);
+    let updated_replicas = status.and_then(|status| status.updated_replicas);
+    let unavailable_replicas = status.and_then(|status| status.unavailable_replicas);
+    let generation = deployment.metadata.generation;
+    let observed_generation = status.and_then(|status| status.observed_generation);
+    let conditions = status
+        .and_then(|status| status.conditions.as_deref())
+        .unwrap_or_default()
+        .iter()
+        .map(|condition| DeploymentConditionSummary {
+            type_: condition.type_.clone(),
+            status: condition.status.clone(),
+            reason: condition.reason.clone(),
+            message: condition.message.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    DeploymentRolloutSummary {
+        phase: deployment_rollout_phase(
+            generation,
+            observed_generation,
+            desired_replicas,
+            ready_replicas,
+            available_replicas,
+            updated_replicas,
+            unavailable_replicas,
+        ),
+        generation,
+        observed_generation,
+        desired_replicas,
+        ready_replicas,
+        available_replicas,
+        updated_replicas,
+        unavailable_replicas,
+        conditions,
+    }
+}
+
+fn deployment_rollout_phase(
+    generation: Option<i64>,
+    observed_generation: Option<i64>,
+    desired_replicas: Option<i32>,
+    ready_replicas: Option<i32>,
+    available_replicas: Option<i32>,
+    updated_replicas: Option<i32>,
+    unavailable_replicas: Option<i32>,
+) -> DeploymentRolloutPhase {
+    let Some(desired_replicas) = desired_replicas else {
+        return DeploymentRolloutPhase::Unknown;
+    };
+    let Some(updated_replicas) = updated_replicas else {
+        return DeploymentRolloutPhase::Progressing;
+    };
+    let Some(available_replicas) = available_replicas else {
+        return DeploymentRolloutPhase::Progressing;
+    };
+
+    if generation
+        .zip(observed_generation)
+        .is_some_and(|(generation, observed)| observed < generation)
+    {
+        return DeploymentRolloutPhase::Progressing;
+    }
+
+    if available_replicas == 0 && desired_replicas > 0 {
+        return DeploymentRolloutPhase::Unavailable;
+    }
+
+    if updated_replicas == desired_replicas
+        && available_replicas == desired_replicas
+        && ready_replicas.unwrap_or_default() == desired_replicas
+        && unavailable_replicas.unwrap_or_default() == 0
+    {
+        return DeploymentRolloutPhase::Complete;
+    }
+
+    DeploymentRolloutPhase::Progressing
 }
 
 /// Convert a Kubernetes [`Ingress`] into a deterministic summary.
@@ -790,16 +928,19 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterInfo, DeploymentSummary, GatewayClassSummary, GatewayListenerSummary,
-        GatewaySummary, HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary,
-        IngressBackendSummary, IngressPathSummary, IngressRuleSummary, IngressSummary,
-        IngressTlsSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
-        RouteParentRefSummary, ServicePortSummary, ServiceSummary, deployment_summary,
+        ClusterInfo, DeploymentConditionSummary, DeploymentRolloutPhase, DeploymentRolloutSummary,
+        DeploymentSummary, GatewayClassSummary, GatewayListenerSummary, GatewaySummary,
+        HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary, IngressBackendSummary,
+        IngressPathSummary, IngressRuleSummary, IngressSummary, IngressTlsSummary,
+        LabelSelectorEntry, OwnerReferenceSummary, PodSummary, RouteParentRefSummary,
+        ServicePortSummary, ServiceSummary, deployment_rollout_summary, deployment_summary,
         gateway_api_resource, gateway_class_summary, gateway_summary, http_route_summary,
         ingress_summary, load_kube_config_path, load_kube_config_with_options,
         pod_is_owned_by_workload, pod_summary, service_summary,
     };
-    use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStatus};
+    use k8s_openapi::api::apps::v1::{
+        Deployment, DeploymentCondition, DeploymentSpec, DeploymentStatus,
+    };
     use k8s_openapi::api::core::v1::{
         Container, Pod, PodSpec, PodStatus, PodTemplateSpec, Service, ServicePort, ServiceSpec,
     };
@@ -860,6 +1001,30 @@ mod tests {
                 ready_replicas: Some(2),
                 updated_replicas: Some(3),
                 images: vec!["checkout:v2".to_owned(), "sidecar:v1".to_owned()],
+                rollout: DeploymentRolloutSummary {
+                    phase: DeploymentRolloutPhase::Progressing,
+                    generation: Some(2),
+                    observed_generation: Some(2),
+                    desired_replicas: Some(3),
+                    ready_replicas: Some(2),
+                    available_replicas: Some(2),
+                    updated_replicas: Some(3),
+                    unavailable_replicas: Some(1),
+                    conditions: vec![
+                        DeploymentConditionSummary {
+                            type_: "Progressing".to_owned(),
+                            status: "True".to_owned(),
+                            reason: Some("NewReplicaSetAvailable".to_owned()),
+                            message: Some("ReplicaSet is progressing".to_owned()),
+                        },
+                        DeploymentConditionSummary {
+                            type_: "Available".to_owned(),
+                            status: "False".to_owned(),
+                            reason: Some("MinimumReplicasUnavailable".to_owned()),
+                            message: None,
+                        },
+                    ],
+                },
             }
         );
     }
@@ -886,8 +1051,58 @@ mod tests {
                 ready_replicas: None,
                 updated_replicas: None,
                 images: Vec::new(),
+                rollout: DeploymentRolloutSummary {
+                    phase: DeploymentRolloutPhase::Unknown,
+                    generation: None,
+                    observed_generation: None,
+                    desired_replicas: None,
+                    ready_replicas: None,
+                    available_replicas: None,
+                    updated_replicas: None,
+                    unavailable_replicas: None,
+                    conditions: Vec::new(),
+                },
             }
         );
+    }
+
+    #[test]
+    fn summarizes_complete_deployment_rollout() {
+        let deployment = fake_ready_deployment("shop", "checkout-api");
+
+        let rollout = deployment_rollout_summary(&deployment);
+
+        assert_eq!(
+            rollout,
+            DeploymentRolloutSummary {
+                phase: DeploymentRolloutPhase::Complete,
+                generation: Some(7),
+                observed_generation: Some(7),
+                desired_replicas: Some(3),
+                ready_replicas: Some(3),
+                available_replicas: Some(3),
+                updated_replicas: Some(3),
+                unavailable_replicas: Some(0),
+                conditions: vec![DeploymentConditionSummary {
+                    type_: "Available".to_owned(),
+                    status: "True".to_owned(),
+                    reason: Some("MinimumReplicasAvailable".to_owned()),
+                    message: Some("Deployment has minimum availability".to_owned()),
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_unavailable_deployment_rollout() {
+        let deployment = fake_unavailable_deployment("shop", "checkout-api");
+
+        let rollout = deployment_rollout_summary(&deployment);
+
+        assert_eq!(rollout.phase, DeploymentRolloutPhase::Unavailable);
+        assert_eq!(rollout.desired_replicas, Some(3));
+        assert_eq!(rollout.available_replicas, Some(0));
+        assert_eq!(rollout.unavailable_replicas, Some(3));
     }
 
     #[test]
@@ -1453,6 +1668,7 @@ current-context: context-a
             metadata: ObjectMeta {
                 name: Some(name.to_owned()),
                 namespace: Some(namespace.to_owned()),
+                generation: Some(2),
                 ..ObjectMeta::default()
             },
             spec: Some(DeploymentSpec {
@@ -1482,11 +1698,65 @@ current-context: context-a
             }),
             status: Some(DeploymentStatus {
                 available_replicas: Some(2),
+                conditions: Some(vec![
+                    DeploymentCondition {
+                        type_: "Progressing".to_owned(),
+                        status: "True".to_owned(),
+                        reason: Some("NewReplicaSetAvailable".to_owned()),
+                        message: Some("ReplicaSet is progressing".to_owned()),
+                        ..DeploymentCondition::default()
+                    },
+                    DeploymentCondition {
+                        type_: "Available".to_owned(),
+                        status: "False".to_owned(),
+                        reason: Some("MinimumReplicasUnavailable".to_owned()),
+                        ..DeploymentCondition::default()
+                    },
+                ]),
+                observed_generation: Some(2),
                 ready_replicas: Some(2),
+                replicas: Some(3),
                 updated_replicas: Some(3),
+                unavailable_replicas: Some(1),
                 ..DeploymentStatus::default()
             }),
         }
+    }
+
+    fn fake_ready_deployment(namespace: &str, name: &str) -> Deployment {
+        let mut deployment = fake_deployment(namespace, name, &["checkout:v2"]);
+        deployment.metadata.generation = Some(7);
+        deployment.status = Some(DeploymentStatus {
+            available_replicas: Some(3),
+            conditions: Some(vec![DeploymentCondition {
+                type_: "Available".to_owned(),
+                status: "True".to_owned(),
+                reason: Some("MinimumReplicasAvailable".to_owned()),
+                message: Some("Deployment has minimum availability".to_owned()),
+                ..DeploymentCondition::default()
+            }]),
+            observed_generation: Some(7),
+            ready_replicas: Some(3),
+            replicas: Some(3),
+            updated_replicas: Some(3),
+            unavailable_replicas: Some(0),
+            ..DeploymentStatus::default()
+        });
+        deployment
+    }
+
+    fn fake_unavailable_deployment(namespace: &str, name: &str) -> Deployment {
+        let mut deployment = fake_deployment(namespace, name, &["checkout:v2"]);
+        deployment.status = Some(DeploymentStatus {
+            available_replicas: Some(0),
+            observed_generation: Some(2),
+            ready_replicas: Some(0),
+            replicas: Some(3),
+            updated_replicas: Some(1),
+            unavailable_replicas: Some(3),
+            ..DeploymentStatus::default()
+        });
+        deployment
     }
 
     fn fake_pod(
