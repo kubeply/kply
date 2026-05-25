@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 473
+expression: output
+---
+kply app list
+checkout namespace=shop workload=checkout-api service=checkout-http route_strategy=header default_image=ghcr.io/acme/checkout:next
+catalog namespace=shop workload=catalog-api service=catalog-http route_strategy=preview default_image=<none>

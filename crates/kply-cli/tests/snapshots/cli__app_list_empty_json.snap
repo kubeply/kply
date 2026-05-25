@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 433
+expression: value
+---
+{
+  "apps": []
+}

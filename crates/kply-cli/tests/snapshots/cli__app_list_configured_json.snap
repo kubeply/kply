@@ -1,0 +1,17 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 510
+expression: value
+---
+{
+  "apps": [
+    {
+      "default_image": "ghcr.io/acme/checkout:next",
+      "name": "checkout",
+      "namespace": "shop",
+      "route_strategy": "header",
+      "service": "checkout-http",
+      "workload": "checkout-api"
+    }
+  ]
+}

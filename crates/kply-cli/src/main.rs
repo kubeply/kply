@@ -3,8 +3,10 @@
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use kply_cli::cli::{Cli, ClusterCommand, Command, ConfigCommand};
-use kply_config::{ConfigLoadError, KplyConfig, load_config_path};
+use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand};
+use kply_config::{
+    AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, load_config_path,
+};
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::process::ExitCode;
@@ -45,6 +47,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Config {
             command: Some(ConfigCommand::Validate),
         }) => return render_config_validate(&cli),
+        Some(Command::App {
+            command: Some(AppCommand::List),
+        }) => return render_app_list(&cli),
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
@@ -93,6 +98,69 @@ fn run() -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render configured application targets.
+fn render_app_list(cli: &Cli) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+
+    let apps = config.apps().entries();
+    if cli.json {
+        let value = serde_json::json!({
+            "apps": apps
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else if !cli.quiet {
+        println!("kply app list");
+        if apps.is_empty() {
+            println!("No apps configured.");
+        } else {
+            for app in apps {
+                println!("{}", app_list_line(app));
+            }
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render one configured app as stable human-readable output.
+fn app_list_line(app: &AppConfig) -> String {
+    let default_image = app.default_image().unwrap_or("<none>");
+    format!(
+        "{} namespace={} workload={} service={} route_strategy={} default_image={}",
+        app.name(),
+        app.namespace(),
+        app.workload(),
+        app.service(),
+        app.route_strategy().as_str(),
+        default_image
+    )
+}
+
+/// Render config validation errors for commands that consume valid config.
+fn render_config_validation_error(
+    errors: &ConfigValidationErrors,
+    wants_json: bool,
+) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "status": "invalid",
+            "errors": errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>()
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: config validation\n\n{errors}");
+    }
+
+    Ok(exit_code(EXIT_BLOCKING))
 }
 
 /// Render read-only cluster facts resolved from kubeconfig.
@@ -193,19 +261,7 @@ fn render_config_validate(cli: &Cli) -> Result<ExitCode> {
 
             Ok(ExitCode::SUCCESS)
         }
-        Err(errors) => {
-            if cli.json {
-                let value = serde_json::json!({
-                    "status": "invalid",
-                    "errors": errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>()
-                });
-                eprintln!("{}", serde_json::to_string_pretty(&value)?);
-            } else {
-                eprintln!("kply error: config validation\n\n{errors}");
-            }
-
-            Ok(exit_code(EXIT_BLOCKING))
-        }
+        Err(errors) => render_config_validation_error(&errors, cli.json),
     }
 }
 

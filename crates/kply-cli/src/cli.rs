@@ -57,8 +57,12 @@ pub enum Command {
     Help,
     /// Manage future sandbox sessions.
     Session,
-    /// Inspect future application targets.
-    App,
+    /// Inspect configured application targets.
+    App {
+        /// Optional application command.
+        #[command(subcommand)]
+        command: Option<AppCommand>,
+    },
     /// Manage Kply configuration.
     Config {
         /// Optional configuration command.
@@ -81,7 +85,7 @@ impl Command {
     /// Placeholder command groups that intentionally have no behavior yet.
     pub const PLACEHOLDER_GROUPS: &'static [Self] = &[
         Self::Session,
-        Self::App,
+        Self::App { command: None },
         Self::Config { command: None },
         Self::Cluster { command: None },
         Self::Completion,
@@ -93,11 +97,27 @@ impl Command {
         match self {
             Self::Help => "help",
             Self::Session => "session",
-            Self::App => "app",
+            Self::App { .. } => "app",
             Self::Config { .. } => "config",
             Self::Cluster { .. } => "cluster",
             Self::Completion => "completion",
             Self::Report => "report",
+        }
+    }
+}
+
+/// Application target commands.
+#[derive(Clone, Copy, Debug, Subcommand)]
+pub enum AppCommand {
+    /// List configured application targets.
+    List,
+}
+
+impl AppCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::List => "list",
         }
     }
 }
