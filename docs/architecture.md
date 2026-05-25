@@ -186,6 +186,10 @@ Application config entries define these fields:
 - `default_image`: optional default sandbox image.
 - `route_strategy`: requested sandbox route strategy.
 
+Config validation reports deterministic field-scoped errors before any future
+Kubernetes access. Current validation covers unsupported schema versions and
+required app fields.
+
 ## Current Workflow
 
 The current workflow is intentionally minimal:
