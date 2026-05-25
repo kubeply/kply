@@ -4,6 +4,7 @@ use std::path::Path;
 
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{Pod, Service};
+use k8s_openapi::api::networking::v1::{Ingress, IngressBackend};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kply_core::WorkloadRef;
 use kube::{
@@ -112,6 +113,61 @@ pub struct OwnerReferenceSummary {
     pub controller: Option<bool>,
 }
 
+/// Read-only summary of a Kubernetes Ingress.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IngressSummary {
+    /// Ingress namespace.
+    pub namespace: String,
+    /// Ingress name.
+    pub name: String,
+    /// Optional IngressClass name.
+    pub ingress_class_name: Option<String>,
+    /// Default backend service when configured.
+    pub default_backend: Option<IngressBackendSummary>,
+    /// Ingress rules in manifest order.
+    pub rules: Vec<IngressRuleSummary>,
+    /// TLS host groups in manifest order. Secret names are metadata only.
+    pub tls: Vec<IngressTlsSummary>,
+}
+
+/// Read-only summary of an Ingress backend service.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IngressBackendSummary {
+    /// Backend Service name.
+    pub service_name: String,
+    /// Backend Service port as a string, preserving named ports.
+    pub service_port: String,
+}
+
+/// Read-only summary of an Ingress host rule.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IngressRuleSummary {
+    /// Optional host matched by the rule.
+    pub host: Option<String>,
+    /// HTTP paths for the rule.
+    pub paths: Vec<IngressPathSummary>,
+}
+
+/// Read-only summary of an Ingress HTTP path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IngressPathSummary {
+    /// Optional matched path.
+    pub path: Option<String>,
+    /// Optional path type, such as `Prefix` or `Exact`.
+    pub path_type: Option<String>,
+    /// Backend service for the path when configured.
+    pub backend: Option<IngressBackendSummary>,
+}
+
+/// Read-only summary of an Ingress TLS entry.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IngressTlsSummary {
+    /// TLS hosts in manifest order.
+    pub hosts: Vec<String>,
+    /// Referenced Secret name, kept as metadata only.
+    pub secret_name: Option<String>,
+}
+
 /// List Deployments in one namespace without mutating cluster state.
 ///
 /// # Errors
@@ -177,6 +233,26 @@ pub async fn list_pods_owned_by_workload(
     Ok(summaries)
 }
 
+/// List Ingress objects in one namespace without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_ingresses(
+    client: Client,
+    namespace: &str,
+) -> Result<Vec<IngressSummary>, kube::Error> {
+    let ingresses: Api<Ingress> = Api::namespaced(client, namespace);
+    let mut summaries = ingresses
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .map(ingress_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
+}
+
 /// Convert a Kubernetes [`Deployment`] into a deterministic summary.
 pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
     let spec = deployment.spec.as_ref();
@@ -201,6 +277,77 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         updated_replicas: status.and_then(|status| status.updated_replicas),
         images,
     }
+}
+
+/// Convert a Kubernetes [`Ingress`] into a deterministic summary.
+pub fn ingress_summary(ingress: &Ingress) -> IngressSummary {
+    let spec = ingress.spec.as_ref();
+    let rules = spec
+        .map(|spec| {
+            spec.rules
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|rule| IngressRuleSummary {
+                    host: rule.host.clone(),
+                    paths: rule
+                        .http
+                        .as_ref()
+                        .map(|http| {
+                            http.paths
+                                .iter()
+                                .map(|path| IngressPathSummary {
+                                    path: path.path.clone(),
+                                    path_type: Some(path.path_type.clone()),
+                                    backend: ingress_backend_summary(&path.backend),
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tls = spec
+        .map(|spec| {
+            spec.tls
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|tls| IngressTlsSummary {
+                    hosts: tls.hosts.clone().unwrap_or_default(),
+                    secret_name: tls.secret_name.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    IngressSummary {
+        namespace: ingress.namespace().unwrap_or_default(),
+        name: ingress.name_any(),
+        ingress_class_name: spec.and_then(|spec| spec.ingress_class_name.clone()),
+        default_backend: spec.and_then(|spec| {
+            spec.default_backend
+                .as_ref()
+                .and_then(ingress_backend_summary)
+        }),
+        rules,
+        tls,
+    }
+}
+
+fn ingress_backend_summary(backend: &IngressBackend) -> Option<IngressBackendSummary> {
+    let service = backend.service.as_ref()?;
+    let port = service.port.as_ref()?;
+    let service_port = port
+        .name
+        .clone()
+        .or_else(|| port.number.map(|number| number.to_string()))?;
+
+    Some(IngressBackendSummary {
+        service_name: service.name.clone(),
+        service_port,
+    })
 }
 
 /// Convert a Kubernetes [`Pod`] into a deterministic summary.
@@ -367,13 +514,19 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterInfo, DeploymentSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
-        ServicePortSummary, ServiceSummary, deployment_summary, load_kube_config_path,
-        load_kube_config_with_options, pod_is_owned_by_workload, pod_summary, service_summary,
+        ClusterInfo, DeploymentSummary, IngressBackendSummary, IngressPathSummary,
+        IngressRuleSummary, IngressSummary, IngressTlsSummary, LabelSelectorEntry,
+        OwnerReferenceSummary, PodSummary, ServicePortSummary, ServiceSummary, deployment_summary,
+        ingress_summary, load_kube_config_path, load_kube_config_with_options,
+        pod_is_owned_by_workload, pod_summary, service_summary,
     };
     use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStatus};
     use k8s_openapi::api::core::v1::{
         Container, Pod, PodSpec, PodStatus, PodTemplateSpec, Service, ServicePort, ServiceSpec,
+    };
+    use k8s_openapi::api::networking::v1::{
+        HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule,
+        IngressServiceBackend, IngressSpec, IngressTLS, ServiceBackendPort,
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{
         LabelSelector, ObjectMeta, OwnerReference,
@@ -563,6 +716,76 @@ mod tests {
         assert!(pod_is_owned_by_workload(&owned_pod, &workload));
         assert!(!pod_is_owned_by_workload(&other_namespace_pod, &workload));
         assert!(!pod_is_owned_by_workload(&unrelated_pod, &workload));
+    }
+
+    #[test]
+    fn summarizes_ingress_rules_backends_and_tls_metadata() {
+        let ingress = fake_ingress("shop", "checkout-ingress");
+
+        let summary = ingress_summary(&ingress);
+
+        assert_eq!(
+            summary,
+            IngressSummary {
+                namespace: "shop".to_owned(),
+                name: "checkout-ingress".to_owned(),
+                ingress_class_name: Some("nginx".to_owned()),
+                default_backend: Some(IngressBackendSummary {
+                    service_name: "checkout-http".to_owned(),
+                    service_port: "http".to_owned(),
+                }),
+                rules: vec![IngressRuleSummary {
+                    host: Some("checkout.example.com".to_owned()),
+                    paths: vec![
+                        IngressPathSummary {
+                            path: Some("/".to_owned()),
+                            path_type: Some("Prefix".to_owned()),
+                            backend: Some(IngressBackendSummary {
+                                service_name: "checkout-http".to_owned(),
+                                service_port: "80".to_owned(),
+                            }),
+                        },
+                        IngressPathSummary {
+                            path: Some("/metrics".to_owned()),
+                            path_type: Some("Exact".to_owned()),
+                            backend: Some(IngressBackendSummary {
+                                service_name: "checkout-metrics".to_owned(),
+                                service_port: "metrics".to_owned(),
+                            }),
+                        },
+                    ],
+                }],
+                tls: vec![IngressTlsSummary {
+                    hosts: vec!["checkout.example.com".to_owned()],
+                    secret_name: Some("checkout-tls".to_owned()),
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_minimal_ingress_without_optional_fields() {
+        let ingress = Ingress {
+            metadata: ObjectMeta {
+                name: Some("minimal".to_owned()),
+                ..ObjectMeta::default()
+            },
+            ..Ingress::default()
+        };
+
+        let summary = ingress_summary(&ingress);
+
+        assert_eq!(
+            summary,
+            IngressSummary {
+                namespace: String::new(),
+                name: "minimal".to_owned(),
+                ingress_class_name: None,
+                default_backend: None,
+                rules: Vec::new(),
+                tls: Vec::new(),
+            }
+        );
     }
 
     #[test]
@@ -822,6 +1045,68 @@ current-context: context-a
                 pod_ip: Some("10.244.0.12".to_owned()),
                 ..PodStatus::default()
             }),
+        }
+    }
+
+    fn fake_ingress(namespace: &str, name: &str) -> Ingress {
+        Ingress {
+            metadata: ObjectMeta {
+                name: Some(name.to_owned()),
+                namespace: Some(namespace.to_owned()),
+                ..ObjectMeta::default()
+            },
+            spec: Some(IngressSpec {
+                ingress_class_name: Some("nginx".to_owned()),
+                default_backend: Some(ingress_backend_name_port("checkout-http", "http")),
+                rules: Some(vec![IngressRule {
+                    host: Some("checkout.example.com".to_owned()),
+                    http: Some(HTTPIngressRuleValue {
+                        paths: vec![
+                            HTTPIngressPath {
+                                path: Some("/".to_owned()),
+                                path_type: "Prefix".to_owned(),
+                                backend: ingress_backend_number_port("checkout-http", 80),
+                            },
+                            HTTPIngressPath {
+                                path: Some("/metrics".to_owned()),
+                                path_type: "Exact".to_owned(),
+                                backend: ingress_backend_name_port("checkout-metrics", "metrics"),
+                            },
+                        ],
+                    }),
+                }]),
+                tls: Some(vec![IngressTLS {
+                    hosts: Some(vec!["checkout.example.com".to_owned()]),
+                    secret_name: Some("checkout-tls".to_owned()),
+                }]),
+            }),
+            ..Ingress::default()
+        }
+    }
+
+    fn ingress_backend_name_port(service_name: &str, port_name: &str) -> IngressBackend {
+        IngressBackend {
+            service: Some(IngressServiceBackend {
+                name: service_name.to_owned(),
+                port: Some(ServiceBackendPort {
+                    name: Some(port_name.to_owned()),
+                    ..ServiceBackendPort::default()
+                }),
+            }),
+            ..IngressBackend::default()
+        }
+    }
+
+    fn ingress_backend_number_port(service_name: &str, port_number: i32) -> IngressBackend {
+        IngressBackend {
+            service: Some(IngressServiceBackend {
+                name: service_name.to_owned(),
+                port: Some(ServiceBackendPort {
+                    number: Some(port_number),
+                    ..ServiceBackendPort::default()
+                }),
+            }),
+            ..IngressBackend::default()
         }
     }
 
