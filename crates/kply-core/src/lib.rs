@@ -9,6 +9,8 @@ const SESSION_TOKEN_MAX_LEN: usize = 63;
 const WORKLOAD_KIND_MAX_LEN: usize = 63;
 const RESOURCE_QUANTITY_MAX_LEN: usize = 63;
 const METADATA_NAME_MAX_LEN: usize = 63;
+const PLANNED_CHECK_NAME_MAX_LEN: usize = 63;
+const PLANNED_CHECK_TARGET_MAX_LEN: usize = 255;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -1457,6 +1459,55 @@ impl<'de> Deserialize<'de> for MetadataEntry {
     }
 }
 
+/// Planned verification check for a future sandbox session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct PlannedCheck {
+    name: String,
+    target: String,
+}
+
+impl PlannedCheck {
+    /// Create a [`PlannedCheck`] from validated name and target parts.
+    pub fn new(
+        name: impl Into<String>,
+        target: impl Into<String>,
+    ) -> Result<Self, PlannedCheckError> {
+        let name = name.into();
+        let target = target.into();
+
+        validate_planned_check_name(&name).map_err(PlannedCheckError::Name)?;
+        validate_planned_check_target(&target).map_err(PlannedCheckError::Target)?;
+
+        Ok(Self { name, target })
+    }
+
+    /// Borrow the planned check name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Borrow the planned check target.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+}
+
+impl fmt::Display for PlannedCheck {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} -> {}", self.name, self.target)
+    }
+}
+
+impl<'de> Deserialize<'de> for PlannedCheck {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = PlannedCheckFields::deserialize(deserializer)?;
+        Self::new(fields.name, fields.target).map_err(D::Error::custom)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1693,8 +1744,9 @@ impl std::error::Error for SessionPolicyError {}
 /// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
 /// proposed [`ImageRef`], optional time-to-live, planned
 /// [`KubernetesResourceRef`] resources, planned [`MetadataEntry`] labels and
-/// annotations, optional [`RouteSelector`], [`SessionPolicy`], and initial
-/// [`SessionStatus`] for a session that has not yet been executed.
+/// annotations, planned [`PlannedCheck`] checks, optional [`RouteSelector`],
+/// [`SessionPolicy`], and initial [`SessionStatus`] for a session that has not
+/// yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
@@ -1706,6 +1758,7 @@ pub struct SessionPlan {
     planned_resources: Vec<KubernetesResourceRef>,
     planned_labels: Vec<MetadataEntry>,
     planned_annotations: Vec<MetadataEntry>,
+    planned_checks: Vec<PlannedCheck>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1729,6 +1782,7 @@ impl SessionPlan {
             planned_resources: Vec::new(),
             planned_labels: Vec::new(),
             planned_annotations: Vec::new(),
+            planned_checks: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -1771,6 +1825,17 @@ impl SessionPlan {
         planned_annotations: impl IntoIterator<Item = MetadataEntry>,
     ) -> Self {
         self.planned_annotations = deduplicate_metadata_by_key(planned_annotations);
+        self
+    }
+
+    /// Return a copy of this plan with planned [`PlannedCheck`] checks.
+    pub fn with_planned_checks(
+        mut self,
+        planned_checks: impl IntoIterator<Item = PlannedCheck>,
+    ) -> Self {
+        self.planned_checks = planned_checks.into_iter().collect();
+        self.planned_checks.sort_unstable();
+        self.planned_checks.dedup();
         self
     }
 
@@ -1820,6 +1885,11 @@ impl SessionPlan {
         &self.planned_annotations
     }
 
+    /// Borrow planned [`PlannedCheck`] checks in deterministic order.
+    pub fn planned_checks(&self) -> &[PlannedCheck] {
+        &self.planned_checks
+    }
+
     /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
@@ -1867,6 +1937,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
             .with_planned_labels(planned_labels)
             .map_err(D::Error::custom)?;
         plan = plan.with_planned_annotations(fields.planned_annotations);
+        plan = plan.with_planned_checks(fields.planned_checks);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -2333,6 +2404,96 @@ impl fmt::Display for MetadataValueError {
 }
 
 impl std::error::Error for MetadataValueError {}
+
+/// Error returned when a [`PlannedCheck`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCheckError {
+    /// Planned check names must be valid.
+    Name(PlannedCheckNameError),
+    /// Planned check targets must be valid.
+    Target(PlannedCheckTargetError),
+}
+
+impl fmt::Display for PlannedCheckError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(error) => write!(formatter, "invalid planned check name: {error}"),
+            Self::Target(error) => write!(formatter, "invalid planned check target: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for PlannedCheckError {}
+
+/// Error returned when a planned check name is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCheckNameError {
+    /// Planned check names cannot be empty.
+    Empty,
+    /// Planned check names must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Planned check names must start and end with an ASCII letter or digit.
+    InvalidBoundary,
+    /// Planned check names only allow ASCII check name characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for PlannedCheckNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("planned check name cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "planned check name cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("planned check name must start and end with an ASCII letter or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "planned check name contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlannedCheckNameError {}
+
+/// Error returned when a planned check target is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCheckTargetError {
+    /// Planned check targets cannot be empty.
+    Empty,
+    /// Planned check targets must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Planned check targets only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for PlannedCheckTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("planned check target cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "planned check target cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "planned check target contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlannedCheckTargetError {}
 
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2902,6 +3063,8 @@ struct SessionPlanFields {
     planned_labels: Vec<MetadataEntry>,
     #[serde(default)]
     planned_annotations: Vec<MetadataEntry>,
+    #[serde(default)]
+    planned_checks: Vec<PlannedCheck>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -2911,6 +3074,12 @@ struct SessionPlanFields {
 struct MetadataEntryFields {
     key: String,
     value: String,
+}
+
+#[derive(Deserialize)]
+struct PlannedCheckFields {
+    name: String,
+    target: String,
 }
 
 #[derive(Deserialize)]
@@ -3367,6 +3536,59 @@ fn validate_metadata_label_value(value: &str) -> Result<(), MetadataValueError> 
     Ok(())
 }
 
+fn validate_planned_check_name(value: &str) -> Result<(), PlannedCheckNameError> {
+    if value.is_empty() {
+        return Err(PlannedCheckNameError::Empty);
+    }
+
+    if value.len() > PLANNED_CHECK_NAME_MAX_LEN {
+        return Err(PlannedCheckNameError::TooLong {
+            max_len: PLANNED_CHECK_NAME_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(PlannedCheckNameError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+        return Err(PlannedCheckNameError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_planned_check_name_character(*character))
+    {
+        return Err(PlannedCheckNameError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_planned_check_name_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+}
+
+fn validate_planned_check_target(value: &str) -> Result<(), PlannedCheckTargetError> {
+    if value.is_empty() {
+        return Err(PlannedCheckTargetError::Empty);
+    }
+
+    if value.len() > PLANNED_CHECK_TARGET_MAX_LEN {
+        return Err(PlannedCheckTargetError::TooLong {
+            max_len: PLANNED_CHECK_TARGET_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !character.is_ascii_graphic())
+    {
+        return Err(PlannedCheckTargetError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
 fn deduplicate_metadata_by_key(
     metadata: impl IntoIterator<Item = MetadataEntry>,
 ) -> Vec<MetadataEntry> {
@@ -3508,7 +3730,9 @@ mod tests {
         ConfigReference, ContainerRef, ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN,
         ImageFacts, ImageRef, ImageRefError, KubernetesResourceRef, KubernetesResourceRefError,
         METADATA_KEY_MAX_LEN, METADATA_VALUE_MAX_LEN, MetadataEntry, MetadataEntryError,
-        MetadataKeyError, MetadataValueError, PodRef, PodRefError, ProbeFacts, ProbeKind,
+        MetadataKeyError, MetadataValueError, PLANNED_CHECK_NAME_MAX_LEN,
+        PLANNED_CHECK_TARGET_MAX_LEN, PlannedCheck, PlannedCheckError, PlannedCheckNameError,
+        PlannedCheckTargetError, PodRef, PodRefError, ProbeFacts, ProbeKind,
         RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
         ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts,
         ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
@@ -5758,6 +5982,11 @@ mod tests {
                     .expect("annotation"),
                 MetadataEntry::new("kply.dev/route-strategy", "header").expect("annotation"),
             ])
+            .with_planned_checks([
+                PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api")
+                    .expect("planned check"),
+                PlannedCheck::new("route_ready", "header").expect("planned check"),
+            ])
             .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
@@ -5808,6 +6037,16 @@ mod tests {
                     "value": "checkout/Deployment/checkout-api"
                 }
             ],
+            "planned_checks": [
+                {
+                    "name": "route_ready",
+                    "target": "host"
+                },
+                {
+                    "name": "workload_ready",
+                    "target": "checkout/Deployment/checkout-api"
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -5837,6 +6076,7 @@ mod tests {
         assert_eq!(plan.planned_resources()[0].name(), "session-123-workload");
         assert_eq!(plan.planned_labels().len(), 2);
         assert_eq!(plan.planned_annotations().len(), 2);
+        assert_eq!(plan.planned_checks().len(), 2);
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
 
@@ -6115,6 +6355,7 @@ mod tests {
         assert_eq!(plan.planned_resources(), []);
         assert_eq!(plan.planned_labels(), []);
         assert_eq!(plan.planned_annotations(), []);
+        assert_eq!(plan.planned_checks(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
@@ -6186,6 +6427,21 @@ mod tests {
 
         assert_eq!(plan.planned_labels(), [last_label]);
         assert_eq!(plan.planned_annotations(), [last_annotation]);
+    }
+
+    #[test]
+    fn creates_session_plan_with_planned_checks() {
+        let workload_check =
+            PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api")
+                .expect("planned check");
+        let route_check = PlannedCheck::new("route_ready", "header").expect("planned check");
+        let plan = test_session_plan().with_planned_checks([
+            workload_check.clone(),
+            route_check.clone(),
+            workload_check.clone(),
+        ]);
+
+        assert_eq!(plan.planned_checks(), [route_check, workload_check]);
     }
 
     #[test]
@@ -6773,6 +7029,59 @@ mod tests {
                 .expect("empty label value")
                 .value(),
             ""
+        );
+    }
+
+    #[test]
+    fn creates_planned_check_from_valid_parts() {
+        let check =
+            PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api").expect("check");
+
+        assert_eq!(check.name(), "workload_ready");
+        assert_eq!(check.target(), "checkout/Deployment/checkout-api");
+        assert_eq!(
+            check.to_string(),
+            "workload_ready -> checkout/Deployment/checkout-api"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_planned_check_parts() {
+        assert_eq!(
+            PlannedCheck::new("", "checkout/Deployment/checkout-api").unwrap_err(),
+            PlannedCheckError::Name(PlannedCheckNameError::Empty)
+        );
+        assert_eq!(
+            PlannedCheck::new("workload_ready", "").unwrap_err(),
+            PlannedCheckError::Target(PlannedCheckTargetError::Empty)
+        );
+        assert_eq!(
+            PlannedCheck::new("a".repeat(PLANNED_CHECK_NAME_MAX_LEN + 1), "target").unwrap_err(),
+            PlannedCheckError::Name(PlannedCheckNameError::TooLong {
+                max_len: PLANNED_CHECK_NAME_MAX_LEN
+            })
+        );
+        assert_eq!(
+            PlannedCheck::new(
+                "workload_ready",
+                "a".repeat(PLANNED_CHECK_TARGET_MAX_LEN + 1)
+            )
+            .unwrap_err(),
+            PlannedCheckError::Target(PlannedCheckTargetError::TooLong {
+                max_len: PLANNED_CHECK_TARGET_MAX_LEN
+            })
+        );
+        assert_eq!(
+            PlannedCheck::new("-bad", "target").unwrap_err(),
+            PlannedCheckError::Name(PlannedCheckNameError::InvalidBoundary)
+        );
+        assert_eq!(
+            PlannedCheck::new("bad/check", "target").unwrap_err(),
+            PlannedCheckError::Name(PlannedCheckNameError::InvalidCharacter { character: '/' })
+        );
+        assert_eq!(
+            PlannedCheck::new("workload_ready", "bad target").unwrap_err(),
+            PlannedCheckError::Target(PlannedCheckTargetError::InvalidCharacter { character: ' ' })
         );
     }
 

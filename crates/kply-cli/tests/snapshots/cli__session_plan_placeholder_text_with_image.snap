@@ -21,6 +21,11 @@ planned_annotations: 3
   annotation: kply.dev/image=ghcr.io/kubeply/checkout:v2
   annotation: kply.dev/route-strategy=header
   annotation: kply.dev/workload=shop/Deployment/checkout-api
+planned_checks: 4
+  check: image_pull -> ghcr.io/kubeply/checkout:v2
+  check: route_ready -> header
+  check: service_endpoints -> shop/checkout-plan-service
+  check: workload_ready -> shop/Deployment/checkout-api
 route_selector: header:x-kply-session=checkout-plan
 policy_operations: 6
 status: planned

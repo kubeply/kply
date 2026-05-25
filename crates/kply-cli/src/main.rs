@@ -9,8 +9,8 @@ use kply_config::{
 };
 use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
-    RelationshipConfidence, RouteSelector, ServiceRef, SessionId, SessionName, SessionPlan,
-    SessionPolicy, TimeToLive, WorkloadRef,
+    PlannedCheck, RelationshipConfidence, RouteSelector, ServiceRef, SessionId, SessionName,
+    SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
@@ -193,6 +193,10 @@ fn render_session_plan(
         for annotation in plan.planned_annotations() {
             println!("  annotation: {annotation}");
         }
+        println!("planned_checks: {}", plan.planned_checks().len());
+        for check in plan.planned_checks() {
+            println!("  check: {check}");
+        }
         println!(
             "route_selector: {}",
             plan.route_selector()
@@ -305,6 +309,16 @@ fn session_plan_from_config(
         .map_err(|error| {
             SessionPlanBuildError::Config(format!("invalid planned annotation metadata: {error}"))
         })?;
+    let planned_checks = planned_session_checks(
+        namespace,
+        &workload,
+        &image,
+        route_strategy,
+        session_id.as_str(),
+    )
+    .map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid planned check metadata: {error}"))
+    })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -318,6 +332,7 @@ fn session_plan_from_config(
         SessionPlanBuildError::Config(format!("invalid planned label metadata: {error}"))
     })?;
     plan = plan.with_planned_annotations(planned_annotations);
+    plan = plan.with_planned_checks(planned_checks);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -378,6 +393,29 @@ fn planned_session_annotations(
     ]
     .into_iter()
     .map(|(key, value)| MetadataEntry::new(key, value).map_err(|error| error.to_string()))
+    .collect()
+}
+
+fn planned_session_checks(
+    namespace: &str,
+    workload: &WorkloadRef,
+    image: &ImageRef,
+    route_strategy: &str,
+    session_id: &str,
+) -> std::result::Result<Vec<PlannedCheck>, String> {
+    let workload = workload.to_string();
+    let image = image.to_string();
+    let service = ServiceRef::new(namespace, planned_resource_token(session_id, "service"))
+        .map_err(|error| error.to_string())?
+        .to_string();
+    [
+        ("image_pull", image.as_str()),
+        ("route_ready", route_strategy),
+        ("service_endpoints", service.as_str()),
+        ("workload_ready", workload.as_str()),
+    ]
+    .into_iter()
+    .map(|(name, target)| PlannedCheck::new(name, target).map_err(|error| error.to_string()))
     .collect()
 }
 
@@ -900,8 +938,8 @@ fn print_verbose_trace(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::{
-        planned_resource_token, planned_session_annotations, planned_session_labels,
-        planned_session_resources, session_token,
+        planned_resource_token, planned_session_annotations, planned_session_checks,
+        planned_session_labels, planned_session_resources, session_token,
     };
     use kply_core::{ImageRef, WorkloadRef};
 
@@ -1025,6 +1063,37 @@ mod tests {
             .expect_err("invalid annotation value should fail");
 
         assert!(error.contains("metadata value"));
+    }
+
+    #[test]
+    fn builds_planned_session_checks() {
+        let workload = WorkloadRef::new("ns", "Deployment", "name").expect("workload");
+        let image = ImageRef::new("myimage:v1").expect("image");
+        let checks =
+            planned_session_checks("ns", &workload, &image, "header", "sess").expect("checks");
+
+        assert_eq!(checks.len(), 4);
+        assert_eq!(checks[0].name(), "image_pull");
+        assert_eq!(checks[0].target(), "myimage:v1");
+        assert_eq!(checks[1].name(), "route_ready");
+        assert_eq!(checks[1].target(), "header");
+        assert_eq!(checks[2].name(), "service_endpoints");
+        assert_eq!(
+            checks[2].target(),
+            &format!("ns/{}", planned_resource_token("sess", "service"))
+        );
+        assert_eq!(checks[3].name(), "workload_ready");
+        assert_eq!(checks[3].target(), "ns/Deployment/name");
+    }
+
+    #[test]
+    fn planned_session_checks_return_validation_errors() {
+        let workload = WorkloadRef::new("ns", "Deployment", "name").expect("workload");
+        let image = ImageRef::new("myimage:v1").expect("image");
+        let error = planned_session_checks("Bad_Namespace", &workload, &image, "header", "sess")
+            .expect_err("invalid service ref should fail");
+
+        assert!(error.contains("namespace"));
     }
 
     #[test]
