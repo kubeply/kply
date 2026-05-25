@@ -819,6 +819,87 @@ impl SecretReference {
     }
 }
 
+/// App graph relationship that can carry confidence metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GraphRelationship {
+    /// Relationship between the root workload and an owned Pod.
+    WorkloadPodOwnership { pod: PodRef },
+    /// Relationship between the root workload and a selecting Service.
+    WorkloadServiceSelection { service: ServiceRef },
+    /// Relationship between a Service and a route object.
+    ServiceRouteReference {
+        service: ServiceRef,
+        route: RouteRef,
+    },
+    /// Metadata relationship between a container and a ConfigMap.
+    ContainerConfigReference {
+        container: ContainerRef,
+        config_map: ConfigMapRef,
+    },
+    /// Metadata relationship between a container and a Secret.
+    ContainerSecretReference {
+        container: ContainerRef,
+        secret: SecretMetadataRef,
+    },
+}
+
+/// Confidence level assigned to an inferred graph relationship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfidenceLevel {
+    /// Low confidence relationship.
+    Low,
+    /// Medium confidence relationship.
+    Medium,
+    /// High confidence relationship.
+    High,
+}
+
+impl ConfidenceLevel {
+    /// Return the stable serialized confidence level name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl fmt::Display for ConfidenceLevel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Confidence metadata for an inferred graph relationship.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RelationshipConfidence {
+    relationship: GraphRelationship,
+    confidence: ConfidenceLevel,
+}
+
+impl RelationshipConfidence {
+    /// Create confidence metadata for a graph relationship.
+    pub fn new(relationship: GraphRelationship, confidence: ConfidenceLevel) -> Self {
+        Self {
+            relationship,
+            confidence,
+        }
+    }
+
+    /// Borrow the graph relationship this confidence describes.
+    pub fn relationship(&self) -> &GraphRelationship {
+        &self.relationship
+    }
+
+    /// Return the confidence level for this relationship.
+    pub const fn confidence(&self) -> ConfidenceLevel {
+        self.confidence
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -843,6 +924,8 @@ pub struct AppGraph {
     config_references: Vec<ConfigReference>,
     #[serde(default)]
     secret_references: Vec<SecretReference>,
+    #[serde(default)]
+    relationship_confidences: Vec<RelationshipConfidence>,
 }
 
 impl AppGraph {
@@ -858,6 +941,7 @@ impl AppGraph {
             resource_facts: Vec::new(),
             config_references: Vec::new(),
             secret_references: Vec::new(),
+            relationship_confidences: Vec::new(),
         }
     }
 
@@ -866,6 +950,17 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with relationship confidence metadata.
+    pub fn with_relationship_confidences(
+        mut self,
+        relationship_confidences: impl IntoIterator<Item = RelationshipConfidence>,
+    ) -> Self {
+        self.relationship_confidences = relationship_confidences.into_iter().collect();
+        self.relationship_confidences.sort_unstable();
+        self.relationship_confidences.dedup();
         self
     }
 
@@ -984,6 +1079,11 @@ impl AppGraph {
     pub fn secret_references(&self) -> &[SecretReference] {
         &self.secret_references
     }
+
+    /// Borrow relationship confidence metadata in deterministic order.
+    pub fn relationship_confidences(&self) -> &[RelationshipConfidence] {
+        &self.relationship_confidences
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -1000,7 +1100,8 @@ impl<'de> Deserialize<'de> for AppGraph {
             .with_image_facts(fields.image_facts)
             .with_resource_facts(fields.resource_facts)
             .with_config_references(fields.config_references)
-            .with_secret_references(fields.secret_references))
+            .with_secret_references(fields.secret_references)
+            .with_relationship_confidences(fields.relationship_confidences))
     }
 }
 
@@ -2202,6 +2303,8 @@ struct AppGraphFields {
     config_references: Vec<ConfigReference>,
     #[serde(default)]
     secret_references: Vec<SecretReference>,
+    #[serde(default)]
+    relationship_confidences: Vec<RelationshipConfidence>,
 }
 
 #[derive(Deserialize)]
@@ -2619,18 +2722,19 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppGraph, ConfigMapRef, ConfigMapRefError, ConfigReference, ContainerRef,
-        ContainerRefError, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef, ImageRefError, PodRef,
-        PodRefError, ProbeFacts, RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN,
-        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, ResourceFacts,
-        ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
-        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
-        SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError, SecretReference,
-        ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
-        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
-        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        AppGraph, ConfidenceLevel, ConfigMapRef, ConfigMapRefError, ConfigReference, ContainerRef,
+        ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef,
+        ImageRefError, PodRef, PodRefError, ProbeFacts, RESOURCE_QUANTITY_MAX_LEN,
+        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
+        ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts, ResourceQuantity,
+        ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError, RouteHostError,
+        RouteRef, RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN,
+        SecretMetadataRef, SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError,
+        ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
+        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
+        SessionReport, SessionReportError, SessionStatus, SessionTransitionError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -2833,6 +2937,61 @@ mod tests {
                 Some(ResourceQuantity::new("1Gi").expect("resource quantity")),
             ),
         ])
+        .with_relationship_confidences([
+            RelationshipConfidence::new(
+                GraphRelationship::ContainerSecretReference {
+                    container: ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    secret: SecretMetadataRef::new("checkout", "checkout-api-credentials")
+                        .expect("secret ref"),
+                },
+                ConfidenceLevel::Low,
+            ),
+            RelationshipConfidence::new(
+                GraphRelationship::WorkloadServiceSelection {
+                    service: ServiceRef::new("checkout", "checkout-api-private")
+                        .expect("service ref"),
+                },
+                ConfidenceLevel::Medium,
+            ),
+            RelationshipConfidence::new(
+                GraphRelationship::ContainerConfigReference {
+                    container: ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    config_map: ConfigMapRef::new("checkout", "checkout-api-config")
+                        .expect("configmap ref"),
+                },
+                ConfidenceLevel::High,
+            ),
+            RelationshipConfidence::new(
+                GraphRelationship::WorkloadPodOwnership {
+                    pod: PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
+                },
+                ConfidenceLevel::High,
+            ),
+            RelationshipConfidence::new(
+                GraphRelationship::ServiceRouteReference {
+                    service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    route: RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+                },
+                ConfidenceLevel::High,
+            ),
+            RelationshipConfidence::new(
+                GraphRelationship::ServiceRouteReference {
+                    service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    route: RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+                },
+                ConfidenceLevel::High,
+            ),
+        ])
     }
 
     #[test]
@@ -2851,6 +3010,7 @@ mod tests {
         assert!(graph.resource_facts().is_empty());
         assert!(graph.config_references().is_empty());
         assert!(graph.secret_references().is_empty());
+        assert!(graph.relationship_confidences().is_empty());
     }
 
     #[test]
@@ -3343,6 +3503,77 @@ mod tests {
                     .expect("container ref"),
                     SecretMetadataRef::new("checkout", "checkout-worker-credentials")
                         .expect("secret ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn creates_relationship_confidence_from_valid_parts() {
+        let relationship = GraphRelationship::WorkloadServiceSelection {
+            service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+        };
+
+        let confidence = RelationshipConfidence::new(relationship.clone(), ConfidenceLevel::High);
+
+        assert_eq!(confidence.relationship(), &relationship);
+        assert_eq!(confidence.confidence(), ConfidenceLevel::High);
+        assert_eq!(ConfidenceLevel::High.as_str(), "high");
+        assert_eq!(ConfidenceLevel::High.to_string(), "high");
+    }
+
+    #[test]
+    fn records_relationship_confidences_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.relationship_confidences(),
+            &[
+                RelationshipConfidence::new(
+                    GraphRelationship::WorkloadPodOwnership {
+                        pod: PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
+                    },
+                    ConfidenceLevel::High,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::WorkloadServiceSelection {
+                        service: ServiceRef::new("checkout", "checkout-api-private")
+                            .expect("service ref"),
+                    },
+                    ConfidenceLevel::Medium,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::ServiceRouteReference {
+                        service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                        route: RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+                    },
+                    ConfidenceLevel::High,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::ContainerConfigReference {
+                        container: ContainerRef::new(
+                            WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                                .expect("workload ref"),
+                            "api",
+                        )
+                        .expect("container ref"),
+                        config_map: ConfigMapRef::new("checkout", "checkout-api-config")
+                            .expect("configmap ref"),
+                    },
+                    ConfidenceLevel::High,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::ContainerSecretReference {
+                        container: ContainerRef::new(
+                            WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                                .expect("workload ref"),
+                            "api",
+                        )
+                        .expect("container ref"),
+                        secret: SecretMetadataRef::new("checkout", "checkout-api-credentials")
+                            .expect("secret ref"),
+                    },
+                    ConfidenceLevel::Low,
                 ),
             ]
         );
@@ -3881,6 +4112,159 @@ mod tests {
                     .expect("container ref"),
                     SecretMetadataRef::new("checkout", "checkout-worker-credentials")
                         .expect("secret ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_relationship_confidences_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "relationship_confidences": [
+                {
+                    "relationship": {
+                        "kind": "container_secret_reference",
+                        "container": {
+                            "workload": {
+                                "namespace": "checkout",
+                                "kind": "Deployment",
+                                "name": "checkout-api"
+                            },
+                            "name": "api"
+                        },
+                        "secret": {
+                            "namespace": "checkout",
+                            "name": "checkout-api-credentials"
+                        }
+                    },
+                    "confidence": "low"
+                },
+                {
+                    "relationship": {
+                        "kind": "service_route_reference",
+                        "service": {
+                            "namespace": "checkout",
+                            "name": "checkout-api"
+                        },
+                        "route": {
+                            "namespace": "checkout",
+                            "kind": "Ingress",
+                            "name": "checkout"
+                        }
+                    },
+                    "confidence": "high"
+                },
+                {
+                    "relationship": {
+                        "kind": "workload_service_selection",
+                        "service": {
+                            "namespace": "checkout",
+                            "name": "checkout-api-private"
+                        }
+                    },
+                    "confidence": "medium"
+                },
+                {
+                    "relationship": {
+                        "kind": "container_config_reference",
+                        "container": {
+                            "workload": {
+                                "namespace": "checkout",
+                                "kind": "Deployment",
+                                "name": "checkout-api"
+                            },
+                            "name": "api"
+                        },
+                        "config_map": {
+                            "namespace": "checkout",
+                            "name": "checkout-api-config"
+                        }
+                    },
+                    "confidence": "high"
+                },
+                {
+                    "relationship": {
+                        "kind": "workload_pod_ownership",
+                        "pod": {
+                            "namespace": "checkout",
+                            "name": "checkout-api-7d9f4d9d-a"
+                        }
+                    },
+                    "confidence": "high"
+                },
+                {
+                    "relationship": {
+                        "kind": "service_route_reference",
+                        "service": {
+                            "namespace": "checkout",
+                            "name": "checkout-api"
+                        },
+                        "route": {
+                            "namespace": "checkout",
+                            "kind": "Ingress",
+                            "name": "checkout"
+                        }
+                    },
+                    "confidence": "high"
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.relationship_confidences(),
+            &[
+                RelationshipConfidence::new(
+                    GraphRelationship::WorkloadPodOwnership {
+                        pod: PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
+                    },
+                    ConfidenceLevel::High,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::WorkloadServiceSelection {
+                        service: ServiceRef::new("checkout", "checkout-api-private")
+                            .expect("service ref"),
+                    },
+                    ConfidenceLevel::Medium,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::ServiceRouteReference {
+                        service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                        route: RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+                    },
+                    ConfidenceLevel::High,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::ContainerConfigReference {
+                        container: ContainerRef::new(
+                            WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                                .expect("workload ref"),
+                            "api",
+                        )
+                        .expect("container ref"),
+                        config_map: ConfigMapRef::new("checkout", "checkout-api-config")
+                            .expect("configmap ref"),
+                    },
+                    ConfidenceLevel::High,
+                ),
+                RelationshipConfidence::new(
+                    GraphRelationship::ContainerSecretReference {
+                        container: ContainerRef::new(
+                            WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                                .expect("workload ref"),
+                            "api",
+                        )
+                        .expect("container ref"),
+                        secret: SecretMetadataRef::new("checkout", "checkout-api-credentials")
+                            .expect("secret ref"),
+                    },
+                    ConfidenceLevel::Low,
                 ),
             ]
         );
