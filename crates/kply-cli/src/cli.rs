@@ -107,10 +107,15 @@ impl Command {
 }
 
 /// Application target commands.
-#[derive(Clone, Copy, Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand)]
 pub enum AppCommand {
     /// List configured application targets.
     List,
+    /// Inspect one configured application target.
+    Inspect {
+        /// Configured app name to inspect.
+        app: String,
+    },
 }
 
 impl AppCommand {
@@ -118,6 +123,7 @@ impl AppCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::List => "list",
+            Self::Inspect { .. } => "inspect",
         }
     }
 }

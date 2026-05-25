@@ -592,6 +592,159 @@ apps:
 }
 
 #[test]
+fn prints_app_inspect_text() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+"#,
+    );
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "inspect",
+            "checkout",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("app_inspect_text", output);
+}
+
+#[test]
+fn prints_app_inspect_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: catalog
+    namespace: shop
+    workload: catalog-api
+    service: catalog-http
+    route_strategy: preview
+"#,
+    );
+
+    let output = kply_cmd()
+        .args([
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "inspect",
+            "catalog",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("app_inspect_json", value);
+}
+
+#[test]
+fn suppresses_app_inspect_text_when_quiet() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "inspect",
+            "checkout",
+            "--quiet",
+        ])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rejects_missing_app_inspect_target() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "inspect",
+            "catalog",
+        ],
+        EXIT_USAGE,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "missing app inspect target should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("app_inspect_missing_app", stderr);
+}
+
+#[test]
+fn rejects_missing_app_inspect_target_json() {
+    let output = assert_kply_exit_code(&["--json", "app", "inspect", "catalog"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "missing app inspect JSON target should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("app_inspect_missing_app_json", value);
+}
+
+#[test]
 fn prints_cluster_info_text() {
     let workspace = temp_workspace();
     let kubeconfig_path = write_fake_kubeconfig(&workspace);
@@ -757,7 +910,7 @@ fn covers_every_app_command() {
 
     assert_eq!(
         command_names,
-        ["list"],
+        ["inspect", "list"],
         "update app command tests when the app command surface changes"
     );
 
@@ -765,6 +918,14 @@ fn covers_every_app_command() {
         .args(["app", AppCommand::List.name()])
         .assert()
         .success();
+    kply_cmd()
+        .args([
+            "app",
+            AppCommand::Inspect { app: String::new() }.name(),
+            "missing",
+        ])
+        .assert()
+        .code(EXIT_USAGE);
 }
 
 #[test]
