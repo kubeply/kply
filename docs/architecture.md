@@ -59,16 +59,94 @@ production mutation access.
 
 Sessions are not implemented yet.
 
-Candidate session fields:
+The current `kply-core` session domain model defines the first pre-`1.0.0`
+agent-readable JSON contract. This contract is provisional and may change
+before `1.0.0` when the roadmap requires it. Intentional changes must update
+snapshots in the same pull request.
 
-- `id`
-- `workload`
-- `namespace`
-- `image`
-- `route_header`
-- `status`
-- `checks`
-- `created_at`
+Current provisional pre-`1.0.0` session plan fields:
+
+- `id`: session identifier string.
+- `name`: human-readable session name string.
+- `workload`: target workload object with `namespace`, `kind`, and `name`.
+- `image`: proposed sandbox image reference string.
+- `route_selector`: always serialized as a nullable field; it is a test
+  traffic selector object when configured and `null` otherwise.
+- `policy`: allowed operation policy.
+- `status`: session lifecycle status string.
+
+Current provisional pre-`1.0.0` workload fields:
+
+- `namespace`: Kubernetes namespace string.
+- `kind`: Kubernetes resource kind string such as `Deployment` or
+  `StatefulSet`.
+- `name`: Kubernetes resource name string.
+
+Current provisional pre-`1.0.0` route selector fields:
+
+`route_selector` is a single tagged object. Header and host selectors are
+mutually exclusive alternatives, selected by the `kind` field.
+
+- `kind`: selector type string, currently either `header` or `host`.
+- `name`: header name string, present when `kind` is `header`.
+- `value`: header value string, present when `kind` is `header`.
+- `hostname`: host name string, present when `kind` is `host`.
+
+Unknown `kind` values are rejected. Implementations must reject cross-variant
+or extra fields: when `kind` is `header`, only `kind`, `name`, and `value` are
+allowed; when `kind` is `host`, only `kind` and `hostname` are allowed.
+
+Current provisional pre-`1.0.0` policy fields:
+
+- `allowed_operations`: list of operation strings such as `inspect`, `plan`,
+  `prepare`, `route`, `verify`, `cleanup`, and `promote`. Serialization follows
+  the canonical `SessionOperation::all()` declaration order so JSON snapshots
+  are comparable, but agents must treat the values as a set of allowed
+  operations rather than an execution sequence. Agents should check membership
+  in `allowed_operations`; they must not infer execution order. Duplicate
+  operations are invalid in the current parser and must not be emitted.
+
+Current provisional pre-`1.0.0` status values:
+
+- `planned`: session has been modeled but no sandbox work has started.
+- `preparing`: sandbox resources are being prepared.
+- `active`: sandbox resources are available for agent or check traffic.
+- `verifying`: checks are running against the session.
+- `blocked`: verification or policy found a blocking result.
+- `ready`: verification found the session ready for a future promotion step.
+- `cleaned_up`: session-owned resources have been cleaned up.
+- `failed`: planning, preparation, verification, or cleanup failed.
+
+Current provisional pre-`1.0.0` session report fields:
+
+- `plan`: embedded full session plan object with all session plan fields above.
+- `status`: reportable final status string, one of `blocked`, `ready`,
+  `cleaned_up`, or `failed`.
+
+Current provisional pre-`1.0.0` session event fields:
+
+- `session_id`: session identifier string.
+- `sequence`: monotonically increasing audit event sequence integer.
+- `kind`: event kind string.
+- `status`: stored lifecycle status string for agent convenience. It must
+  always match the status implied by `kind`; deserialization rejects mismatches.
+
+Current event `kind` to `status` mappings are one-to-one:
+
+- `planned` implies `planned`.
+- `preparing` implies `preparing`.
+- `active` implies `active`.
+- `verifying` implies `verifying`.
+- `blocked` implies `blocked`.
+- `ready` implies `ready`.
+- `cleaned_up` implies `cleaned_up`.
+- `failed` implies `failed`.
+
+Both `kind` and `status` are stored so agents can filter by `status` without
+understanding every event `kind`. The current mappings are identity mappings;
+future event kinds may map to broader statuses, for example a `check_failed`
+kind could imply `blocked`. Deserialization validates `kind` and `status`
+together so contract changes fail closed during evolution.
 
 ## Crate Direction
 
