@@ -1,0 +1,134 @@
+//! Offline integration tests for read-only Kubernetes discovery.
+
+use std::path::Path;
+use std::time::Duration;
+
+use http::{Method, Request, Response};
+use kply_core::WorkloadRef;
+use kube::Client;
+use kube::client::Body;
+use serde_json::json;
+use tokio::task::JoinHandle;
+use tower_test::mock::{self, Handle};
+
+type MockKubeHandle = Handle<Request<Body>, Response<Body>>;
+
+#[tokio::test]
+async fn discovers_read_only_app_from_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_kubernetes_api(
+        handle,
+        &[
+            ExpectedListResponse {
+                path: "/apis/apps/v1/namespaces/shop/deployments",
+                fixture_path: "read-only-app/deployments.json",
+            },
+            ExpectedListResponse {
+                path: "/api/v1/namespaces/shop/services",
+                fixture_path: "read-only-app/services.json",
+            },
+            ExpectedListResponse {
+                path: "/api/v1/namespaces/shop/pods",
+                fixture_path: "read-only-app/pods.json",
+            },
+            ExpectedListResponse {
+                path: "/apis/networking.k8s.io/v1/namespaces/shop/ingresses",
+                fixture_path: "read-only-app/ingresses.json",
+            },
+            ExpectedListResponse {
+                path: "/apis/gateway.networking.k8s.io/v1/gatewayclasses",
+                fixture_path: "read-only-app/gatewayclasses.json",
+            },
+            ExpectedListResponse {
+                path: "/apis/gateway.networking.k8s.io/v1/namespaces/shop/gateways",
+                fixture_path: "read-only-app/gateways.json",
+            },
+            ExpectedListResponse {
+                path: "/apis/gateway.networking.k8s.io/v1/namespaces/shop/httproutes",
+                fixture_path: "read-only-app/httproutes.json",
+            },
+        ],
+    );
+
+    let deployment_summaries = kply_k8s::list_deployments(client.clone(), "shop")
+        .await
+        .expect("mocked Deployment list should succeed");
+    let service_summaries = kply_k8s::list_services(client.clone(), "shop")
+        .await
+        .expect("mocked Service list should succeed");
+    let workload = WorkloadRef::new("shop", "ReplicaSet", "checkout-api-7d9f4d9d")
+        .expect("workload reference should be valid");
+    let pod_summaries = kply_k8s::list_pods_owned_by_workload(client.clone(), &workload)
+        .await
+        .expect("mocked Pod list should succeed");
+    let ingress_summaries = kply_k8s::list_ingresses(client.clone(), "shop")
+        .await
+        .expect("mocked Ingress list should succeed");
+    let gateway_class_summaries = kply_k8s::list_gateway_classes(client.clone())
+        .await
+        .expect("mocked GatewayClass list should succeed");
+    let gateway_summaries = kply_k8s::list_gateways(client.clone(), "shop")
+        .await
+        .expect("mocked Gateway list should succeed");
+    let http_route_summaries = kply_k8s::list_http_routes(client, "shop")
+        .await
+        .expect("mocked HTTPRoute list should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    kply_test::insta::assert_json_snapshot!(
+        "read_only_app_offline_discovery",
+        json!({
+            "deployments": deployment_summaries,
+            "services": service_summaries,
+            "pods": pod_summaries,
+            "ingresses": ingress_summaries,
+            "gateway_classes": gateway_class_summaries,
+            "gateways": gateway_summaries,
+            "http_routes": http_route_summaries,
+        })
+    );
+}
+
+struct ExpectedListResponse {
+    path: &'static str,
+    fixture_path: &'static str,
+}
+
+fn mock_client() -> (Client, MockKubeHandle) {
+    let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+
+    (Client::new(mock_service, "default"), handle)
+}
+
+fn spawn_mock_kubernetes_api(
+    handle: MockKubeHandle,
+    expected_responses: &'static [ExpectedListResponse],
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+
+        for expected_response in expected_responses {
+            let (request, send) = handle
+                .next_request()
+                .await
+                .expect("mock Kubernetes API should receive expected request");
+
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(request.uri().path(), expected_response.path);
+
+            let fixture_path = Path::new("k8s-responses").join(expected_response.fixture_path);
+            let fixture_body = std::fs::read(kply_test::fixture_path(fixture_path))
+                .expect("Kubernetes response fixture should be readable");
+
+            send.send_response(Response::new(Body::from(fixture_body)));
+        }
+    })
+}
+
+async fn wait_for_mock_kubernetes_api(server: JoinHandle<()>) {
+    tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .expect("mock Kubernetes API should receive all expected requests")
+        .expect("mock Kubernetes API task should complete");
+}
