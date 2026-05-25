@@ -1,0 +1,87 @@
+---
+source: crates/kply-core/src/lib.rs
+assertion_line: 4788
+expression: warning_app_graph()
+---
+{
+  "workload": {
+    "namespace": "checkout",
+    "kind": "Deployment",
+    "name": "checkout-api"
+  },
+  "owned_pods": [],
+  "selecting_services": [
+    {
+      "namespace": "checkout",
+      "name": "checkout-api"
+    },
+    {
+      "namespace": "checkout",
+      "name": "checkout-private"
+    }
+  ],
+  "service_routes": [],
+  "probe_facts": [
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "readiness_probe": true,
+      "liveness_probe": false,
+      "startup_probe": false
+    }
+  ],
+  "image_facts": [],
+  "resource_facts": [],
+  "config_references": [],
+  "secret_references": [],
+  "relationship_confidences": [],
+  "warnings": [
+    {
+      "kind": "ambiguous_service_selector",
+      "service": {
+        "namespace": "checkout",
+        "name": "checkout-api"
+      },
+      "candidate_workloads": [
+        {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-worker"
+        }
+      ]
+    },
+    {
+      "kind": "missing_route",
+      "service": {
+        "namespace": "checkout",
+        "name": "checkout-private"
+      }
+    },
+    {
+      "kind": "missing_probes",
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "missing_probes": [
+        "liveness",
+        "startup"
+      ]
+    }
+  ]
+}

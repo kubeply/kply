@@ -1,0 +1,65 @@
+---
+source: crates/kply-core/src/lib.rs
+assertion_line: 4783
+expression: routed_app_graph()
+---
+{
+  "workload": {
+    "namespace": "checkout",
+    "kind": "Deployment",
+    "name": "checkout-api"
+  },
+  "owned_pods": [],
+  "selecting_services": [
+    {
+      "namespace": "checkout",
+      "name": "checkout-api"
+    }
+  ],
+  "service_routes": [
+    {
+      "service": {
+        "namespace": "checkout",
+        "name": "checkout-api"
+      },
+      "route": {
+        "namespace": "checkout",
+        "kind": "HTTPRoute",
+        "name": "checkout-api"
+      }
+    }
+  ],
+  "probe_facts": [],
+  "image_facts": [],
+  "resource_facts": [],
+  "config_references": [],
+  "secret_references": [],
+  "relationship_confidences": [
+    {
+      "relationship": {
+        "kind": "workload_service_selection",
+        "service": {
+          "namespace": "checkout",
+          "name": "checkout-api"
+        }
+      },
+      "confidence": "high"
+    },
+    {
+      "relationship": {
+        "kind": "service_route_reference",
+        "service": {
+          "namespace": "checkout",
+          "name": "checkout-api"
+        },
+        "route": {
+          "namespace": "checkout",
+          "kind": "HTTPRoute",
+          "name": "checkout-api"
+        }
+      },
+      "confidence": "high"
+    }
+  ],
+  "warnings": []
+}
