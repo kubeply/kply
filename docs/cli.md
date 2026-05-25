@@ -21,6 +21,12 @@ configuration, missing credentials, or rejected input.
 Internal errors use `3` only when Kply cannot map the failure to a documented
 user or infrastructure condition.
 
+## Global Flags
+
+`--config <path>` accepts an explicit project configuration path. The canonical
+filename is `kply.yaml`. The configured path is shown in `--verbose` output;
+loading and validation are not implemented yet.
+
 ## Compatibility
 
 Exit codes are part of the CLI contract. Changes to these meanings must update

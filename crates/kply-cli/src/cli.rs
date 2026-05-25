@@ -1,6 +1,7 @@
 //! CLI argument placeholders for the future Kply command surface.
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 /// Top-level placeholder CLI options.
 #[derive(Debug, Parser)]
@@ -30,6 +31,15 @@ pub struct Cli {
     /// Disable ANSI color output.
     #[arg(long, global = true)]
     pub no_color: bool,
+
+    /// Path to an explicit configuration file, stored as a [`PathBuf`].
+    #[arg(
+        long,
+        value_name = "PATH",
+        global = true,
+        help = "Specify an explicit configuration file path"
+    )]
+    pub config: Option<PathBuf>,
 
     /// Optional top-level command.
     #[command(subcommand)]

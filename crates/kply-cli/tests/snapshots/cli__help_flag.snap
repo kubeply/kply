@@ -16,9 +16,10 @@ Commands:
   report      Read future session reports
 
 Options:
-      --version   Print the kply version
-      --json      Print placeholder output as JSON
-      --quiet     Suppress nonessential human-readable output
-      --verbose   Print local debugging details to stderr
-      --no-color  Disable ANSI color output
-  -h, --help      Print help
+      --version        Print the kply version
+      --json           Print placeholder output as JSON
+      --quiet          Suppress nonessential human-readable output
+      --verbose        Print local debugging details to stderr
+      --no-color       Disable ANSI color output
+      --config <PATH>  Specify an explicit configuration file path
+  -h, --help           Print help
