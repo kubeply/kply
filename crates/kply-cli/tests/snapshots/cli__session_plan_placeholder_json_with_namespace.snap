@@ -1,12 +1,12 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 199
+assertion_line: 235
 expression: value
 ---
 {
   "app": "checkout",
   "command": "session plan",
-  "image": "ghcr.io/kubeply/checkout:v2",
-  "namespace": null,
+  "image": null,
+  "namespace": "staging",
   "status": "placeholder"
 }

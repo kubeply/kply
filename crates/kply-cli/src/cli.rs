@@ -120,6 +120,9 @@ pub enum SessionCommand {
         /// Candidate image reference for the sandbox workload.
         #[arg(long, value_name = "IMAGE")]
         image: Option<String>,
+        /// Namespace override for the planned sandbox resources.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
     },
 }
 

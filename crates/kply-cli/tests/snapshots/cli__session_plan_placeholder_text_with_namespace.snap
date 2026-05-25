@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 213
+expression: output
+---
+kply session plan checkout
+Namespace: staging
+Session planning is defined but behavior is intentionally pending.
