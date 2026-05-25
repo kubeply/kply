@@ -166,6 +166,9 @@ Core does not depend on Kubernetes client libraries or CLI output.
 Kply project configuration will use `kply.yaml` as the canonical filename.
 Configuration loading is not implemented yet.
 
+The current provisional config schema version is `1`. This binary accepts
+schema versions from `1` through the current version.
+
 The top-level configuration model has these sections:
 
 - `version`: config schema version.

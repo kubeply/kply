@@ -2,6 +2,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::{error, fmt};
 
 /// Canonical Kply project configuration filename.
 pub const CANONICAL_CONFIG_FILENAME: &str = "kply.yaml";
@@ -80,6 +81,12 @@ impl ConfigVersion {
     /// Current provisional config schema version.
     pub const CURRENT: Self = Self(1);
 
+    /// Minimum config schema version accepted by this binary.
+    pub const MIN_SUPPORTED: Self = Self(1);
+
+    /// Maximum config schema version accepted by this binary.
+    pub const MAX_SUPPORTED: Self = Self::CURRENT;
+
     /// Create a config schema version.
     pub const fn new(value: u16) -> Self {
         Self(value)
@@ -89,6 +96,29 @@ impl ConfigVersion {
     pub const fn get(self) -> u16 {
         self.0
     }
+
+    /// Return true when this version is accepted by this binary.
+    pub const fn is_supported(self) -> bool {
+        self.0 >= Self::MIN_SUPPORTED.0 && self.0 <= Self::MAX_SUPPORTED.0
+    }
+
+    /// Validate that this version is accepted by this binary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigVersionError::Unsupported`] when the version is outside
+    /// the supported range.
+    pub const fn validate(self) -> Result<Self, ConfigVersionError> {
+        if self.is_supported() {
+            Ok(self)
+        } else {
+            Err(ConfigVersionError::Unsupported {
+                found: self,
+                min_supported: Self::MIN_SUPPORTED,
+                max_supported: Self::MAX_SUPPORTED,
+            })
+        }
+    }
 }
 
 impl Default for ConfigVersion {
@@ -96,6 +126,44 @@ impl Default for ConfigVersion {
         Self::CURRENT
     }
 }
+
+impl fmt::Display for ConfigVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.get())
+    }
+}
+
+/// Error returned when a config schema version cannot be accepted.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigVersionError {
+    /// Config schema version is outside this binary's supported range.
+    Unsupported {
+        /// Version found in the configuration.
+        found: ConfigVersion,
+        /// Minimum config schema version accepted by this binary.
+        min_supported: ConfigVersion,
+        /// Maximum config schema version accepted by this binary.
+        max_supported: ConfigVersion,
+    },
+}
+
+impl fmt::Display for ConfigVersionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported {
+                found,
+                min_supported,
+                max_supported,
+            } => write!(
+                formatter,
+                "unsupported config version {found}; supported range is {min_supported}..={max_supported}"
+            ),
+        }
+    }
+}
+
+impl error::Error for ConfigVersionError {}
 
 /// Top-level application config collection.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -282,7 +350,7 @@ pub fn discover_config_path_from(start: impl AsRef<Path>) -> Option<PathBuf> {
 mod tests {
     use super::{
         AppConfig, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig, CheckConfigs, ConfigVersion,
-        KplyConfig, PolicyConfig, PolicyConfigs, RouteStrategy, RoutingConfig,
+        ConfigVersionError, KplyConfig, PolicyConfig, PolicyConfigs, RouteStrategy, RoutingConfig,
         discover_config_path_from,
     };
     use std::env;
@@ -313,6 +381,58 @@ mod tests {
         assert_eq!(config.routing(), &RoutingConfig);
         assert_eq!(config.checks().entries(), &[CheckConfig]);
         assert_eq!(config.policies().entries(), &[PolicyConfig]);
+    }
+
+    #[test]
+    fn exposes_current_supported_schema_version_range() {
+        assert_eq!(ConfigVersion::MIN_SUPPORTED.get(), 1);
+        assert_eq!(ConfigVersion::MAX_SUPPORTED, ConfigVersion::CURRENT);
+        assert!(ConfigVersion::CURRENT.is_supported());
+    }
+
+    #[test]
+    fn validates_supported_schema_versions() {
+        assert_eq!(
+            ConfigVersion::CURRENT.validate(),
+            Ok(ConfigVersion::CURRENT)
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_schema_versions() {
+        let version = ConfigVersion::new(ConfigVersion::MAX_SUPPORTED.get() + 1);
+
+        assert!(!version.is_supported());
+        assert_eq!(
+            version.validate(),
+            Err(ConfigVersionError::Unsupported {
+                found: version,
+                min_supported: ConfigVersion::MIN_SUPPORTED,
+                max_supported: ConfigVersion::MAX_SUPPORTED,
+            })
+        );
+        assert_eq!(
+            version
+                .validate()
+                .expect_err("unsupported version")
+                .to_string(),
+            "unsupported config version 2; supported range is 1..=1"
+        );
+    }
+
+    #[test]
+    fn rejects_schema_versions_below_supported_range() {
+        let version = ConfigVersion::new(0);
+
+        assert!(!version.is_supported());
+        assert_eq!(
+            version.validate(),
+            Err(ConfigVersionError::Unsupported {
+                found: version,
+                min_supported: ConfigVersion::MIN_SUPPORTED,
+                max_supported: ConfigVersion::MAX_SUPPORTED,
+            })
+        );
     }
 
     #[test]
