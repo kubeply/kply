@@ -1,12 +1,32 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 5363
+assertion_line: 5621
 expression: value
 ---
 {
   "id": "session-123",
   "image": "registry.example.com/checkout/api:v2",
   "name": "checkout-test",
+  "planned_annotations": [
+    {
+      "key": "kply.dev/route-strategy",
+      "value": "header"
+    },
+    {
+      "key": "kply.dev/workload",
+      "value": "checkout/Deployment/checkout-api"
+    }
+  ],
+  "planned_labels": [
+    {
+      "key": "kply.dev/managed-by",
+      "value": "kply"
+    },
+    {
+      "key": "kply.dev/session-id",
+      "value": "session-123"
+    }
+  ],
   "planned_resources": [
     {
       "kind": "Deployment",

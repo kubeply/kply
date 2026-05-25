@@ -7,6 +7,38 @@ expression: value
   "id": "checkout-plan",
   "image": "ghcr.io/kubeply/checkout:v2",
   "name": "checkout-session",
+  "planned_annotations": [
+    {
+      "key": "kply.dev/image",
+      "value": "ghcr.io/kubeply/checkout:v2"
+    },
+    {
+      "key": "kply.dev/route-strategy",
+      "value": "header"
+    },
+    {
+      "key": "kply.dev/workload",
+      "value": "staging/Deployment/checkout-api"
+    }
+  ],
+  "planned_labels": [
+    {
+      "key": "kply.dev/app",
+      "value": "checkout"
+    },
+    {
+      "key": "kply.dev/managed-by",
+      "value": "kply"
+    },
+    {
+      "key": "kply.dev/session-id",
+      "value": "checkout-plan"
+    },
+    {
+      "key": "kply.dev/session-name",
+      "value": "checkout-session"
+    }
+  ],
   "planned_resources": [
     {
       "kind": "Deployment",

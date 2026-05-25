@@ -116,6 +116,12 @@ Current provisional pre-`1.0.0` session plan fields:
 - `planned_resources`: list of Kubernetes resources Kply expects a future
   session to create for the sandbox, deduplicated and serialized in
   deterministic order.
+- `planned_labels`: list of metadata key/value pairs Kply expects to apply as
+  labels to session-owned resources, deduplicated and serialized in
+  deterministic order.
+- `planned_annotations`: list of metadata key/value pairs Kply expects to
+  apply as annotations to session-owned resources, deduplicated and serialized
+  in deterministic order.
 - `route_selector`: always serialized as a nullable field; it is a test
   traffic selector object when configured and `null` otherwise.
 - `policy`: allowed operation policy.
@@ -134,6 +140,11 @@ Current provisional pre-`1.0.0` planned Kubernetes resource fields:
 - `kind`: Kubernetes resource kind string such as `Deployment`, `Service`, or
   `HTTPRoute`.
 - `name`: Kubernetes resource name string.
+
+Current provisional pre-`1.0.0` planned metadata fields:
+
+- `key`: Kubernetes metadata key string.
+- `value`: Kubernetes metadata value string.
 
 Current provisional pre-`1.0.0` route selector fields:
 

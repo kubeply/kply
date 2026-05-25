@@ -8,7 +8,7 @@ use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
 };
 use kply_core::{
-    AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef,
+    AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
     RelationshipConfidence, RouteSelector, ServiceRef, SessionId, SessionName, SessionPlan,
     SessionPolicy, TimeToLive, WorkloadRef,
 };
@@ -185,6 +185,14 @@ fn render_session_plan(
         for resource in plan.planned_resources() {
             println!("  resource: {resource}");
         }
+        println!("planned_labels: {}", plan.planned_labels().len());
+        for label in plan.planned_labels() {
+            println!("  label: {label}");
+        }
+        println!("planned_annotations: {}", plan.planned_annotations().len());
+        for annotation in plan.planned_annotations() {
+            println!("  annotation: {annotation}");
+        }
         println!(
             "route_selector: {}",
             plan.route_selector()
@@ -287,6 +295,16 @@ fn session_plan_from_config(
     .map_err(|error| {
         SessionPlanBuildError::Config(format!("invalid planned kubernetes resource: {error}"))
     })?;
+    let planned_labels =
+        planned_session_labels(app.name(), session_id.as_str(), session_name.as_str()).map_err(
+            |error| {
+                SessionPlanBuildError::Config(format!("invalid planned label metadata: {error}"))
+            },
+        )?;
+    let planned_annotations = planned_session_annotations(&workload, &image, route_strategy)
+        .map_err(|error| {
+            SessionPlanBuildError::Config(format!("invalid planned annotation metadata: {error}"))
+        })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -296,6 +314,10 @@ fn session_plan_from_config(
         SessionPolicy::sandbox(),
     );
     plan = plan.with_planned_resources(planned_resources);
+    plan = plan.with_planned_labels(planned_labels).map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid planned label metadata: {error}"))
+    })?;
+    plan = plan.with_planned_annotations(planned_annotations);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -323,6 +345,39 @@ fn planned_session_resources(
     .map(|(kind, name)| {
         KubernetesResourceRef::new(namespace, kind, name).map_err(|error| error.to_string())
     })
+    .collect()
+}
+
+fn planned_session_labels(
+    app_name: &str,
+    session_id: &str,
+    session_name: &str,
+) -> std::result::Result<Vec<MetadataEntry>, String> {
+    [
+        ("kply.dev/app", app_name),
+        ("kply.dev/managed-by", "kply"),
+        ("kply.dev/session-id", session_id),
+        ("kply.dev/session-name", session_name),
+    ]
+    .into_iter()
+    .map(|(key, value)| MetadataEntry::new_label(key, value).map_err(|error| error.to_string()))
+    .collect()
+}
+
+fn planned_session_annotations(
+    workload: &WorkloadRef,
+    image: &ImageRef,
+    route_strategy: &str,
+) -> std::result::Result<Vec<MetadataEntry>, String> {
+    let workload = workload.to_string();
+    let image = image.to_string();
+    [
+        ("kply.dev/image", image.as_str()),
+        ("kply.dev/route-strategy", route_strategy),
+        ("kply.dev/workload", workload.as_str()),
+    ]
+    .into_iter()
+    .map(|(key, value)| MetadataEntry::new(key, value).map_err(|error| error.to_string()))
     .collect()
 }
 
@@ -844,7 +899,11 @@ fn print_verbose_trace(cli: &Cli) {
 
 #[cfg(test)]
 mod tests {
-    use super::{planned_resource_token, planned_session_resources, session_token};
+    use super::{
+        planned_resource_token, planned_session_annotations, planned_session_labels,
+        planned_session_resources, session_token,
+    };
+    use kply_core::{ImageRef, WorkloadRef};
 
     #[test]
     fn preserves_session_token_suffix_for_long_app_names() {
@@ -916,6 +975,56 @@ mod tests {
             .expect_err("invalid namespace should fail");
 
         assert!(error.contains("namespace"));
+    }
+
+    #[test]
+    fn builds_planned_session_labels() {
+        let labels =
+            planned_session_labels("myapp", "session-123", "my-session").expect("planned labels");
+
+        assert_eq!(labels.len(), 4);
+        assert_eq!(labels[0].key(), "kply.dev/app");
+        assert_eq!(labels[0].value(), "myapp");
+        assert_eq!(labels[1].key(), "kply.dev/managed-by");
+        assert_eq!(labels[1].value(), "kply");
+        assert_eq!(labels[2].key(), "kply.dev/session-id");
+        assert_eq!(labels[2].value(), "session-123");
+        assert_eq!(labels[3].key(), "kply.dev/session-name");
+        assert_eq!(labels[3].value(), "my-session");
+    }
+
+    #[test]
+    fn planned_session_labels_return_validation_errors() {
+        let error = planned_session_labels("my app", "session-123", "my-session")
+            .expect_err("invalid label value should fail");
+
+        assert!(error.contains("metadata value"));
+    }
+
+    #[test]
+    fn builds_planned_session_annotations() {
+        let workload = WorkloadRef::new("ns", "Deployment", "name").expect("workload");
+        let image = ImageRef::new("myimage:v1").expect("image");
+        let annotations =
+            planned_session_annotations(&workload, &image, "header").expect("annotations");
+
+        assert_eq!(annotations.len(), 3);
+        assert_eq!(annotations[0].key(), "kply.dev/image");
+        assert_eq!(annotations[0].value(), "myimage:v1");
+        assert_eq!(annotations[1].key(), "kply.dev/route-strategy");
+        assert_eq!(annotations[1].value(), "header");
+        assert_eq!(annotations[2].key(), "kply.dev/workload");
+        assert_eq!(annotations[2].value(), "ns/Deployment/name");
+    }
+
+    #[test]
+    fn planned_session_annotations_return_validation_errors() {
+        let workload = WorkloadRef::new("ns", "Deployment", "name").expect("workload");
+        let image = ImageRef::new("myimage:v1").expect("image");
+        let error = planned_session_annotations(&workload, &image, "bad strategy")
+            .expect_err("invalid annotation value should fail");
+
+        assert!(error.contains("metadata value"));
     }
 
     #[test]
