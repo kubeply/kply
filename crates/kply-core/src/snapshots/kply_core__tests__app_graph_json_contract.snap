@@ -103,5 +103,35 @@ expression: test_app_graph()
       },
       "image": "registry.example.com/checkout/worker:v1"
     }
+  ],
+  "resource_facts": [
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "cpu_request": "250m",
+      "cpu_limit": "500m",
+      "memory_request": "512Mi",
+      "memory_limit": "1Gi"
+    },
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "worker"
+      },
+      "cpu_request": null,
+      "cpu_limit": null,
+      "memory_request": "128Mi",
+      "memory_limit": "256Mi"
+    }
   ]
 }
