@@ -51,7 +51,7 @@ pub struct Cli {
 }
 
 /// Top-level placeholder CLI commands.
-#[derive(Clone, Copy, Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand)]
 pub enum Command {
     /// Print top-level help.
     Help,
@@ -59,8 +59,12 @@ pub enum Command {
     Session,
     /// Inspect future application targets.
     App,
-    /// Manage future Kply configuration.
-    Config,
+    /// Manage Kply configuration.
+    Config {
+        /// Optional configuration command.
+        #[command(subcommand)]
+        command: Option<ConfigCommand>,
+    },
     /// Inspect future cluster capabilities.
     Cluster,
     /// Generate future shell completion scripts.
@@ -74,7 +78,7 @@ impl Command {
     pub const PLACEHOLDER_GROUPS: &'static [Self] = &[
         Self::Session,
         Self::App,
-        Self::Config,
+        Self::Config { command: None },
         Self::Cluster,
         Self::Completion,
         Self::Report,
@@ -86,10 +90,26 @@ impl Command {
             Self::Help => "help",
             Self::Session => "session",
             Self::App => "app",
-            Self::Config => "config",
+            Self::Config { .. } => "config",
             Self::Cluster => "cluster",
             Self::Completion => "completion",
             Self::Report => "report",
+        }
+    }
+}
+
+/// Configuration commands.
+#[derive(Clone, Copy, Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Show the resolved Kply configuration.
+    Show,
+}
+
+impl ConfigCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Show => "show",
         }
     }
 }

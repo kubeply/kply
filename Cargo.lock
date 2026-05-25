@@ -294,6 +294,7 @@ dependencies = [
  "clap",
  "insta",
  "kply-checks",
+ "kply-config",
  "kply-core",
  "kply-test",
  "serde_json",
