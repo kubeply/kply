@@ -1,5 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
+assertion_line: 4306
 expression: test_app_graph()
 ---
 {
@@ -192,6 +193,79 @@ expression: test_app_graph()
         "namespace": "checkout",
         "name": "checkout-worker-credentials"
       }
+    }
+  ],
+  "relationship_confidences": [
+    {
+      "relationship": {
+        "kind": "workload_pod_ownership",
+        "pod": {
+          "namespace": "checkout",
+          "name": "checkout-api-7d9f4d9d-a"
+        }
+      },
+      "confidence": "high"
+    },
+    {
+      "relationship": {
+        "kind": "workload_service_selection",
+        "service": {
+          "namespace": "checkout",
+          "name": "checkout-api-private"
+        }
+      },
+      "confidence": "medium"
+    },
+    {
+      "relationship": {
+        "kind": "service_route_reference",
+        "service": {
+          "namespace": "checkout",
+          "name": "checkout-api"
+        },
+        "route": {
+          "namespace": "checkout",
+          "kind": "Ingress",
+          "name": "checkout"
+        }
+      },
+      "confidence": "high"
+    },
+    {
+      "relationship": {
+        "kind": "container_config_reference",
+        "container": {
+          "workload": {
+            "namespace": "checkout",
+            "kind": "Deployment",
+            "name": "checkout-api"
+          },
+          "name": "api"
+        },
+        "config_map": {
+          "namespace": "checkout",
+          "name": "checkout-api-config"
+        }
+      },
+      "confidence": "high"
+    },
+    {
+      "relationship": {
+        "kind": "container_secret_reference",
+        "container": {
+          "workload": {
+            "namespace": "checkout",
+            "kind": "Deployment",
+            "name": "checkout-api"
+          },
+          "name": "api"
+        },
+        "secret": {
+          "namespace": "checkout",
+          "name": "checkout-api-credentials"
+        }
+      },
+      "confidence": "low"
     }
   ]
 }
