@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 kply-core.workspace = true
 kube.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 k8s-openapi.workspace = true

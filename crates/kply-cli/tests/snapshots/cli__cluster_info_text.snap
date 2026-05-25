@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 420
+expression: output
+---
+kply cluster info
+cluster_url: https://127.0.0.1:6443/
+default_namespace: default

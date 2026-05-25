@@ -2,11 +2,12 @@
 
 use clap::CommandFactory;
 use kply_cli::cli::Cli;
+use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
 use kply_test::{
     EXIT_BLOCKING, EXIT_USAGE, assert_kply_exit_code, kply_cmd, normalize_output, temp_workspace,
-    write_temp_file,
+    write_fake_kubeconfig, write_temp_file,
 };
 
 #[test]
@@ -403,6 +404,105 @@ fn suppresses_config_validate_text_when_quiet() {
 }
 
 #[test]
+fn prints_cluster_info_text() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .args(["cluster", "info"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("cluster_info_text", output);
+}
+
+#[test]
+fn prints_cluster_info_json() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .args(["cluster", "info", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("cluster_info_json", value);
+}
+
+#[test]
+fn suppresses_cluster_info_text_when_quiet() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+
+    kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .args(["cluster", "info", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rejects_unreadable_cluster_info_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["cluster", "info"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stdout.is_empty(),
+        "kubeconfig errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let stderr = stderr.replace(missing_kubeconfig, "<kubeconfig-path>");
+    insta::assert_snapshot!("cluster_info_kubeconfig_error", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_unreadable_cluster_info_kubeconfig_as_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["cluster", "info", "--json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stdout.is_empty(),
+        "kubeconfig JSON errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let stderr = stderr.replace(missing_kubeconfig, "<kubeconfig-path>");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("cluster_info_kubeconfig_json_error", value);
+}
+
+#[test]
 fn covers_every_top_level_command() {
     let mut command_names = Cli::command()
         .get_subcommands()
@@ -453,6 +553,31 @@ fn covers_every_config_command() {
         .success();
     kply_cmd()
         .args(["config", ConfigCommand::Validate.name()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn covers_every_cluster_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("cluster")
+        .expect("cluster command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["info"],
+        "update cluster command tests when the cluster command surface changes"
+    );
+
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .args(["cluster", ClusterCommand::Info.name()])
         .assert()
         .success();
 }
