@@ -161,6 +161,11 @@ kply-cli
 
 Core does not depend on Kubernetes client libraries or CLI output.
 
+## Future Configuration
+
+Kply project configuration will use `kply.yaml` as the canonical filename.
+Configuration loading is not implemented yet.
+
 ## Current Workflow
 
 The current workflow is intentionally minimal:
