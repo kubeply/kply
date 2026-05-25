@@ -24,11 +24,25 @@ user or infrastructure condition.
 ## Global Flags
 
 `--config <path>` accepts an explicit project configuration path. The canonical
-filename is `kply.yaml`. The configured path is shown in `--verbose` output;
-loading and validation are not implemented yet.
+filename is `kply.yaml`. The configured path is shown in `--verbose` output.
 
 `--no-config` disables future configuration discovery and loading. It conflicts
-with `--config <path>` so command intent remains explicit.
+with `--config <path>` so command intent remains explicit. The current CLI does
+not automatically discover config files yet, so `--no-config` is a stable guard
+for that future behavior.
+
+## Config Precedence
+
+Config commands resolve configuration in this order:
+
+1. `--config <path>`: load and parse the explicit file. Read or parse failures
+   are usage/config errors and exit with code `2`.
+2. No config path: use the default in-memory config shape.
+
+The `kply-config` crate can discover the nearest `kply.yaml` from a directory
+upward, but automatic discovery is intentionally not wired into CLI behavior
+yet. When discovery becomes active, `--config <path>` will remain the highest
+precedence input and `--no-config` will force the default in-memory shape.
 
 ## Compatibility
 
