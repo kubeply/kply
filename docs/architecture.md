@@ -163,8 +163,7 @@ Core does not depend on Kubernetes client libraries or CLI output.
 
 ## Future Configuration
 
-Kply project configuration will use `kply.yaml` as the canonical filename.
-Configuration loading is not implemented yet.
+Kply project configuration uses `kply.yaml` as the canonical filename.
 
 The current provisional config schema version is `1`. This binary accepts
 schema versions from `1` through the current version.
@@ -200,6 +199,18 @@ strategies as stable snake_case strings.
 
 `kply config validate` validates the currently resolved config model from a
 file specified with `--config`, or the default config shape if not provided.
+
+Current CLI config precedence is:
+
+1. An explicit `--config <path>` is loaded with `load_config_path()` through
+   `resolved_config()`. Load or parse failures are reported as usage/config
+   errors and exit with code `2`.
+2. Without `--config`, config commands use the default in-memory config shape.
+
+The `kply-config` crate includes upward discovery for the nearest `kply.yaml`,
+but automatic discovery is intentionally not wired into CLI resolution yet.
+`--no-config` already conflicts with `--config` and is reserved as the explicit
+opt-out once discovery becomes active.
 
 ## Current Workflow
 
