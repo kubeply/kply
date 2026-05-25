@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 744
+expression: value
+---
+{
+  "error": {
+    "code": "app_not_found",
+    "exit_code": 2,
+    "message": "app `catalog` is not configured"
+  }
+}

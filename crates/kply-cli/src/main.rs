@@ -50,6 +50,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::App {
             command: Some(AppCommand::List),
         }) => return render_app_list(&cli),
+        Some(Command::App {
+            command: Some(AppCommand::Inspect { app }),
+        }) => return render_app_inspect(&cli, app),
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
@@ -161,6 +164,60 @@ fn render_config_validation_error(
     }
 
     Ok(exit_code(EXIT_BLOCKING))
+}
+
+/// Render one configured application target.
+fn render_app_inspect(cli: &Cli, app_name: &str) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+
+    let Some(app) = config
+        .apps()
+        .entries()
+        .iter()
+        .find(|app| app.name() == app_name)
+    else {
+        return render_app_not_found_error(app_name, cli.json);
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(app)?);
+    } else if !cli.quiet {
+        println!("kply app inspect {}", app.name());
+        println!("name: {}", app.name());
+        println!("namespace: {}", app.namespace());
+        println!("workload: {}", app.workload());
+        println!("service: {}", app.service());
+        println!("route_strategy: {}", app.route_strategy().as_str());
+        println!("default_image: {}", app.default_image().unwrap_or("<none>"));
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render a missing configured app as an input error.
+fn render_app_not_found_error(app_name: &str, wants_json: bool) -> Result<ExitCode> {
+    let message = format!("app `{app_name}` is not configured");
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "app_not_found",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: app\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
 }
 
 /// Render read-only cluster facts resolved from kubeconfig.
