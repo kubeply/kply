@@ -703,15 +703,70 @@ apps:
 }
 
 #[test]
-fn rejects_app_graph_without_json() {
-    let output = assert_kply_exit_code(&["app", "graph", "checkout"], EXIT_USAGE);
-
-    assert!(
-        output.stdout.is_empty(),
-        "app graph usage errors should not write stdout"
+fn prints_app_graph_text() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    workload_kind: StatefulSet
+    service: checkout-http
+    route_strategy: header
+"#,
     );
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
-    insta::assert_snapshot!("app_graph_requires_json", stderr);
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "graph",
+            "checkout",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("app_graph_text", output);
+}
+
+#[test]
+fn suppresses_app_graph_text_when_quiet() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "graph",
+            "checkout",
+            "--quiet",
+        ])
+        .assert()
+        .success()
+        .stdout("");
 }
 
 #[test]
@@ -978,7 +1033,6 @@ fn covers_every_app_command() {
         .code(EXIT_USAGE);
     kply_cmd()
         .args([
-            "--json",
             "app",
             AppCommand::Graph { app: String::new() }.name(),
             "missing",
