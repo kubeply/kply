@@ -377,6 +377,108 @@ impl<'de> Deserialize<'de> for ServiceRef {
     }
 }
 
+/// Stable Kubernetes ConfigMap reference.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct ConfigMapRef {
+    namespace: String,
+    name: String,
+}
+
+impl ConfigMapRef {
+    /// Create a [`ConfigMapRef`] from validated namespace and ConfigMap name parts.
+    pub fn new(
+        namespace: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, ConfigMapRefError> {
+        let namespace = namespace.into();
+        let name = name.into();
+        validate_session_token(&namespace)
+            .map_err(WorkloadTokenError::from)
+            .map_err(ConfigMapRefError::Namespace)?;
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(ConfigMapRefError::Name)?;
+        Ok(Self { namespace, name })
+    }
+
+    /// Borrow the ConfigMap namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the ConfigMap name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for ConfigMapRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.namespace, self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfigMapRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = ConfigMapRefFields::deserialize(deserializer)?;
+        Self::new(fields.namespace, fields.name).map_err(D::Error::custom)
+    }
+}
+
+/// Stable Kubernetes Secret metadata reference.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct SecretMetadataRef {
+    namespace: String,
+    name: String,
+}
+
+impl SecretMetadataRef {
+    /// Create a [`SecretMetadataRef`] from validated namespace and Secret name parts.
+    pub fn new(
+        namespace: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, SecretMetadataRefError> {
+        let namespace = namespace.into();
+        let name = name.into();
+        validate_session_token(&namespace)
+            .map_err(WorkloadTokenError::from)
+            .map_err(SecretMetadataRefError::Namespace)?;
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(SecretMetadataRefError::Name)?;
+        Ok(Self { namespace, name })
+    }
+
+    /// Borrow the Secret namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the Secret name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for SecretMetadataRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.namespace, self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretMetadataRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SecretMetadataRefFields::deserialize(deserializer)?;
+        Self::new(fields.namespace, fields.name).map_err(D::Error::custom)
+    }
+}
+
 /// Stable Kubernetes route reference.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct RouteRef {
@@ -666,6 +768,57 @@ impl ResourceFacts {
     }
 }
 
+/// Metadata reference from a workload container to a ConfigMap.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ConfigReference {
+    container: ContainerRef,
+    config_map: ConfigMapRef,
+}
+
+impl ConfigReference {
+    /// Create a [`ConfigReference`] from validated container and ConfigMap references.
+    pub fn new(container: ContainerRef, config_map: ConfigMapRef) -> Self {
+        Self {
+            container,
+            config_map,
+        }
+    }
+
+    /// Borrow the container side of the ConfigMap reference.
+    pub fn container(&self) -> &ContainerRef {
+        &self.container
+    }
+
+    /// Borrow the ConfigMap metadata reference.
+    pub fn config_map(&self) -> &ConfigMapRef {
+        &self.config_map
+    }
+}
+
+/// Metadata reference from a workload container to a Secret.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SecretReference {
+    container: ContainerRef,
+    secret: SecretMetadataRef,
+}
+
+impl SecretReference {
+    /// Create a [`SecretReference`] from validated container and Secret metadata references.
+    pub fn new(container: ContainerRef, secret: SecretMetadataRef) -> Self {
+        Self { container, secret }
+    }
+
+    /// Borrow the container side of the Secret reference.
+    pub fn container(&self) -> &ContainerRef {
+        &self.container
+    }
+
+    /// Borrow the Secret metadata reference.
+    pub fn secret(&self) -> &SecretMetadataRef {
+        &self.secret
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -686,6 +839,10 @@ pub struct AppGraph {
     image_facts: Vec<ImageFacts>,
     #[serde(default)]
     resource_facts: Vec<ResourceFacts>,
+    #[serde(default)]
+    config_references: Vec<ConfigReference>,
+    #[serde(default)]
+    secret_references: Vec<SecretReference>,
 }
 
 impl AppGraph {
@@ -699,6 +856,8 @@ impl AppGraph {
             probe_facts: Vec::new(),
             image_facts: Vec::new(),
             resource_facts: Vec::new(),
+            config_references: Vec::new(),
+            secret_references: Vec::new(),
         }
     }
 
@@ -707,6 +866,28 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with ConfigMap metadata references.
+    pub fn with_config_references(
+        mut self,
+        config_references: impl IntoIterator<Item = ConfigReference>,
+    ) -> Self {
+        self.config_references = config_references.into_iter().collect();
+        self.config_references.sort_unstable();
+        self.config_references.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with Secret metadata references.
+    pub fn with_secret_references(
+        mut self,
+        secret_references: impl IntoIterator<Item = SecretReference>,
+    ) -> Self {
+        self.secret_references = secret_references.into_iter().collect();
+        self.secret_references.sort_unstable();
+        self.secret_references.dedup();
         self
     }
 
@@ -793,6 +974,16 @@ impl AppGraph {
     pub fn resource_facts(&self) -> &[ResourceFacts] {
         &self.resource_facts
     }
+
+    /// Borrow ConfigMap metadata references in deterministic order.
+    pub fn config_references(&self) -> &[ConfigReference] {
+        &self.config_references
+    }
+
+    /// Borrow Secret metadata references in deterministic order.
+    pub fn secret_references(&self) -> &[SecretReference] {
+        &self.secret_references
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -807,7 +998,9 @@ impl<'de> Deserialize<'de> for AppGraph {
             .with_service_routes(fields.service_routes)
             .with_probe_facts(fields.probe_facts)
             .with_image_facts(fields.image_facts)
-            .with_resource_facts(fields.resource_facts))
+            .with_resource_facts(fields.resource_facts)
+            .with_config_references(fields.config_references)
+            .with_secret_references(fields.secret_references))
     }
 }
 
@@ -1755,6 +1948,50 @@ impl fmt::Display for ServiceRefError {
 
 impl std::error::Error for ServiceRefError {}
 
+/// Error returned when a [`ConfigMapRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigMapRefError {
+    /// ConfigMap namespaces use the same token rules as workload namespaces.
+    Namespace(WorkloadTokenError),
+    /// ConfigMap names use the same token rules as workload names.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for ConfigMapRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(error) => {
+                write!(formatter, "invalid configmap namespace: {error}")
+            }
+            Self::Name(error) => write!(formatter, "invalid configmap name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigMapRefError {}
+
+/// Error returned when a [`SecretMetadataRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretMetadataRefError {
+    /// Secret namespaces use the same token rules as workload namespaces.
+    Namespace(WorkloadTokenError),
+    /// Secret names use the same token rules as workload names.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for SecretMetadataRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(error) => {
+                write!(formatter, "invalid secret namespace: {error}")
+            }
+            Self::Name(error) => write!(formatter, "invalid secret name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SecretMetadataRefError {}
+
 /// Error returned when a [`RouteRef`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteRefError {
@@ -1922,6 +2159,18 @@ struct ServiceRefFields {
 }
 
 #[derive(Deserialize)]
+struct ConfigMapRefFields {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SecretMetadataRefFields {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct RouteRefFields {
     namespace: String,
     kind: String,
@@ -1949,6 +2198,10 @@ struct AppGraphFields {
     image_facts: Vec<ImageFacts>,
     #[serde(default)]
     resource_facts: Vec<ResourceFacts>,
+    #[serde(default)]
+    config_references: Vec<ConfigReference>,
+    #[serde(default)]
+    secret_references: Vec<SecretReference>,
 }
 
 #[derive(Deserialize)]
@@ -2366,17 +2619,18 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppGraph, ContainerRef, ContainerRefError, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef,
-        ImageRefError, PodRef, PodRefError, ProbeFacts, RESOURCE_QUANTITY_MAX_LEN,
-        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
-        ROUTE_HOST_MAX_LEN, ResourceFacts, ResourceQuantity, ResourceQuantityError,
-        RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError,
-        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError,
-        ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
-        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
-        SessionReport, SessionReportError, SessionStatus, SessionTransitionError,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        AppGraph, ConfigMapRef, ConfigMapRefError, ConfigReference, ContainerRef,
+        ContainerRefError, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef, ImageRefError, PodRef,
+        PodRefError, ProbeFacts, RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN,
+        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, ResourceFacts,
+        ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
+        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
+        SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError, SecretReference,
+        ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
+        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
+        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
+        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -2416,6 +2670,65 @@ mod tests {
             ServiceRouteRef::new(
                 ServiceRef::new("checkout", "checkout-api").expect("service ref"),
                 RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+            ),
+        ])
+        .with_config_references([
+            ConfigReference::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                ConfigMapRef::new("checkout", "checkout-worker-config").expect("configmap ref"),
+            ),
+            ConfigReference::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                ConfigMapRef::new("checkout", "checkout-api-config").expect("configmap ref"),
+            ),
+            ConfigReference::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                ConfigMapRef::new("checkout", "checkout-api-config").expect("configmap ref"),
+            ),
+        ])
+        .with_secret_references([
+            SecretReference::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                SecretMetadataRef::new("checkout", "checkout-worker-credentials")
+                    .expect("secret ref"),
+            ),
+            SecretReference::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                SecretMetadataRef::new("checkout", "checkout-api-credentials").expect("secret ref"),
+            ),
+            SecretReference::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                SecretMetadataRef::new("checkout", "checkout-api-credentials").expect("secret ref"),
             ),
         ])
         .with_probe_facts([
@@ -2536,6 +2849,8 @@ mod tests {
         assert!(graph.probe_facts().is_empty());
         assert!(graph.image_facts().is_empty());
         assert!(graph.resource_facts().is_empty());
+        assert!(graph.config_references().is_empty());
+        assert!(graph.secret_references().is_empty());
     }
 
     #[test]
@@ -2589,6 +2904,60 @@ mod tests {
         assert_eq!(
             name_error,
             ServiceRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn creates_config_map_ref_from_valid_parts() {
+        let config_map = ConfigMapRef::new("checkout", "checkout-api-config")
+            .expect("configmap ref should be valid");
+
+        assert_eq!(config_map.namespace(), "checkout");
+        assert_eq!(config_map.name(), "checkout-api-config");
+        assert_eq!(config_map.to_string(), "checkout/checkout-api-config");
+    }
+
+    #[test]
+    fn rejects_invalid_config_map_ref_parts() {
+        let namespace_error = ConfigMapRef::new("Checkout", "checkout-api-config")
+            .expect_err("namespace should be invalid");
+        let name_error =
+            ConfigMapRef::new("checkout", "checkout_api").expect_err("name should be invalid");
+
+        assert_eq!(
+            namespace_error,
+            ConfigMapRefError::Namespace(WorkloadTokenError::InvalidBoundary)
+        );
+        assert_eq!(
+            name_error,
+            ConfigMapRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn creates_secret_metadata_ref_from_valid_parts() {
+        let secret = SecretMetadataRef::new("checkout", "checkout-api-credentials")
+            .expect("secret ref should be valid");
+
+        assert_eq!(secret.namespace(), "checkout");
+        assert_eq!(secret.name(), "checkout-api-credentials");
+        assert_eq!(secret.to_string(), "checkout/checkout-api-credentials");
+    }
+
+    #[test]
+    fn rejects_invalid_secret_metadata_ref_parts() {
+        let namespace_error = SecretMetadataRef::new("Checkout", "checkout-api-credentials")
+            .expect_err("namespace should be invalid");
+        let name_error =
+            SecretMetadataRef::new("checkout", "checkout_api").expect_err("name should be invalid");
+
+        assert_eq!(
+            namespace_error,
+            SecretMetadataRefError::Namespace(WorkloadTokenError::InvalidBoundary)
+        );
+        assert_eq!(
+            name_error,
+            SecretMetadataRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
         );
     }
 
@@ -2914,6 +3283,66 @@ mod tests {
                     None,
                     Some(ResourceQuantity::new("128Mi").expect("resource quantity")),
                     Some(ResourceQuantity::new("256Mi").expect("resource quantity")),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_config_references_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.config_references(),
+            &[
+                ConfigReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    ConfigMapRef::new("checkout", "checkout-api-config").expect("configmap ref"),
+                ),
+                ConfigReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    ConfigMapRef::new("checkout", "checkout-worker-config").expect("configmap ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_secret_references_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.secret_references(),
+            &[
+                SecretReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    SecretMetadataRef::new("checkout", "checkout-api-credentials")
+                        .expect("secret ref"),
+                ),
+                SecretReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    SecretMetadataRef::new("checkout", "checkout-worker-credentials")
+                        .expect("secret ref"),
                 ),
             ]
         );
@@ -3288,6 +3717,170 @@ mod tests {
                     None,
                     Some(ResourceQuantity::new("128Mi").expect("resource quantity")),
                     Some(ResourceQuantity::new("256Mi").expect("resource quantity")),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_config_references_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "config_references": [
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "worker"
+                    },
+                    "config_map": {
+                        "namespace": "checkout",
+                        "name": "checkout-worker-config"
+                    }
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "config_map": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-config"
+                    }
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "config_map": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-config"
+                    }
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.config_references(),
+            &[
+                ConfigReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    ConfigMapRef::new("checkout", "checkout-api-config").expect("configmap ref"),
+                ),
+                ConfigReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    ConfigMapRef::new("checkout", "checkout-worker-config").expect("configmap ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_secret_references_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "secret_references": [
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "worker"
+                    },
+                    "secret": {
+                        "namespace": "checkout",
+                        "name": "checkout-worker-credentials"
+                    }
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "secret": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-credentials"
+                    }
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "secret": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-credentials"
+                    }
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.secret_references(),
+            &[
+                SecretReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    SecretMetadataRef::new("checkout", "checkout-api-credentials")
+                        .expect("secret ref"),
+                ),
+                SecretReference::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    SecretMetadataRef::new("checkout", "checkout-worker-credentials")
+                        .expect("secret ref"),
                 ),
             ]
         );

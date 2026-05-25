@@ -68,8 +68,8 @@ The current `kply-core` app graph model defines the first pre-`1.0.0` graph
 contract. It is independent from raw Kubernetes client types and currently
 contains the root workload, Pods directly owned by that workload, and Services
 that select that workload, route objects that reference those Services, and
-container probe, image, and resource facts. Future roadmap tasks will add
-confidence and warning relationships.
+container probe, image, resource, config, and secret metadata facts. Future
+roadmap tasks will add confidence and warning relationships.
 
 Current provisional pre-`1.0.0` app graph fields:
 
@@ -88,6 +88,11 @@ Current provisional pre-`1.0.0` app graph fields:
 - `resource_facts`: list of container resource facts, each identifying a
   container and configured CPU and memory request or limit quantities,
   serialized in deterministic order.
+- `config_references`: list of container-to-ConfigMap metadata references,
+  serialized in deterministic order.
+- `secret_references`: list of container-to-Secret metadata references. These
+  entries identify Secret names only; Secret contents are never part of the
+  graph contract. The list is serialized in deterministic order.
 
 Current provisional pre-`1.0.0` session plan fields:
 
