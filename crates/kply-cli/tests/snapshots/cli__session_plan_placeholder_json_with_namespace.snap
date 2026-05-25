@@ -21,6 +21,24 @@ expression: value
       "value": "staging/Deployment/checkout-api"
     }
   ],
+  "planned_checks": [
+    {
+      "name": "image_pull",
+      "target": "ghcr.io/acme/checkout:next"
+    },
+    {
+      "name": "route_ready",
+      "target": "header"
+    },
+    {
+      "name": "service_endpoints",
+      "target": "staging/checkout-plan-service"
+    },
+    {
+      "name": "workload_ready",
+      "target": "staging/Deployment/checkout-api"
+    }
+  ],
   "planned_labels": [
     {
       "key": "kply.dev/app",

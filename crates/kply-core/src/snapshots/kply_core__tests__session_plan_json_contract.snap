@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 5621
+assertion_line: 5993
 expression: value
 ---
 {
@@ -15,6 +15,16 @@ expression: value
     {
       "key": "kply.dev/workload",
       "value": "checkout/Deployment/checkout-api"
+    }
+  ],
+  "planned_checks": [
+    {
+      "name": "route_ready",
+      "target": "header"
+    },
+    {
+      "name": "workload_ready",
+      "target": "checkout/Deployment/checkout-api"
     }
   ],
   "planned_labels": [

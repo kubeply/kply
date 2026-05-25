@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 5762
+assertion_line: 6173
 expression: value
 ---
 {
@@ -9,6 +9,7 @@ expression: value
     "image": "registry.example.com/checkout/api:v2",
     "name": "checkout-test",
     "planned_annotations": [],
+    "planned_checks": [],
     "planned_labels": [],
     "planned_resources": [],
     "policy": {
