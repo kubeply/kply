@@ -6,6 +6,182 @@ use std::path::{Path, PathBuf};
 /// Canonical Kply project configuration filename.
 pub const CANONICAL_CONFIG_FILENAME: &str = "kply.yaml";
 
+/// Top-level Kply project configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KplyConfig {
+    version: ConfigVersion,
+    apps: AppConfigs,
+    routing: RoutingConfig,
+    checks: CheckConfigs,
+    policies: PolicyConfigs,
+}
+
+impl KplyConfig {
+    /// Create a [`KplyConfig`] with explicit top-level sections.
+    pub fn new(
+        version: ConfigVersion,
+        apps: AppConfigs,
+        routing: RoutingConfig,
+        checks: CheckConfigs,
+        policies: PolicyConfigs,
+    ) -> Self {
+        Self {
+            version,
+            apps,
+            routing,
+            checks,
+            policies,
+        }
+    }
+
+    /// Return the config schema [`ConfigVersion`].
+    pub const fn version(&self) -> ConfigVersion {
+        self.version
+    }
+
+    /// Borrow the top-level [`AppConfigs`] section.
+    pub const fn apps(&self) -> &AppConfigs {
+        &self.apps
+    }
+
+    /// Borrow the top-level [`RoutingConfig`] section.
+    pub const fn routing(&self) -> &RoutingConfig {
+        &self.routing
+    }
+
+    /// Borrow the top-level [`CheckConfigs`] section.
+    pub const fn checks(&self) -> &CheckConfigs {
+        &self.checks
+    }
+
+    /// Borrow the top-level [`PolicyConfigs`] section.
+    pub const fn policies(&self) -> &PolicyConfigs {
+        &self.policies
+    }
+}
+
+impl Default for KplyConfig {
+    fn default() -> Self {
+        Self::new(
+            ConfigVersion::default(),
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::default(),
+        )
+    }
+}
+
+/// Top-level config schema version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ConfigVersion(u16);
+
+impl ConfigVersion {
+    /// Current provisional config schema version.
+    pub const CURRENT: Self = Self(1);
+
+    /// Create a config schema version.
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Return the numeric config schema version.
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl Default for ConfigVersion {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+/// Top-level application config collection.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AppConfigs {
+    entries: Vec<AppConfig>,
+}
+
+impl AppConfigs {
+    /// Create an application config collection.
+    pub fn new(entries: Vec<AppConfig>) -> Self {
+        Self { entries }
+    }
+
+    /// Borrow configured application entries.
+    pub fn entries(&self) -> &[AppConfig] {
+        &self.entries
+    }
+
+    /// Return true when no apps are configured.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Placeholder for a future app config entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppConfig;
+
+/// Top-level routing config section.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RoutingConfig;
+
+/// Top-level check config collection.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CheckConfigs {
+    entries: Vec<CheckConfig>,
+}
+
+impl CheckConfigs {
+    /// Create a check config collection.
+    pub fn new(entries: Vec<CheckConfig>) -> Self {
+        Self { entries }
+    }
+
+    /// Borrow configured check entries.
+    pub fn entries(&self) -> &[CheckConfig] {
+        &self.entries
+    }
+
+    /// Return true when no checks are configured.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Placeholder for a future check config entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckConfig;
+
+/// Top-level policy config collection.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PolicyConfigs {
+    entries: Vec<PolicyConfig>,
+}
+
+impl PolicyConfigs {
+    /// Create a policy config collection.
+    pub fn new(entries: Vec<PolicyConfig>) -> Self {
+        Self { entries }
+    }
+
+    /// Borrow configured policy entries.
+    pub fn entries(&self) -> &[PolicyConfig] {
+        &self.entries
+    }
+
+    /// Return true when no policies are configured.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Placeholder for a future policy config entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyConfig;
+
 /// Discover the nearest Kply project configuration from the current directory.
 pub fn discover_config_path() -> io::Result<Option<PathBuf>> {
     let current_dir = std::env::current_dir()?;
@@ -23,7 +199,10 @@ pub fn discover_config_path_from(start: impl AsRef<Path>) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CANONICAL_CONFIG_FILENAME, discover_config_path_from};
+    use super::{
+        AppConfig, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig, CheckConfigs, ConfigVersion,
+        KplyConfig, PolicyConfig, PolicyConfigs, RoutingConfig, discover_config_path_from,
+    };
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -35,6 +214,34 @@ mod tests {
     #[test]
     fn uses_kply_yaml_as_canonical_config_filename() {
         assert_eq!(CANONICAL_CONFIG_FILENAME, "kply.yaml");
+    }
+
+    #[test]
+    fn creates_top_level_config_with_explicit_sections() {
+        let config = KplyConfig::new(
+            ConfigVersion::new(7),
+            AppConfigs::new(vec![AppConfig]),
+            RoutingConfig,
+            CheckConfigs::new(vec![CheckConfig]),
+            PolicyConfigs::new(vec![PolicyConfig]),
+        );
+
+        assert_eq!(config.version().get(), 7);
+        assert_eq!(config.apps().entries(), &[AppConfig]);
+        assert_eq!(config.routing(), &RoutingConfig);
+        assert_eq!(config.checks().entries(), &[CheckConfig]);
+        assert_eq!(config.policies().entries(), &[PolicyConfig]);
+    }
+
+    #[test]
+    fn defaults_to_current_empty_top_level_config() {
+        let config = KplyConfig::default();
+
+        assert_eq!(config.version(), ConfigVersion::CURRENT);
+        assert!(config.apps().is_empty());
+        assert_eq!(config.routing(), &RoutingConfig);
+        assert!(config.checks().is_empty());
+        assert!(config.policies().is_empty());
     }
 
     #[test]
