@@ -56,7 +56,11 @@ pub enum Command {
     /// Print top-level help.
     Help,
     /// Manage future sandbox sessions.
-    Session,
+    Session {
+        /// Optional session command.
+        #[command(subcommand)]
+        command: Option<SessionCommand>,
+    },
     /// Inspect configured application targets.
     App {
         /// Optional application command.
@@ -84,7 +88,7 @@ pub enum Command {
 impl Command {
     /// Placeholder command groups that intentionally have no behavior yet.
     pub const PLACEHOLDER_GROUPS: &'static [Self] = &[
-        Self::Session,
+        Self::Session { command: None },
         Self::App { command: None },
         Self::Config { command: None },
         Self::Cluster { command: None },
@@ -96,12 +100,31 @@ impl Command {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Help => "help",
-            Self::Session => "session",
+            Self::Session { .. } => "session",
             Self::App { .. } => "app",
             Self::Config { .. } => "config",
             Self::Cluster { .. } => "cluster",
             Self::Completion => "completion",
             Self::Report => "report",
+        }
+    }
+}
+
+/// Sandbox session commands.
+#[derive(Clone, Debug, Subcommand)]
+pub enum SessionCommand {
+    /// Plan a future sandbox session for one configured app.
+    Plan {
+        /// Configured app name to plan.
+        app: String,
+    },
+}
+
+impl SessionCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Plan { .. } => "plan",
         }
     }
 }

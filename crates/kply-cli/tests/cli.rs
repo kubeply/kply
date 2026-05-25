@@ -6,6 +6,7 @@ use kply_cli::cli::Cli;
 use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
+use kply_cli::cli::SessionCommand;
 use kply_test::{
     EXIT_BLOCKING, EXIT_USAGE, assert_kply_exit_code, kply_cmd, normalize_output, temp_workspace,
     write_fake_kubeconfig, write_temp_file,
@@ -125,6 +126,44 @@ fn prints_command_group_json_placeholders() {
             serde_json::from_str(&output).expect("stdout should be JSON");
         insta::assert_json_snapshot!(format!("command_group_{command}_json"), value);
     }
+}
+
+#[test]
+fn prints_session_plan_placeholder_text() {
+    let output = kply_cmd()
+        .args(["session", "plan", "checkout"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_plan_placeholder_text", output);
+}
+
+#[test]
+fn prints_session_plan_placeholder_json() {
+    let output = kply_cmd()
+        .args(["session", "plan", "checkout", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("session_plan_placeholder_json", value);
+}
+
+#[test]
+fn suppresses_session_plan_placeholder_text_when_quiet() {
+    kply_cmd()
+        .args(["session", "plan", "checkout", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
 }
 
 #[test]
@@ -999,6 +1038,32 @@ fn covers_every_config_command() {
         .success();
     kply_cmd()
         .args(["config", ConfigCommand::Validate.name()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn covers_every_session_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("session")
+        .expect("session command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["plan"],
+        "update session command tests when the session command surface changes"
+    );
+
+    kply_cmd()
+        .args([
+            "session",
+            SessionCommand::Plan { app: String::new() }.name(),
+            "checkout",
+        ])
         .assert()
         .success();
 }
