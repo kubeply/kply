@@ -126,6 +126,9 @@ pub enum SessionCommand {
         /// Lifetime for the planned sandbox session.
         #[arg(long = "ttl", value_name = "DURATION")]
         time_to_live: Option<String>,
+        /// Route strategy override for the planned sandbox session.
+        #[arg(long, value_name = "STRATEGY")]
+        route_strategy: Option<String>,
     },
 }
 

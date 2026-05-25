@@ -66,6 +66,7 @@ fn run() -> Result<ExitCode> {
                     image,
                     namespace,
                     time_to_live,
+                    route_strategy,
                 }),
         }) => {
             return render_session_plan_placeholder(
@@ -74,6 +75,7 @@ fn run() -> Result<ExitCode> {
                 image.as_deref(),
                 namespace.as_deref(),
                 time_to_live.as_deref(),
+                route_strategy.as_deref(),
             );
         }
         Some(Command::Cluster {
@@ -133,6 +135,7 @@ fn render_session_plan_placeholder(
     image: Option<&str>,
     namespace: Option<&str>,
     time_to_live: Option<&str>,
+    route_strategy: Option<&str>,
 ) -> Result<ExitCode> {
     if cli.json {
         let value = serde_json::json!({
@@ -141,6 +144,7 @@ fn render_session_plan_placeholder(
             "image": image,
             "namespace": namespace,
             "ttl": time_to_live,
+            "route_strategy": route_strategy,
             "status": "placeholder"
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -154,6 +158,9 @@ fn render_session_plan_placeholder(
         }
         if let Some(time_to_live) = time_to_live {
             println!("TTL: {time_to_live}");
+        }
+        if let Some(route_strategy) = route_strategy {
+            println!("Route strategy: {route_strategy}");
         }
         println!("Session planning is defined but behavior is intentionally pending.");
     }
