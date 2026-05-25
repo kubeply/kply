@@ -1,7 +1,8 @@
 //! Configuration primitives for future Kply project and cluster settings.
 
 use serde::ser::{SerializeMap, SerializeSeq};
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
@@ -10,12 +11,18 @@ use std::{error, fmt};
 pub const CANONICAL_CONFIG_FILENAME: &str = "kply.yaml";
 
 /// Top-level Kply project configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KplyConfig {
+    #[serde(default)]
     version: ConfigVersion,
+    #[serde(default)]
     apps: AppConfigs,
+    #[serde(default)]
     routing: RoutingConfig,
+    #[serde(default)]
     checks: CheckConfigs,
+    #[serde(default)]
     policies: PolicyConfigs,
 }
 
@@ -195,6 +202,15 @@ impl fmt::Display for ConfigVersionError {
 
 impl error::Error for ConfigVersionError {}
 
+impl<'de> Deserialize<'de> for ConfigVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Self::new(u16::deserialize(deserializer)?))
+    }
+}
+
 /// Non-empty collection of config validation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigValidationErrors {
@@ -338,7 +354,8 @@ impl fmt::Display for AppConfigField {
 }
 
 /// Top-level application config collection.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(transparent)]
 pub struct AppConfigs {
     entries: Vec<AppConfig>,
 }
@@ -374,12 +391,14 @@ impl Serialize for AppConfigs {
 }
 
 /// Application target configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     name: String,
     namespace: String,
     workload: String,
     service: String,
+    #[serde(default)]
     default_image: Option<String>,
     route_strategy: RouteStrategy,
 }
@@ -483,7 +502,7 @@ fn push_empty_app_field_error(
 
 /// Routing strategy requested for an application target.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteStrategy {
     /// Route sandbox traffic by matching a request header.
@@ -506,7 +525,8 @@ impl RouteStrategy {
 }
 
 /// Top-level routing config section.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoutingConfig;
 
 impl Serialize for RoutingConfig {
@@ -519,7 +539,8 @@ impl Serialize for RoutingConfig {
 }
 
 /// Top-level check config collection.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(transparent)]
 pub struct CheckConfigs {
     entries: Vec<CheckConfig>,
 }
@@ -555,11 +576,13 @@ impl Serialize for CheckConfigs {
 }
 
 /// Placeholder for a future check config entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CheckConfig;
 
 /// Top-level policy config collection.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(transparent)]
 pub struct PolicyConfigs {
     entries: Vec<PolicyConfig>,
 }
@@ -595,8 +618,76 @@ impl Serialize for PolicyConfigs {
 }
 
 /// Placeholder for a future policy config entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyConfig;
+
+/// Load a Kply project configuration file from disk.
+///
+/// # Errors
+///
+/// Returns [`ConfigLoadError`] when the file cannot be read or parsed.
+pub fn load_config_path(path: impl AsRef<Path>) -> Result<KplyConfig, ConfigLoadError> {
+    let path = path.as_ref();
+    let contents = fs::read_to_string(path).map_err(|source| ConfigLoadError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_norway::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Error returned when loading a project configuration fails.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ConfigLoadError {
+    /// Config file could not be read.
+    Read {
+        /// Config file path that failed to read.
+        path: PathBuf,
+        /// Underlying filesystem read error.
+        source: io::Error,
+    },
+    /// Config file could not be parsed as YAML.
+    Parse {
+        /// Config file path that failed to parse.
+        path: PathBuf,
+        /// Underlying YAML parse error.
+        source: serde_norway::Error,
+    },
+}
+
+impl fmt::Display for ConfigLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, source } => {
+                write!(
+                    formatter,
+                    "failed to read config file `{}`: {source}",
+                    path.display()
+                )
+            }
+            Self::Parse { path, source } => {
+                write!(
+                    formatter,
+                    "failed to parse config file `{}`: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl error::Error for ConfigLoadError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Self::Read { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+        }
+    }
+}
 
 /// Discover the nearest Kply project configuration from the current directory.
 pub fn discover_config_path() -> io::Result<Option<PathBuf>> {
@@ -617,9 +708,9 @@ pub fn discover_config_path_from(start: impl AsRef<Path>) -> Option<PathBuf> {
 mod tests {
     use super::{
         AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
-        CheckConfigs, ConfigValidationError, ConfigValidationErrors, ConfigVersion,
-        ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig, PolicyConfigs,
-        RouteStrategy, RoutingConfig, discover_config_path_from,
+        CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
+        ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig,
+        PolicyConfigs, RouteStrategy, RoutingConfig, discover_config_path_from, load_config_path,
     };
     use std::env;
     use std::fs;
@@ -773,6 +864,113 @@ mod tests {
                 "route_strategy": "preview",
             })
         );
+    }
+
+    #[test]
+    fn deserializes_valid_config_yaml() {
+        let config: KplyConfig = serde_norway::from_str(
+            r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: registry.example.com/shop/checkout:test
+    route_strategy: header
+checks: []
+policies: []
+"#,
+        )
+        .expect("valid config YAML");
+
+        assert_eq!(config.version(), ConfigVersion::CURRENT);
+        assert_eq!(config.apps().entries(), &[app_config()]);
+        assert!(config.checks().is_empty());
+        assert!(config.policies().is_empty());
+    }
+
+    #[test]
+    fn deserializes_config_yaml_with_defaulted_sections() {
+        let config: KplyConfig = serde_norway::from_str(
+            r#"
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: preview
+"#,
+        )
+        .expect("config YAML with defaults");
+
+        assert_eq!(config.version(), ConfigVersion::CURRENT);
+        assert_eq!(config.apps().entries()[0].default_image(), None);
+        assert_eq!(
+            config.apps().entries()[0].route_strategy(),
+            RouteStrategy::Preview
+        );
+        assert!(config.checks().is_empty());
+        assert!(config.policies().is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_config_yaml_fields() {
+        let error = serde_norway::from_str::<KplyConfig>(
+            r#"
+version: 1
+unexpected: true
+"#,
+        )
+        .expect_err("unknown field should be rejected");
+
+        assert!(
+            error.to_string().contains("unknown field"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn loads_config_from_file() {
+        let workspace = TempDir::new().expect("temporary workspace");
+        let config_path = write_config_contents(
+            workspace.path(),
+            r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: host
+"#,
+        );
+
+        let config = load_config_path(config_path).expect("load config");
+
+        assert_eq!(
+            config.apps().entries()[0].route_strategy(),
+            RouteStrategy::Host
+        );
+    }
+
+    #[test]
+    fn reports_config_load_read_errors() {
+        let workspace = TempDir::new().expect("temporary workspace");
+        let error = load_config_path(workspace.path().join("missing.yaml"))
+            .expect_err("missing config should fail");
+
+        assert!(matches!(error, ConfigLoadError::Read { .. }));
+    }
+
+    #[test]
+    fn reports_config_load_parse_errors() {
+        let workspace = TempDir::new().expect("temporary workspace");
+        let config_path = write_config_contents(workspace.path(), "version: [");
+
+        let error = load_config_path(config_path).expect_err("malformed config should fail");
+
+        assert!(matches!(error, ConfigLoadError::Parse { .. }));
     }
 
     #[test]
@@ -1057,8 +1255,12 @@ mod tests {
     }
 
     fn write_config(directory: &Path) -> std::path::PathBuf {
+        write_config_contents(directory, "version: 1\n")
+    }
+
+    fn write_config_contents(directory: &Path, contents: &str) -> std::path::PathBuf {
         let config_path = directory.join(CANONICAL_CONFIG_FILENAME);
-        fs::write(&config_path, "version: 1\n").expect("config file");
+        fs::write(&config_path, contents).expect("config file");
         config_path
     }
 

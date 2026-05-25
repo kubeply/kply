@@ -103,6 +103,8 @@ impl Command {
 pub enum ConfigCommand {
     /// Show the resolved Kply configuration.
     Show,
+    /// Validate the resolved Kply configuration.
+    Validate,
 }
 
 impl ConfigCommand {
@@ -110,6 +112,7 @@ impl ConfigCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Show => "show",
+            Self::Validate => "validate",
         }
     }
 }

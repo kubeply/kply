@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_output(&stderr)
+---
+kply error: config
+
+failed to read config file `<config-path>`: No such file or directory (os error 2)

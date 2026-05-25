@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 174
+expression: output
+---
+kply config validate
+Config is valid.

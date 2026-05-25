@@ -4,7 +4,10 @@ use clap::CommandFactory;
 use kply_cli::cli::Cli;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
-use kply_test::{EXIT_USAGE, assert_kply_exit_code, kply_cmd};
+use kply_test::{
+    EXIT_BLOCKING, EXIT_USAGE, assert_kply_exit_code, kply_cmd, normalize_output, temp_workspace,
+    write_temp_file,
+};
 
 #[test]
 fn prints_placeholder_text() {
@@ -161,6 +164,245 @@ fn suppresses_config_show_text_when_quiet() {
 }
 
 #[test]
+fn rejects_unreadable_config_show_as_config_error() {
+    let workspace = temp_workspace();
+    let missing_config_path = workspace.path().join("missing").join("kply.yaml");
+    let missing_config = missing_config_path
+        .to_str()
+        .expect("missing config path should be UTF-8");
+
+    let output = assert_kply_exit_code(&["--config", missing_config, "config", "show"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "config load errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let stderr = stderr.replace(missing_config, "<config-path>");
+    insta::assert_snapshot!("config_show_load_error", normalize_output(&stderr));
+}
+
+#[test]
+fn prints_config_validate_text() {
+    let output = kply_cmd()
+        .args(["config", "validate"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("config_validate_text", output);
+}
+
+#[test]
+fn prints_config_validate_json() {
+    let output = kply_cmd()
+        .args(["config", "validate", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("config_validate_json", value);
+}
+
+#[test]
+fn rejects_unparseable_config_validate_as_json_config_error() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", "version: [");
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "config",
+            "validate",
+        ],
+        EXIT_USAGE,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "config load errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    assert_eq!(value["error"]["code"], "config");
+    assert_eq!(
+        value["error"]["exit_code"],
+        serde_json::Value::Number(EXIT_USAGE.into())
+    );
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .expect("message should be a string")
+            .contains("failed to parse config file"),
+        "config load JSON error should describe parse failure"
+    );
+}
+
+#[test]
+fn rejects_invalid_config_validate_text() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: ""
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "config",
+            "validate",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid config text output should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("config_validate_invalid_text", stderr);
+}
+
+#[test]
+fn rejects_invalid_config_validate_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: ""
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "config",
+            "validate",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid config JSON output should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("config_validate_invalid_json", value);
+}
+
+#[test]
+fn rejects_invalid_config_validate_json_when_quiet() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: ""
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--quiet",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "config",
+            "validate",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid quiet JSON output should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("config_validate_invalid_json_quiet", value);
+}
+
+#[test]
+fn rejects_invalid_config_validate_quiet() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: ""
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--quiet",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "config",
+            "validate",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "quiet output should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("config_validate_invalid_quiet", stderr);
+}
+
+#[test]
+fn suppresses_config_validate_text_when_quiet() {
+    kply_cmd()
+        .args(["config", "validate", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
 fn covers_every_top_level_command() {
     let mut command_names = Cli::command()
         .get_subcommands()
@@ -201,12 +443,16 @@ fn covers_every_config_command() {
 
     assert_eq!(
         command_names,
-        ["show"],
+        ["show", "validate"],
         "update config command tests when the config command surface changes"
     );
 
     kply_cmd()
         .args(["config", ConfigCommand::Show.name()])
+        .assert()
+        .success();
+    kply_cmd()
+        .args(["config", ConfigCommand::Validate.name()])
         .assert()
         .success();
 }

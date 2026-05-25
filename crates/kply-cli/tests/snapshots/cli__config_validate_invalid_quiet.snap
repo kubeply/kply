@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: config validation
+
+apps[0].workload: field is required
