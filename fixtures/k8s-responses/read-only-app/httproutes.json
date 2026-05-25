@@ -1,0 +1,82 @@
+{
+  "apiVersion": "gateway.networking.k8s.io/v1",
+  "kind": "HTTPRouteList",
+  "metadata": {
+    "resourceVersion": "1006"
+  },
+  "items": [
+    {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "HTTPRoute",
+      "metadata": {
+        "name": "checkout-route",
+        "namespace": "shop",
+        "uid": "33333333-4444-5555-6666-777777777777",
+        "resourceVersion": "789",
+        "generation": 1,
+        "creationTimestamp": "2024-01-15T10:00:00Z"
+      },
+      "spec": {
+        "hostnames": [
+          "checkout.example.com"
+        ],
+        "parentRefs": [
+          {
+            "kind": "Gateway",
+            "namespace": "shop",
+            "name": "public-gateway"
+          }
+        ],
+        "rules": [
+          {
+            "matches": [
+              {
+                "path": {
+                  "type": "PathPrefix",
+                  "value": "/"
+                }
+              }
+            ],
+            "backendRefs": [
+              {
+                "kind": "Service",
+                "namespace": "shop",
+                "name": "checkout-http",
+                "port": 80,
+                "weight": 1
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "parents": [
+          {
+            "parentRef": {
+              "kind": "Gateway",
+              "namespace": "shop",
+              "name": "public-gateway"
+            },
+            "controllerName": "example.com/gateway-controller",
+            "conditions": [
+              {
+                "type": "Accepted",
+                "status": "True",
+                "lastTransitionTime": "2024-01-15T10:01:00Z",
+                "reason": "Accepted",
+                "message": "Route is accepted"
+              },
+              {
+                "type": "ResolvedRefs",
+                "status": "True",
+                "lastTransitionTime": "2024-01-15T10:01:00Z",
+                "reason": "ResolvedRefs",
+                "message": "Backend references resolved"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

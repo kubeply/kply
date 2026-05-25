@@ -1,0 +1,108 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "DeploymentList",
+  "metadata": {
+    "resourceVersion": "1000"
+  },
+  "items": [
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "checkout-api",
+        "namespace": "shop",
+        "generation": 7,
+        "labels": {
+          "app.kubernetes.io/name": "checkout-api"
+        }
+      },
+      "spec": {
+        "replicas": 3,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "checkout-api"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/name": "checkout-api"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "checkout",
+                "image": "registry.example.com/shop/checkout:v2",
+                "ports": [
+                  {
+                    "name": "http",
+                    "containerPort": 8080
+                  }
+                ],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/ready",
+                    "port": "http",
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 2,
+                  "successThreshold": 1,
+                  "failureThreshold": 3
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": "http"
+                  },
+                  "initialDelaySeconds": 15,
+                  "periodSeconds": 20,
+                  "timeoutSeconds": 3,
+                  "successThreshold": 1,
+                  "failureThreshold": 5
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "256Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "512Mi"
+                  }
+                }
+              },
+              {
+                "name": "metrics",
+                "image": "registry.example.com/shop/metrics:v1"
+              }
+            ]
+          }
+        }
+      },
+      "status": {
+        "observedGeneration": 7,
+        "replicas": 3,
+        "readyReplicas": 3,
+        "availableReplicas": 3,
+        "updatedReplicas": 3,
+        "unavailableReplicas": 0,
+        "conditions": [
+          {
+            "type": "Progressing",
+            "status": "True",
+            "reason": "NewReplicaSetAvailable",
+            "message": "ReplicaSet checkout-api-7d9f4d9d is available"
+          },
+          {
+            "type": "Available",
+            "status": "True",
+            "reason": "MinimumReplicasAvailable",
+            "message": "Deployment has minimum availability"
+          }
+        ]
+      }
+    }
+  ]
+}

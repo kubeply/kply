@@ -1,0 +1,143 @@
+{
+  "apiVersion": "v1",
+  "kind": "PodList",
+  "metadata": {
+    "resourceVersion": "1002"
+  },
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "checkout-api-7d9f4d9d-x1",
+        "namespace": "shop",
+        "uid": "22222222-2222-2222-2222-222222222222",
+        "resourceVersion": "1001",
+        "creationTimestamp": "2024-01-15T10:30:00Z",
+        "labels": {
+          "app.kubernetes.io/name": "checkout-api",
+          "pod-template-hash": "7d9f4d9d"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "kind": "ReplicaSet",
+            "name": "checkout-api-7d9f4d9d",
+            "uid": "11111111-1111-1111-1111-111111111111",
+            "controller": true,
+            "blockOwnerDeletion": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "worker-a",
+        "containers": [
+          {
+            "name": "checkout",
+            "image": "registry.example.com/shop/checkout:v2",
+            "ports": [
+              {
+                "name": "http",
+                "containerPort": 8080,
+                "protocol": "TCP"
+              }
+            ],
+            "readinessProbe": {
+              "httpGet": {
+                "path": "/ready",
+                "port": "http",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 10,
+              "timeoutSeconds": 2,
+              "successThreshold": 1,
+              "failureThreshold": 3
+            },
+            "livenessProbe": {
+              "tcpSocket": {
+                "port": "http"
+              },
+              "initialDelaySeconds": 15,
+              "periodSeconds": 20,
+              "timeoutSeconds": 3,
+              "successThreshold": 1,
+              "failureThreshold": 5
+            },
+            "resources": {
+              "requests": {
+                "cpu": "250m",
+                "memory": "256Mi"
+              },
+              "limits": {
+                "cpu": "500m",
+                "memory": "512Mi"
+              }
+            }
+          },
+          {
+            "name": "metrics",
+            "image": "registry.example.com/shop/metrics:v1"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "podIP": "10.244.0.12",
+        "hostIP": "192.168.1.10",
+        "startTime": "2024-01-15T10:30:15Z",
+        "qosClass": "Burstable",
+        "conditions": [
+          {
+            "type": "Initialized",
+            "status": "True",
+            "lastTransitionTime": "2024-01-15T10:30:15Z"
+          },
+          {
+            "type": "Ready",
+            "status": "True",
+            "lastTransitionTime": "2024-01-15T10:30:25Z"
+          },
+          {
+            "type": "ContainersReady",
+            "status": "True",
+            "lastTransitionTime": "2024-01-15T10:30:25Z"
+          },
+          {
+            "type": "PodScheduled",
+            "status": "True",
+            "lastTransitionTime": "2024-01-15T10:30:15Z"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "name": "checkout",
+            "state": {
+              "running": {
+                "startedAt": "2024-01-15T10:30:20Z"
+              }
+            },
+            "ready": true,
+            "restartCount": 0,
+            "image": "registry.example.com/shop/checkout:v2",
+            "imageID": "registry.example.com/shop/checkout@sha256:abcd1234",
+            "containerID": "containerd://abc123"
+          },
+          {
+            "name": "metrics",
+            "state": {
+              "running": {
+                "startedAt": "2024-01-15T10:30:22Z"
+              }
+            },
+            "ready": true,
+            "restartCount": 0,
+            "image": "registry.example.com/shop/metrics:v1",
+            "imageID": "registry.example.com/shop/metrics@sha256:efgh5678",
+            "containerID": "containerd://def456"
+          }
+        ]
+      }
+    }
+  ]
+}

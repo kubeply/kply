@@ -1161,10 +1161,9 @@ mod tests {
     use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
     use kply_core::WorkloadRef;
     use kube::config::KubeConfigOptions;
-    use kube::core::DynamicObject;
+    use kube::core::{DynamicObject, ObjectList};
     use serde_json::json;
-    use std::collections::BTreeMap;
-    use std::env;
+    use std::{collections::BTreeMap, env, fs, path::Path};
     use tokio::sync::Mutex;
 
     static KUBECONFIG_ENV_LOCK: Mutex<()> = Mutex::const_new(());
@@ -1318,6 +1317,79 @@ mod tests {
         assert_eq!(rollout.desired_replicas, Some(3));
         assert_eq!(rollout.available_replicas, Some(0));
         assert_eq!(rollout.unavailable_replicas, Some(3));
+    }
+
+    #[test]
+    fn loads_read_only_app_kubernetes_response_fixtures() {
+        let deployments =
+            read_k8s_response_fixture::<ObjectList<Deployment>>("read-only-app/deployments.json");
+        let services =
+            read_k8s_response_fixture::<ObjectList<Service>>("read-only-app/services.json");
+        let pods = read_k8s_response_fixture::<ObjectList<Pod>>("read-only-app/pods.json");
+        let ingresses =
+            read_k8s_response_fixture::<ObjectList<Ingress>>("read-only-app/ingresses.json");
+        let gateway_classes = read_k8s_response_fixture::<ObjectList<DynamicObject>>(
+            "read-only-app/gatewayclasses.json",
+        );
+        let gateways =
+            read_k8s_response_fixture::<ObjectList<DynamicObject>>("read-only-app/gateways.json");
+        let http_routes =
+            read_k8s_response_fixture::<ObjectList<DynamicObject>>("read-only-app/httproutes.json");
+
+        let deployment = deployment_summary(
+            deployments
+                .items
+                .first()
+                .expect("deployments fixture should contain at least one item"),
+        );
+        let service = service_summary(
+            services
+                .items
+                .first()
+                .expect("services fixture should contain at least one item"),
+        );
+        let pod = pod_summary(
+            pods.items
+                .first()
+                .expect("pods fixture should contain at least one item"),
+        );
+        let ingress = ingress_summary(
+            ingresses
+                .items
+                .first()
+                .expect("ingresses fixture should contain at least one item"),
+        );
+        let gateway_class = gateway_class_summary(
+            gateway_classes
+                .items
+                .first()
+                .expect("gateway_classes fixture should contain at least one item"),
+        );
+        let gateway = gateway_summary(
+            gateways
+                .items
+                .first()
+                .expect("gateways fixture should contain at least one item"),
+        );
+        let http_route = http_route_summary(
+            http_routes
+                .items
+                .first()
+                .expect("http_routes fixture should contain at least one item"),
+        );
+
+        kply_test::insta::assert_json_snapshot!(
+            "read_only_app_kubernetes_response_summaries",
+            json!({
+                "deployment": deployment,
+                "service": service,
+                "pod": pod,
+                "ingress": ingress,
+                "gateway_class": gateway_class,
+                "gateway": gateway,
+                "http_route": http_route,
+            })
+        );
     }
 
     #[test]
@@ -1951,6 +2023,26 @@ current-context: context-a
                 ..DeploymentStatus::default()
             }),
         }
+    }
+
+    fn read_k8s_response_fixture<T>(relative_path: &str) -> T
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let fixture_path = kply_test::fixture_path(Path::new("k8s-responses").join(relative_path));
+        let source = fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
+            panic!(
+                "Kubernetes response fixture {} should be readable: {error}",
+                fixture_path.display()
+            )
+        });
+
+        serde_json::from_str(&source).unwrap_or_else(|error| {
+            panic!(
+                "Kubernetes response fixture {} should deserialize: {error}",
+                fixture_path.display()
+            )
+        })
     }
 
     fn fake_ready_deployment(namespace: &str, name: &str) -> Deployment {
