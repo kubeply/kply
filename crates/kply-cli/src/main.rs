@@ -7,8 +7,8 @@ use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand};
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, load_config_path,
 };
+use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
-use std::fmt::Display;
 use std::process::ExitCode;
 
 const EXIT_USAGE: i32 = 2;
@@ -342,19 +342,19 @@ fn render_config_load_error(error: &ConfigLoadError, wants_json: bool) -> Result
 }
 
 /// Render kubeconfig resolution errors as user-facing usage/auth errors.
-fn render_kubeconfig_error(error: &impl Display, wants_json: bool) -> Result<ExitCode> {
-    let message = error.to_string();
+fn render_kubeconfig_error(error: &KubeconfigError, wants_json: bool) -> Result<ExitCode> {
+    let error = kply_k8s::DiscoveryError::from_kubeconfig_error(error);
     if wants_json {
         let value = serde_json::json!({
             "error": {
-                "code": "kubernetes_config",
+                "code": error.code.as_str(),
                 "exit_code": EXIT_USAGE,
-                "message": message
+                "message": error.message
             }
         });
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
-        eprintln!("kply error: kubernetes config\n\n{message}");
+        eprintln!("kply error: {}\n\n{}", error.code.as_str(), error.message);
     }
 
     Ok(exit_code(EXIT_USAGE))
