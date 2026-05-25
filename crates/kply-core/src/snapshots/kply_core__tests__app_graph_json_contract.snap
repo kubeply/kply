@@ -7,5 +7,15 @@ expression: test_app_graph()
     "namespace": "checkout",
     "kind": "Deployment",
     "name": "checkout-api"
-  }
+  },
+  "owned_pods": [
+    {
+      "namespace": "checkout",
+      "name": "checkout-api-7d9f4d9d-a"
+    },
+    {
+      "namespace": "checkout",
+      "name": "checkout-api-7d9f4d9d-b"
+    }
+  ]
 }

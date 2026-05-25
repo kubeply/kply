@@ -66,13 +66,15 @@ snapshots in the same pull request.
 
 The current `kply-core` app graph model defines the first pre-`1.0.0` graph
 contract. It is independent from raw Kubernetes client types and currently
-contains only the root workload. Future roadmap tasks will add workload-to-pod,
-workload-to-service, service-to-route, fact, confidence, and warning
-relationships.
+contains the root workload and Pods directly owned by that workload. Future
+roadmap tasks will add workload-to-service, service-to-route, fact, confidence,
+and warning relationships.
 
 Current provisional pre-`1.0.0` app graph fields:
 
 - `workload`: root workload object with `namespace`, `kind`, and `name`.
+- `owned_pods`: list of Pod references owned by the root workload, serialized
+  in deterministic order.
 
 Current provisional pre-`1.0.0` session plan fields:
 
