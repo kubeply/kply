@@ -102,7 +102,8 @@ Current provisional pre-`1.0.0` app graph fields:
   order. Current warnings include `ambiguous_service_selector`, which names the
   Service and candidate workloads when a selector is not specific enough, and
   `missing_route`, which names a selected Service with no discovered route
-  reference.
+  reference, and `missing_probes`, which names a container and enumerates probe
+  kinds not discovered for it.
 
 Current provisional pre-`1.0.0` session plan fields:
 

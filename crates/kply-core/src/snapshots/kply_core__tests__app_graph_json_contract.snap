@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 4554
+assertion_line: 4695
 expression: test_app_graph()
 ---
 {
@@ -294,6 +294,21 @@ expression: test_app_graph()
         "namespace": "checkout",
         "name": "checkout-api-private"
       }
+    },
+    {
+      "kind": "missing_probes",
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "worker"
+      },
+      "missing_probes": [
+        "readiness",
+        "startup"
+      ]
     }
   ]
 }

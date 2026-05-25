@@ -657,6 +657,35 @@ impl ProbeFacts {
     }
 }
 
+/// Kubernetes container probe kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeKind {
+    /// Readiness probe kind.
+    Readiness,
+    /// Liveness probe kind.
+    Liveness,
+    /// Startup probe kind.
+    Startup,
+}
+
+impl ProbeKind {
+    /// Return the stable serialized probe kind name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Readiness => "readiness",
+            Self::Liveness => "liveness",
+            Self::Startup => "startup",
+        }
+    }
+}
+
+impl fmt::Display for ProbeKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Image facts discovered for a workload container.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ImageFacts {
@@ -911,6 +940,11 @@ pub enum AppGraphWarning {
     },
     /// A selected Service has no discovered route reference.
     MissingRoute { service: ServiceRef },
+    /// A [`ContainerRef`] is missing one or more [`ProbeKind`] entries.
+    MissingProbes {
+        container: ContainerRef,
+        missing_probes: Vec<ProbeKind>,
+    },
 }
 
 impl AppGraphWarning {
@@ -932,6 +966,20 @@ impl AppGraphWarning {
     pub fn missing_route(service: ServiceRef) -> Self {
         Self::MissingRoute { service }
     }
+
+    /// Create a missing probes warning with deterministic [`ProbeKind`] entries.
+    pub fn missing_probes(
+        container: ContainerRef,
+        missing_probes: impl IntoIterator<Item = ProbeKind>,
+    ) -> Self {
+        let mut missing_probes = missing_probes.into_iter().collect::<Vec<_>>();
+        missing_probes.sort_unstable();
+        missing_probes.dedup();
+        Self::MissingProbes {
+            container,
+            missing_probes,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraphWarning {
@@ -948,6 +996,10 @@ impl<'de> Deserialize<'de> for AppGraphWarning {
                 candidate_workloads,
             )),
             AppGraphWarningFields::MissingRoute { service } => Ok(Self::missing_route(service)),
+            AppGraphWarningFields::MissingProbes {
+                container,
+                missing_probes,
+            } => Ok(Self::missing_probes(container, missing_probes)),
         }
     }
 }
@@ -2388,6 +2440,10 @@ enum AppGraphWarningFields {
     MissingRoute {
         service: ServiceRef,
     },
+    MissingProbes {
+        container: ContainerRef,
+        missing_probes: Vec<ProbeKind>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -2807,7 +2863,7 @@ mod tests {
     use super::{
         AppGraph, AppGraphWarning, ConfidenceLevel, ConfigMapRef, ConfigMapRefError,
         ConfigReference, ContainerRef, ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN,
-        ImageFacts, ImageRef, ImageRefError, PodRef, PodRefError, ProbeFacts,
+        ImageFacts, ImageRef, ImageRefError, PodRef, PodRefError, ProbeFacts, ProbeKind,
         RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
         ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts,
         ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
@@ -3102,6 +3158,28 @@ mod tests {
             AppGraphWarning::missing_route(
                 ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
             ),
+            AppGraphWarning::missing_probes(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                [
+                    ProbeKind::Startup,
+                    ProbeKind::Readiness,
+                    ProbeKind::Readiness,
+                ],
+            ),
+            AppGraphWarning::missing_probes(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                [ProbeKind::Readiness, ProbeKind::Startup],
+            ),
         ])
     }
 
@@ -3342,6 +3420,14 @@ mod tests {
         assert!(facts.readiness_probe());
         assert!(!facts.liveness_probe());
         assert!(facts.startup_probe());
+    }
+
+    #[test]
+    fn renders_probe_kind_names() {
+        assert_eq!(ProbeKind::Readiness.as_str(), "readiness");
+        assert_eq!(ProbeKind::Liveness.as_str(), "liveness");
+        assert_eq!(ProbeKind::Startup.as_str(), "startup");
+        assert_eq!(ProbeKind::Startup.to_string(), "startup");
     }
 
     #[test]
@@ -3732,6 +3818,31 @@ mod tests {
     }
 
     #[test]
+    fn creates_missing_probes_warning_in_stable_order() {
+        let warning = AppGraphWarning::missing_probes(
+            ContainerRef::new(
+                WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+                "worker",
+            )
+            .expect("container ref"),
+            [ProbeKind::Startup, ProbeKind::Readiness, ProbeKind::Startup],
+        );
+
+        assert_eq!(
+            warning,
+            AppGraphWarning::MissingProbes {
+                container: ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                missing_probes: vec![ProbeKind::Readiness, ProbeKind::Startup],
+            }
+        );
+    }
+
+    #[test]
     fn records_warnings_in_stable_order() {
         let graph = test_app_graph();
 
@@ -3750,6 +3861,15 @@ mod tests {
                 AppGraphWarning::MissingRoute {
                     service: ServiceRef::new("checkout", "checkout-api-private")
                         .expect("service ref"),
+                },
+                AppGraphWarning::MissingProbes {
+                    container: ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    missing_probes: vec![ProbeKind::Readiness, ProbeKind::Startup],
                 },
             ]
         );
@@ -4492,6 +4612,18 @@ mod tests {
                         "namespace": "checkout",
                         "name": "checkout-api-private"
                     }
+                },
+                {
+                    "kind": "missing_probes",
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "worker"
+                    },
+                    "missing_probes": ["startup", "readiness", "startup"]
                 }
             ]
         });
@@ -4513,6 +4645,15 @@ mod tests {
                 AppGraphWarning::MissingRoute {
                     service: ServiceRef::new("checkout", "checkout-api-private")
                         .expect("service ref"),
+                },
+                AppGraphWarning::MissingProbes {
+                    container: ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    missing_probes: vec![ProbeKind::Readiness, ProbeKind::Startup],
                 },
             ]
         );
