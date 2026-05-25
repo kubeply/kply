@@ -11,7 +11,8 @@ expression: value
       "namespace": "shop",
       "route_strategy": "header",
       "service": "checkout-http",
-      "workload": "checkout-api"
+      "workload": "checkout-api",
+      "workload_kind": "Deployment"
     }
   ]
 }

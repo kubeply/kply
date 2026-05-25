@@ -116,6 +116,11 @@ pub enum AppCommand {
         /// Configured app name to inspect.
         app: String,
     },
+    /// Print one configured application graph as JSON.
+    Graph {
+        /// Configured app name to graph.
+        app: String,
+    },
 }
 
 impl AppCommand {
@@ -124,6 +129,7 @@ impl AppCommand {
         match self {
             Self::List => "list",
             Self::Inspect { .. } => "inspect",
+            Self::Graph { .. } => "graph",
         }
     }
 }

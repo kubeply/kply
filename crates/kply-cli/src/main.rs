@@ -7,6 +7,9 @@ use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand};
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, load_config_path,
 };
+use kply_core::{
+    AppGraph, ConfidenceLevel, GraphRelationship, RelationshipConfidence, ServiceRef, WorkloadRef,
+};
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
 use std::process::ExitCode;
@@ -53,6 +56,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::App {
             command: Some(AppCommand::Inspect { app }),
         }) => return render_app_inspect(&cli, app),
+        Some(Command::App {
+            command: Some(AppCommand::Graph { app }),
+        }) => return render_app_graph(&cli, app),
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
@@ -199,6 +205,84 @@ fn render_app_inspect(cli: &Cli, app_name: &str) -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render one configured application graph as stable JSON.
+fn render_app_graph(cli: &Cli, app_name: &str) -> Result<ExitCode> {
+    if !cli.json {
+        return render_app_graph_requires_json_error();
+    }
+
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+
+    let Some(app) = config
+        .apps()
+        .entries()
+        .iter()
+        .find(|app| app.name() == app_name)
+    else {
+        return render_app_not_found_error(app_name, cli.json);
+    };
+
+    let graph = match app_graph_from_config(app) {
+        Ok(graph) => graph,
+        Err(message) => return render_app_graph_config_error(&message),
+    };
+
+    println!("{}", serde_json::to_string_pretty(&graph)?);
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Build a provisional app graph from static app configuration.
+fn app_graph_from_config(app: &AppConfig) -> Result<AppGraph, String> {
+    let workload = WorkloadRef::new(app.namespace(), app.workload_kind(), app.workload()).map_err(
+        |error| {
+            format!(
+                "invalid configured workload `{}/{}`: {error}",
+                app.workload_kind(),
+                app.workload()
+            )
+        },
+    )?;
+    let service = ServiceRef::new(app.namespace(), app.service())
+        .map_err(|error| format!("invalid configured service `{}`: {error}", app.service()))?;
+    let service_relationship = GraphRelationship::WorkloadServiceSelection {
+        service: service.clone(),
+    };
+
+    Ok(AppGraph::new(workload)
+        .with_selecting_services([service])
+        .with_relationship_confidences([RelationshipConfidence::new(
+            service_relationship,
+            ConfidenceLevel::High,
+        )]))
+}
+
+/// Render the provisional app graph JSON-only contract.
+fn render_app_graph_requires_json_error() -> Result<ExitCode> {
+    eprintln!("kply error: usage\n\nkply app graph currently requires --json");
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render an app graph config-to-domain conversion error.
+fn render_app_graph_config_error(message: &str) -> Result<ExitCode> {
+    let value = serde_json::json!({
+        "error": {
+            "code": "config",
+            "exit_code": EXIT_BLOCKING,
+            "message": message
+        }
+    });
+    eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(exit_code(EXIT_BLOCKING))
 }
 
 /// Render a missing configured app as an input error.

@@ -7,6 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
+const DEFAULT_WORKLOAD_KIND: &str = "Deployment";
+
 /// Canonical Kply project configuration filename.
 pub const CANONICAL_CONFIG_FILENAME: &str = "kply.yaml";
 
@@ -328,6 +330,8 @@ pub enum AppConfigField {
     Namespace,
     /// App `workload` field.
     Workload,
+    /// App `workload_kind` field.
+    WorkloadKind,
     /// App `service` field.
     Service,
     /// App `default_image` field.
@@ -341,6 +345,7 @@ impl AppConfigField {
             Self::Name => "name",
             Self::Namespace => "namespace",
             Self::Workload => "workload",
+            Self::WorkloadKind => "workload_kind",
             Self::Service => "service",
             Self::DefaultImage => "default_image",
         }
@@ -397,6 +402,8 @@ pub struct AppConfig {
     name: String,
     namespace: String,
     workload: String,
+    #[serde(default = "default_workload_kind")]
+    workload_kind: String,
     service: String,
     #[serde(default)]
     default_image: Option<String>,
@@ -417,6 +424,7 @@ impl AppConfig {
             name: name.into(),
             namespace: namespace.into(),
             workload: workload.into(),
+            workload_kind: default_workload_kind(),
             service: service.into(),
             default_image,
             route_strategy,
@@ -436,6 +444,17 @@ impl AppConfig {
     /// Borrow the Kubernetes workload name for the app.
     pub fn workload(&self) -> &str {
         &self.workload
+    }
+
+    /// Borrow the Kubernetes workload kind for the app.
+    pub fn workload_kind(&self) -> &str {
+        &self.workload_kind
+    }
+
+    /// Return a copy of this app config with an explicit workload kind.
+    pub fn with_workload_kind(mut self, workload_kind: impl Into<String>) -> Self {
+        self.workload_kind = workload_kind.into();
+        self
     }
 
     /// Borrow the Kubernetes service name for the app.
@@ -472,6 +491,12 @@ impl AppConfig {
         push_empty_app_field_error(
             &mut errors,
             app_index,
+            AppConfigField::WorkloadKind,
+            self.workload_kind(),
+        );
+        push_empty_app_field_error(
+            &mut errors,
+            app_index,
             AppConfigField::Service,
             self.service(),
         );
@@ -487,6 +512,10 @@ impl AppConfig {
 
         errors
     }
+}
+
+fn default_workload_kind() -> String {
+    DEFAULT_WORKLOAD_KIND.to_owned()
 }
 
 fn push_empty_app_field_error(
@@ -870,6 +899,7 @@ mod tests {
                         "name": "checkout",
                         "namespace": "shop",
                         "workload": "checkout-api",
+                        "workload_kind": "Deployment",
                         "service": "checkout-http",
                         "default_image": "registry.example.com/shop/checkout:test",
                         "route_strategy": "header",
@@ -901,6 +931,7 @@ mod tests {
                 "name": "checkout",
                 "namespace": "shop",
                 "workload": "checkout-api",
+                "workload_kind": "Deployment",
                 "service": "checkout-http",
                 "default_image": null,
                 "route_strategy": "preview",
@@ -1225,14 +1256,17 @@ apps:
     fn reports_empty_app_fields_with_paths() {
         let config = KplyConfig::new(
             ConfigVersion::CURRENT,
-            AppConfigs::new(vec![AppConfig::new(
-                "",
-                " ",
-                "\t",
-                "",
-                Some(" ".to_string()),
-                RouteStrategy::Header,
-            )]),
+            AppConfigs::new(vec![
+                AppConfig::new(
+                    "",
+                    " ",
+                    "\t",
+                    "",
+                    Some(" ".to_string()),
+                    RouteStrategy::Header,
+                )
+                .with_workload_kind(" "),
+            ]),
             RoutingConfig,
             CheckConfigs::default(),
             PolicyConfigs::default(),
@@ -1257,6 +1291,10 @@ apps:
                 },
                 ConfigValidationError::EmptyAppField {
                     app_index: 0,
+                    field: AppConfigField::WorkloadKind,
+                },
+                ConfigValidationError::EmptyAppField {
+                    app_index: 0,
                     field: AppConfigField::Service,
                 },
                 ConfigValidationError::EmptyAppField {
@@ -1267,7 +1305,7 @@ apps:
         );
         assert_eq!(
             errors.to_string(),
-            "5 config validation errors; first error: apps[0].name: field is required"
+            "6 config validation errors; first error: apps[0].name: field is required"
         );
     }
 
@@ -1320,6 +1358,7 @@ apps:
         assert_eq!(AppConfigField::Name.as_str(), "name");
         assert_eq!(AppConfigField::Namespace.as_str(), "namespace");
         assert_eq!(AppConfigField::Workload.as_str(), "workload");
+        assert_eq!(AppConfigField::WorkloadKind.as_str(), "workload_kind");
         assert_eq!(AppConfigField::Service.as_str(), "service");
         assert_eq!(AppConfigField::DefaultImage.as_str(), "default_image");
     }
@@ -1331,6 +1370,7 @@ apps:
         assert_eq!(config.name(), "checkout");
         assert_eq!(config.namespace(), "shop");
         assert_eq!(config.workload(), "checkout-api");
+        assert_eq!(config.workload_kind(), "Deployment");
         assert_eq!(config.service(), "checkout-http");
         assert_eq!(
             config.default_image(),
@@ -1351,7 +1391,23 @@ apps:
         );
 
         assert_eq!(config.default_image(), None);
+        assert_eq!(config.workload_kind(), "Deployment");
         assert_eq!(config.route_strategy(), RouteStrategy::Host);
+    }
+
+    #[test]
+    fn creates_app_config_with_explicit_workload_kind() {
+        let config = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            None,
+            RouteStrategy::Host,
+        )
+        .with_workload_kind("StatefulSet");
+
+        assert_eq!(config.workload_kind(), "StatefulSet");
     }
 
     #[test]

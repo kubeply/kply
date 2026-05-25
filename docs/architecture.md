@@ -222,6 +222,8 @@ Application config entries define these fields:
 - `name`: Kply app name used by humans and agents.
 - `namespace`: Kubernetes namespace containing the app.
 - `workload`: Kubernetes workload name.
+- `workload_kind`: optional Kubernetes workload kind such as `Deployment`,
+  `StatefulSet`, or `DaemonSet`, defaulting to `Deployment`.
 - `service`: Kubernetes service name used for routed traffic.
 - `default_image`: optional default sandbox image.
 - `route_strategy`: requested sandbox route strategy.

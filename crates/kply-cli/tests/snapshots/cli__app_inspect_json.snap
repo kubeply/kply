@@ -9,5 +9,6 @@ expression: value
   "namespace": "shop",
   "route_strategy": "preview",
   "service": "catalog-http",
-  "workload": "catalog-api"
+  "workload": "catalog-api",
+  "workload_kind": "Deployment"
 }
