@@ -1,6 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 264
+assertion_line: 300
 expression: value
 ---
 {
@@ -8,7 +8,7 @@ expression: value
   "command": "session plan",
   "image": null,
   "namespace": null,
-  "route_strategy": null,
+  "route_strategy": "header",
   "status": "placeholder",
-  "ttl": "30m"
+  "ttl": null
 }

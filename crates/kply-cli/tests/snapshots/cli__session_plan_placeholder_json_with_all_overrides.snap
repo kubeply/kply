@@ -1,6 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 369
+assertion_line: 406
 expression: value
 ---
 {
@@ -8,6 +8,7 @@ expression: value
   "command": "session plan",
   "image": "ghcr.io/kubeply/checkout:v2",
   "namespace": "staging",
+  "route_strategy": "header",
   "status": "placeholder",
   "ttl": "30m"
 }
