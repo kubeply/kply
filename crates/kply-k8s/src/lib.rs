@@ -5,6 +5,7 @@ use std::path::Path;
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{Container, Pod, Probe, Service};
 use k8s_openapi::api::networking::v1::{Ingress, IngressBackend};
+use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kply_core::WorkloadRef;
 use kube::{
@@ -44,6 +45,8 @@ pub struct DeploymentSummary {
     pub images: Vec<String>,
     /// Readiness and liveness probes in pod template container order.
     pub probes: Vec<ContainerProbeSummary>,
+    /// Resource requests and limits in pod template container order.
+    pub resources: Vec<ContainerResourceSummary>,
     /// Basic rollout status derived from Deployment status.
     pub rollout: DeploymentRolloutSummary,
 }
@@ -165,6 +168,26 @@ pub enum ProbeHandlerSummary {
     Unknown,
 }
 
+/// Read-only resource request and limit metadata for one container.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ContainerResourceSummary {
+    /// Container name.
+    pub container_name: String,
+    /// Resource requests in deterministic resource-name order.
+    pub requests: Vec<ResourceQuantitySummary>,
+    /// Resource limits in deterministic resource-name order.
+    pub limits: Vec<ResourceQuantitySummary>,
+}
+
+/// One Kubernetes resource quantity value.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ResourceQuantitySummary {
+    /// Resource name, such as `cpu` or `memory`.
+    pub name: String,
+    /// Kubernetes quantity string.
+    pub quantity: String,
+}
+
 /// Read-only summary of a Kubernetes Service.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ServiceSummary {
@@ -221,6 +244,8 @@ pub struct PodSummary {
     pub images: Vec<String>,
     /// Readiness and liveness probes in pod spec container order.
     pub probes: Vec<ContainerProbeSummary>,
+    /// Resource requests and limits in pod spec container order.
+    pub resources: Vec<ContainerResourceSummary>,
     /// Owner references in manifest order.
     pub owner_references: Vec<OwnerReferenceSummary>,
 }
@@ -549,6 +574,10 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         .and_then(|spec| spec.template.spec.as_ref())
         .map(|pod_spec| container_probe_summaries(&pod_spec.containers))
         .unwrap_or_default();
+    let resources = spec
+        .and_then(|spec| spec.template.spec.as_ref())
+        .map(|pod_spec| container_resource_summaries(&pod_spec.containers))
+        .unwrap_or_default();
 
     DeploymentSummary {
         namespace: deployment.namespace().unwrap_or_default(),
@@ -559,6 +588,7 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         updated_replicas: status.and_then(|status| status.updated_replicas),
         images,
         probes,
+        resources,
         rollout: deployment_rollout_summary(deployment),
     }
 }
@@ -706,6 +736,36 @@ fn probe_handler_summary(probe: &Probe) -> ProbeHandlerSummary {
     }
 
     ProbeHandlerSummary::Unknown
+}
+
+fn container_resource_summaries(containers: &[Container]) -> Vec<ContainerResourceSummary> {
+    containers
+        .iter()
+        .filter_map(|container| {
+            let resources = container.resources.as_ref()?;
+            let requests = resource_quantity_summaries(resources.requests.as_ref());
+            let limits = resource_quantity_summaries(resources.limits.as_ref());
+
+            (!requests.is_empty() || !limits.is_empty()).then(|| ContainerResourceSummary {
+                container_name: container.name.clone(),
+                requests,
+                limits,
+            })
+        })
+        .collect()
+}
+
+fn resource_quantity_summaries(
+    quantities: Option<&std::collections::BTreeMap<String, Quantity>>,
+) -> Vec<ResourceQuantitySummary> {
+    quantities
+        .into_iter()
+        .flat_map(|quantities| quantities.iter())
+        .map(|(name, quantity)| ResourceQuantitySummary {
+            name: name.clone(),
+            quantity: quantity.0.clone(),
+        })
+        .collect()
 }
 
 /// Convert a Kubernetes [`Ingress`] into a deterministic summary.
@@ -915,6 +975,9 @@ pub fn pod_summary(pod: &Pod) -> PodSummary {
     let probes = spec
         .map(|spec| container_probe_summaries(&spec.containers))
         .unwrap_or_default();
+    let resources = spec
+        .map(|spec| container_resource_summaries(&spec.containers))
+        .unwrap_or_default();
     let owner_references = pod
         .metadata
         .owner_references
@@ -937,6 +1000,7 @@ pub fn pod_summary(pod: &Pod) -> PodSummary {
         pod_ip: status.and_then(|status| status.pod_ip.clone()),
         images,
         probes,
+        resources,
         owner_references,
     }
 }
@@ -1068,28 +1132,29 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterInfo, ContainerProbeSummary, DeploymentConditionSummary, DeploymentRolloutPhase,
-        DeploymentRolloutSummary, DeploymentSummary, GatewayClassSummary, GatewayListenerSummary,
-        GatewaySummary, HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary,
-        IngressBackendSummary, IngressPathSummary, IngressRuleSummary, IngressSummary,
-        IngressTlsSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
-        ProbeHandlerSummary, ProbeSummary, RouteParentRefSummary, ServicePortSummary,
-        ServiceSummary, deployment_rollout_summary, deployment_summary, gateway_api_resource,
-        gateway_class_summary, gateway_summary, http_route_summary, ingress_summary,
-        load_kube_config_path, load_kube_config_with_options, pod_is_owned_by_workload,
-        pod_summary, service_summary,
+        ClusterInfo, ContainerProbeSummary, ContainerResourceSummary, DeploymentConditionSummary,
+        DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, GatewayClassSummary,
+        GatewayListenerSummary, GatewaySummary, HttpRouteBackendRefSummary, HttpRouteRuleSummary,
+        HttpRouteSummary, IngressBackendSummary, IngressPathSummary, IngressRuleSummary,
+        IngressSummary, IngressTlsSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
+        ProbeHandlerSummary, ProbeSummary, ResourceQuantitySummary, RouteParentRefSummary,
+        ServicePortSummary, ServiceSummary, deployment_rollout_summary, deployment_summary,
+        gateway_api_resource, gateway_class_summary, gateway_summary, http_route_summary,
+        ingress_summary, load_kube_config_path, load_kube_config_with_options,
+        pod_is_owned_by_workload, pod_summary, service_summary,
     };
     use k8s_openapi::api::apps::v1::{
         Deployment, DeploymentCondition, DeploymentSpec, DeploymentStatus,
     };
     use k8s_openapi::api::core::v1::{
         Container, HTTPGetAction, HTTPHeader, Pod, PodSpec, PodStatus, PodTemplateSpec, Probe,
-        Service, ServicePort, ServiceSpec, TCPSocketAction,
+        ResourceRequirements, Service, ServicePort, ServiceSpec, TCPSocketAction,
     };
     use k8s_openapi::api::networking::v1::{
         HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule,
         IngressServiceBackend, IngressSpec, IngressTLS, ServiceBackendPort,
     };
+    use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{
         LabelSelector, ObjectMeta, OwnerReference,
     };
@@ -1148,6 +1213,7 @@ mod tests {
                     readiness: Some(http_probe_summary("/ready", "http")),
                     liveness: Some(tcp_probe_summary(8080)),
                 }],
+                resources: vec![checkout_resource_summary("checkout-v2")],
                 rollout: DeploymentRolloutSummary {
                     phase: DeploymentRolloutPhase::Progressing,
                     generation: Some(2),
@@ -1199,6 +1265,7 @@ mod tests {
                 updated_replicas: None,
                 images: Vec::new(),
                 probes: Vec::new(),
+                resources: Vec::new(),
                 rollout: DeploymentRolloutSummary {
                     phase: DeploymentRolloutPhase::Unknown,
                     generation: None,
@@ -1285,6 +1352,7 @@ mod tests {
                     readiness: Some(http_probe_summary("/ready", "http")),
                     liveness: Some(tcp_probe_summary(8080)),
                 }],
+                resources: vec![checkout_resource_summary("checkout")],
                 owner_references: vec![OwnerReferenceSummary {
                     kind: "ReplicaSet".to_owned(),
                     name: "checkout-api-7f7c8d9b9d".to_owned(),
@@ -1317,6 +1385,7 @@ mod tests {
                 pod_ip: None,
                 images: Vec::new(),
                 probes: Vec::new(),
+                resources: Vec::new(),
                 owner_references: Vec::new(),
             }
         );
@@ -1848,6 +1917,7 @@ current-context: context-a
                                 readiness_probe: image
                                     .starts_with("checkout:")
                                     .then(|| http_probe("/ready", "http")),
+                                resources: image.starts_with("checkout:").then(checkout_resources),
                                 ..Container::default()
                             })
                             .collect(),
@@ -1941,6 +2011,7 @@ current-context: context-a
                         liveness_probe: (*name == "checkout").then(|| tcp_probe(8080)),
                         readiness_probe: (*name == "checkout")
                             .then(|| http_probe("/ready", "http")),
+                        resources: (*name == "checkout").then(checkout_resources),
                         ..Container::default()
                     })
                     .collect(),
@@ -1992,6 +2063,20 @@ current-context: context-a
         }
     }
 
+    fn checkout_resources() -> ResourceRequirements {
+        ResourceRequirements {
+            limits: Some(BTreeMap::from([
+                ("cpu".to_owned(), Quantity("500m".to_owned())),
+                ("memory".to_owned(), Quantity("512Mi".to_owned())),
+            ])),
+            requests: Some(BTreeMap::from([
+                ("cpu".to_owned(), Quantity("250m".to_owned())),
+                ("memory".to_owned(), Quantity("256Mi".to_owned())),
+            ])),
+            ..ResourceRequirements::default()
+        }
+    }
+
     fn http_probe_summary(path: &str, port: &str) -> ProbeSummary {
         ProbeSummary {
             handler: ProbeHandlerSummary::HttpGet {
@@ -2022,6 +2107,32 @@ current-context: context-a
             success_threshold: Some(1),
             termination_grace_period_seconds: Some(30),
             timeout_seconds: Some(3),
+        }
+    }
+
+    fn checkout_resource_summary(container_name: &str) -> ContainerResourceSummary {
+        ContainerResourceSummary {
+            container_name: container_name.to_owned(),
+            requests: vec![
+                ResourceQuantitySummary {
+                    name: "cpu".to_owned(),
+                    quantity: "250m".to_owned(),
+                },
+                ResourceQuantitySummary {
+                    name: "memory".to_owned(),
+                    quantity: "256Mi".to_owned(),
+                },
+            ],
+            limits: vec![
+                ResourceQuantitySummary {
+                    name: "cpu".to_owned(),
+                    quantity: "500m".to_owned(),
+                },
+                ResourceQuantitySummary {
+                    name: "memory".to_owned(),
+                    quantity: "512Mi".to_owned(),
+                },
+            ],
         }
     }
 
