@@ -7,5 +7,6 @@ expression: value
   "app": "checkout",
   "command": "session plan",
   "image": null,
+  "namespace": null,
   "status": "placeholder"
 }
