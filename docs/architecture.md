@@ -166,6 +166,14 @@ Core does not depend on Kubernetes client libraries or CLI output.
 Kply project configuration will use `kply.yaml` as the canonical filename.
 Configuration loading is not implemented yet.
 
+The top-level configuration model has these sections:
+
+- `version`: config schema version.
+- `apps`: application targets.
+- `routing`: routing defaults.
+- `checks`: verification checks.
+- `policies`: safety policies.
+
 ## Current Workflow
 
 The current workflow is intentionally minimal:
