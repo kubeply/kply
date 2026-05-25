@@ -8,5 +8,6 @@ expression: value
   "command": "session plan",
   "image": "ghcr.io/kubeply/checkout:v2",
   "namespace": null,
-  "status": "placeholder"
+  "status": "placeholder",
+  "ttl": null
 }

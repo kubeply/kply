@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 249
+expression: output
+---
+kply session plan checkout
+TTL: 30m
+Session planning is defined but behavior is intentionally pending.

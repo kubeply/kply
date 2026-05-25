@@ -8,5 +8,6 @@ expression: value
   "command": "session plan",
   "image": null,
   "namespace": null,
-  "status": "placeholder"
+  "status": "placeholder",
+  "ttl": null
 }

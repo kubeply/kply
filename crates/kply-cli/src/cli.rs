@@ -123,6 +123,9 @@ pub enum SessionCommand {
         /// Namespace override for the planned sandbox resources.
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,
+        /// Lifetime for the planned sandbox session.
+        #[arg(long = "ttl", value_name = "DURATION")]
+        time_to_live: Option<String>,
     },
 }
 

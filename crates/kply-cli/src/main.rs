@@ -65,6 +65,7 @@ fn run() -> Result<ExitCode> {
                     app,
                     image,
                     namespace,
+                    time_to_live,
                 }),
         }) => {
             return render_session_plan_placeholder(
@@ -72,6 +73,7 @@ fn run() -> Result<ExitCode> {
                 app,
                 image.as_deref(),
                 namespace.as_deref(),
+                time_to_live.as_deref(),
             );
         }
         Some(Command::Cluster {
@@ -130,6 +132,7 @@ fn render_session_plan_placeholder(
     app_name: &str,
     image: Option<&str>,
     namespace: Option<&str>,
+    time_to_live: Option<&str>,
 ) -> Result<ExitCode> {
     if cli.json {
         let value = serde_json::json!({
@@ -137,6 +140,7 @@ fn render_session_plan_placeholder(
             "app": app_name,
             "image": image,
             "namespace": namespace,
+            "ttl": time_to_live,
             "status": "placeholder"
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -147,6 +151,9 @@ fn render_session_plan_placeholder(
         }
         if let Some(namespace) = namespace {
             println!("Namespace: {namespace}");
+        }
+        if let Some(time_to_live) = time_to_live {
+            println!("TTL: {time_to_live}");
         }
         println!("Session planning is defined but behavior is intentionally pending.");
     }
