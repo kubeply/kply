@@ -31,6 +31,16 @@ cargo xtask check-toolchain-pin
 - Use `insta` snapshots for structured command output.
 - Keep test fixtures focused and deterministic.
 
+Optional live Kubernetes tests are read-only and skipped unless explicitly
+enabled:
+
+```bash
+KPLY_LIVE_K8S_TESTS=1 KPLY_LIVE_K8S_NAMESPACE=default cargo test -p kply-k8s --test live_cluster --locked
+```
+
+Live tests use standard kubeconfig resolution. Keep `KPLY_LIVE_K8S_NAMESPACE`
+scoped to a namespace where listing Deployments and Services is acceptable.
+
 ## Crate Boundaries
 
 - `kply-core`: domain model, session state, audit events.
