@@ -304,6 +304,7 @@ dependencies = [
 name = "kply-config"
 version = "0.1.0"
 dependencies = [
+ "kply-test",
  "serde",
  "serde_json",
  "serde_norway",
