@@ -909,6 +909,8 @@ pub enum AppGraphWarning {
         service: ServiceRef,
         candidate_workloads: Vec<WorkloadRef>,
     },
+    /// A selected Service has no discovered route reference.
+    MissingRoute { service: ServiceRef },
 }
 
 impl AppGraphWarning {
@@ -925,6 +927,11 @@ impl AppGraphWarning {
             candidate_workloads,
         }
     }
+
+    /// Create a missing route warning for a selected [`ServiceRef`].
+    pub fn missing_route(service: ServiceRef) -> Self {
+        Self::MissingRoute { service }
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraphWarning {
@@ -940,6 +947,7 @@ impl<'de> Deserialize<'de> for AppGraphWarning {
                 service,
                 candidate_workloads,
             )),
+            AppGraphWarningFields::MissingRoute { service } => Ok(Self::missing_route(service)),
         }
     }
 }
@@ -2377,6 +2385,9 @@ enum AppGraphWarningFields {
         service: ServiceRef,
         candidate_workloads: Vec<WorkloadRef>,
     },
+    MissingRoute {
+        service: ServiceRef,
+    },
 }
 
 #[derive(Deserialize)]
@@ -3085,6 +3096,12 @@ mod tests {
                         .expect("workload ref"),
                 ],
             ),
+            AppGraphWarning::missing_route(
+                ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+            ),
+            AppGraphWarning::missing_route(
+                ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+            ),
         ])
     }
 
@@ -3701,20 +3718,40 @@ mod tests {
     }
 
     #[test]
+    fn creates_missing_route_warning() {
+        let warning = AppGraphWarning::missing_route(
+            ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+        );
+
+        assert_eq!(
+            warning,
+            AppGraphWarning::MissingRoute {
+                service: ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+            }
+        );
+    }
+
+    #[test]
     fn records_warnings_in_stable_order() {
         let graph = test_app_graph();
 
         assert_eq!(
             graph.warnings(),
-            &[AppGraphWarning::AmbiguousServiceSelector {
-                service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
-                candidate_workloads: vec![
-                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
-                        .expect("workload ref"),
-                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
-                        .expect("workload ref"),
-                ],
-            }]
+            &[
+                AppGraphWarning::AmbiguousServiceSelector {
+                    service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    candidate_workloads: vec![
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                            .expect("workload ref"),
+                    ],
+                },
+                AppGraphWarning::MissingRoute {
+                    service: ServiceRef::new("checkout", "checkout-api-private")
+                        .expect("service ref"),
+                },
+            ]
         );
     }
 
@@ -4419,6 +4456,13 @@ mod tests {
             },
             "warnings": [
                 {
+                    "kind": "missing_route",
+                    "service": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-private"
+                    }
+                },
+                {
                     "kind": "ambiguous_service_selector",
                     "service": {
                         "namespace": "checkout",
@@ -4441,6 +4485,13 @@ mod tests {
                             "name": "checkout-api"
                         }
                     ]
+                },
+                {
+                    "kind": "missing_route",
+                    "service": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-private"
+                    }
                 }
             ]
         });
@@ -4449,15 +4500,21 @@ mod tests {
 
         assert_eq!(
             graph.warnings(),
-            &[AppGraphWarning::AmbiguousServiceSelector {
-                service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
-                candidate_workloads: vec![
-                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
-                        .expect("workload ref"),
-                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
-                        .expect("workload ref"),
-                ],
-            }]
+            &[
+                AppGraphWarning::AmbiguousServiceSelector {
+                    service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    candidate_workloads: vec![
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                            .expect("workload ref"),
+                    ],
+                },
+                AppGraphWarning::MissingRoute {
+                    service: ServiceRef::new("checkout", "checkout-api-private")
+                        .expect("service ref"),
+                },
+            ]
         );
     }
 
