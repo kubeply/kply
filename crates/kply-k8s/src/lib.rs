@@ -11,8 +11,10 @@ use kube::{
     Api, Client, Config, ResourceExt,
     api::ListParams,
     config::{KubeConfigOptions, Kubeconfig, KubeconfigError},
+    core::{ApiResource, DynamicObject, GroupVersionKind},
 };
 use serde::Serialize;
+use serde_json::Value;
 
 /// Read-only Kubernetes cluster facts resolved from kubeconfig.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -168,6 +170,91 @@ pub struct IngressTlsSummary {
     pub secret_name: Option<String>,
 }
 
+/// Read-only summary of a Gateway API GatewayClass.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayClassSummary {
+    /// GatewayClass name.
+    pub name: String,
+    /// Controller name responsible for this GatewayClass.
+    pub controller_name: Option<String>,
+    /// Optional human-readable description.
+    pub description: Option<String>,
+}
+
+/// Read-only summary of a Gateway API Gateway.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewaySummary {
+    /// Gateway namespace.
+    pub namespace: String,
+    /// Gateway name.
+    pub name: String,
+    /// Referenced GatewayClass name.
+    pub gateway_class_name: Option<String>,
+    /// Gateway listeners in manifest order.
+    pub listeners: Vec<GatewayListenerSummary>,
+}
+
+/// Read-only summary of a Gateway API Gateway listener.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayListenerSummary {
+    /// Listener name.
+    pub name: Option<String>,
+    /// Optional listener hostname.
+    pub hostname: Option<String>,
+    /// Listener port.
+    pub port: Option<i64>,
+    /// Listener protocol.
+    pub protocol: Option<String>,
+}
+
+/// Read-only summary of a Gateway API HTTPRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HttpRouteSummary {
+    /// HTTPRoute namespace.
+    pub namespace: String,
+    /// HTTPRoute name.
+    pub name: String,
+    /// Hostnames matched by the HTTPRoute.
+    pub hostnames: Vec<String>,
+    /// Parent references in manifest order.
+    pub parent_refs: Vec<RouteParentRefSummary>,
+    /// Rules in manifest order.
+    pub rules: Vec<HttpRouteRuleSummary>,
+}
+
+/// Read-only summary of a Gateway API parent reference.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RouteParentRefSummary {
+    /// Parent resource kind.
+    pub kind: Option<String>,
+    /// Parent resource namespace.
+    pub namespace: Option<String>,
+    /// Parent resource name.
+    pub name: Option<String>,
+    /// Optional section name on the parent resource.
+    pub section_name: Option<String>,
+}
+
+/// Read-only summary of a Gateway API HTTPRoute rule.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HttpRouteRuleSummary {
+    /// Backend references in manifest order.
+    pub backend_refs: Vec<HttpRouteBackendRefSummary>,
+}
+
+/// Read-only summary of a Gateway API HTTPRoute backend reference.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HttpRouteBackendRefSummary {
+    /// Backend resource kind.
+    pub kind: Option<String>,
+    /// Backend namespace.
+    pub namespace: Option<String>,
+    /// Backend name.
+    pub name: Option<String>,
+    /// Backend port.
+    pub port: Option<i64>,
+}
+
 /// List Deployments in one namespace without mutating cluster state.
 ///
 /// # Errors
@@ -248,6 +335,74 @@ pub async fn list_ingresses(
         .await?
         .iter()
         .map(ingress_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
+}
+
+/// List Gateway API GatewayClass objects without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_gateway_classes(client: Client) -> Result<Vec<GatewayClassSummary>, kube::Error> {
+    let gateway_classes: Api<DynamicObject> = Api::all_with(
+        client,
+        &gateway_api_resource("GatewayClass", "gatewayclasses"),
+    );
+    let mut summaries = gateway_classes
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .map(gateway_class_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
+}
+
+/// List Gateway API Gateway objects in one namespace without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_gateways(
+    client: Client,
+    namespace: &str,
+) -> Result<Vec<GatewaySummary>, kube::Error> {
+    let gateways: Api<DynamicObject> = Api::namespaced_with(
+        client,
+        namespace,
+        &gateway_api_resource("Gateway", "gateways"),
+    );
+    let mut summaries = gateways
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .map(gateway_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
+}
+
+/// List Gateway API HTTPRoute objects in one namespace without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_http_routes(
+    client: Client,
+    namespace: &str,
+) -> Result<Vec<HttpRouteSummary>, kube::Error> {
+    let routes: Api<DynamicObject> = Api::namespaced_with(
+        client,
+        namespace,
+        &gateway_api_resource("HTTPRoute", "httproutes"),
+    );
+    let mut summaries = routes
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .map(http_route_summary)
         .collect::<Vec<_>>();
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(summaries)
@@ -336,6 +491,103 @@ pub fn ingress_summary(ingress: &Ingress) -> IngressSummary {
     }
 }
 
+/// Convert a Gateway API GatewayClass [`DynamicObject`] into a deterministic summary.
+pub fn gateway_class_summary(gateway_class: &DynamicObject) -> GatewayClassSummary {
+    let spec = gateway_class.data.get("spec");
+
+    GatewayClassSummary {
+        name: gateway_class.name_any(),
+        controller_name: spec.and_then(|spec| string_field(spec, "controllerName")),
+        description: spec.and_then(|spec| string_field(spec, "description")),
+    }
+}
+
+/// Convert a Gateway API Gateway [`DynamicObject`] into a deterministic summary.
+pub fn gateway_summary(gateway: &DynamicObject) -> GatewaySummary {
+    let spec = gateway.data.get("spec");
+    let listeners = spec
+        .and_then(|spec| spec.get("listeners"))
+        .and_then(Value::as_array)
+        .map(|listeners| {
+            listeners
+                .iter()
+                .map(|listener| GatewayListenerSummary {
+                    name: string_field(listener, "name"),
+                    hostname: string_field(listener, "hostname"),
+                    port: int_field(listener, "port"),
+                    protocol: string_field(listener, "protocol"),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    GatewaySummary {
+        namespace: gateway.namespace().unwrap_or_default(),
+        name: gateway.name_any(),
+        gateway_class_name: spec.and_then(|spec| string_field(spec, "gatewayClassName")),
+        listeners,
+    }
+}
+
+/// Convert a Gateway API HTTPRoute [`DynamicObject`] into a deterministic summary.
+pub fn http_route_summary(route: &DynamicObject) -> HttpRouteSummary {
+    let spec = route.data.get("spec");
+    let hostnames = spec
+        .and_then(|spec| spec.get("hostnames"))
+        .and_then(Value::as_array)
+        .map(|hostnames| string_array(hostnames))
+        .unwrap_or_default();
+    let parent_refs = spec
+        .and_then(|spec| spec.get("parentRefs"))
+        .and_then(Value::as_array)
+        .map(|parent_refs| {
+            parent_refs
+                .iter()
+                .map(|parent_ref| RouteParentRefSummary {
+                    kind: string_field(parent_ref, "kind"),
+                    namespace: string_field(parent_ref, "namespace"),
+                    name: string_field(parent_ref, "name"),
+                    section_name: string_field(parent_ref, "sectionName"),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let rules = spec
+        .and_then(|spec| spec.get("rules"))
+        .and_then(Value::as_array)
+        .map(|rules| {
+            rules
+                .iter()
+                .map(|rule| HttpRouteRuleSummary {
+                    backend_refs: rule
+                        .get("backendRefs")
+                        .and_then(Value::as_array)
+                        .map(|backend_refs| {
+                            backend_refs
+                                .iter()
+                                .map(|backend_ref| HttpRouteBackendRefSummary {
+                                    kind: string_field(backend_ref, "kind"),
+                                    namespace: string_field(backend_ref, "namespace"),
+                                    name: string_field(backend_ref, "name"),
+                                    port: int_field(backend_ref, "port"),
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    HttpRouteSummary {
+        namespace: route.namespace().unwrap_or_default(),
+        name: route.name_any(),
+        hostnames,
+        parent_refs,
+        rules,
+    }
+}
+
 fn ingress_backend_summary(backend: &IngressBackend) -> Option<IngressBackendSummary> {
     let service = backend.service.as_ref()?;
     let port = service.port.as_ref()?;
@@ -348,6 +600,30 @@ fn ingress_backend_summary(backend: &IngressBackend) -> Option<IngressBackendSum
         service_name: service.name.clone(),
         service_port,
     })
+}
+
+fn gateway_api_resource(kind: &str, plural: &str) -> ApiResource {
+    let group_version_kind = GroupVersionKind::gvk("gateway.networking.k8s.io", "v1", kind);
+    ApiResource::from_gvk_with_plural(&group_version_kind, plural)
+}
+
+fn string_field(value: &Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn int_field(value: &Value, field: &str) -> Option<i64> {
+    value.get(field).and_then(Value::as_i64)
+}
+
+fn string_array(values: &[Value]) -> Vec<String> {
+    values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 /// Convert a Kubernetes [`Pod`] into a deterministic summary.
@@ -514,9 +790,12 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterInfo, DeploymentSummary, IngressBackendSummary, IngressPathSummary,
-        IngressRuleSummary, IngressSummary, IngressTlsSummary, LabelSelectorEntry,
-        OwnerReferenceSummary, PodSummary, ServicePortSummary, ServiceSummary, deployment_summary,
+        ClusterInfo, DeploymentSummary, GatewayClassSummary, GatewayListenerSummary,
+        GatewaySummary, HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary,
+        IngressBackendSummary, IngressPathSummary, IngressRuleSummary, IngressSummary,
+        IngressTlsSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
+        RouteParentRefSummary, ServicePortSummary, ServiceSummary, deployment_summary,
+        gateway_api_resource, gateway_class_summary, gateway_summary, http_route_summary,
         ingress_summary, load_kube_config_path, load_kube_config_with_options,
         pod_is_owned_by_workload, pod_summary, service_summary,
     };
@@ -534,6 +813,8 @@ mod tests {
     use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
     use kply_core::WorkloadRef;
     use kube::config::KubeConfigOptions;
+    use kube::core::DynamicObject;
+    use serde_json::json;
     use std::collections::BTreeMap;
     use std::env;
     use tokio::sync::Mutex;
@@ -784,6 +1065,199 @@ mod tests {
                 default_backend: None,
                 rules: Vec::new(),
                 tls: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_gateway_class_metadata() {
+        let gateway_class = DynamicObject::new(
+            "public",
+            &gateway_api_resource("GatewayClass", "gatewayclasses"),
+        )
+        .data(json!({
+            "spec": {
+                "controllerName": "example.com/gateway-controller",
+                "description": "Public edge gateways"
+            }
+        }));
+
+        let summary = gateway_class_summary(&gateway_class);
+
+        assert_eq!(
+            summary,
+            GatewayClassSummary {
+                name: "public".to_owned(),
+                controller_name: Some("example.com/gateway-controller".to_owned()),
+                description: Some("Public edge gateways".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_gateway_listeners() {
+        let gateway = DynamicObject::new(
+            "public-gateway",
+            &gateway_api_resource("Gateway", "gateways"),
+        )
+        .within("shop")
+        .data(json!({
+            "spec": {
+                "gatewayClassName": "public",
+                "listeners": [
+                    {
+                        "name": "http",
+                        "hostname": "checkout.example.com",
+                        "port": 80,
+                        "protocol": "HTTP"
+                    },
+                    {
+                        "name": "https",
+                        "port": 443,
+                        "protocol": "HTTPS"
+                    }
+                ]
+            }
+        }));
+
+        let summary = gateway_summary(&gateway);
+
+        assert_eq!(
+            summary,
+            GatewaySummary {
+                namespace: "shop".to_owned(),
+                name: "public-gateway".to_owned(),
+                gateway_class_name: Some("public".to_owned()),
+                listeners: vec![
+                    GatewayListenerSummary {
+                        name: Some("http".to_owned()),
+                        hostname: Some("checkout.example.com".to_owned()),
+                        port: Some(80),
+                        protocol: Some("HTTP".to_owned()),
+                    },
+                    GatewayListenerSummary {
+                        name: Some("https".to_owned()),
+                        hostname: None,
+                        port: Some(443),
+                        protocol: Some("HTTPS".to_owned()),
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_http_route_parents_hosts_and_backends() {
+        let route = DynamicObject::new(
+            "checkout-route",
+            &gateway_api_resource("HTTPRoute", "httproutes"),
+        )
+        .within("shop")
+        .data(json!({
+            "spec": {
+                "hostnames": ["checkout.example.com"],
+                "parentRefs": [
+                    {
+                        "kind": "Gateway",
+                        "namespace": "platform",
+                        "name": "public-gateway",
+                        "sectionName": "https"
+                    }
+                ],
+                "rules": [
+                    {
+                        "backendRefs": [
+                            {
+                                "kind": "Service",
+                                "name": "checkout-http",
+                                "port": 80
+                            },
+                            {
+                                "kind": "Service",
+                                "namespace": "shared",
+                                "name": "checkout-canary",
+                                "port": 8080
+                            }
+                        ]
+                    }
+                ]
+            }
+        }));
+
+        let summary = http_route_summary(&route);
+
+        assert_eq!(
+            summary,
+            HttpRouteSummary {
+                namespace: "shop".to_owned(),
+                name: "checkout-route".to_owned(),
+                hostnames: vec!["checkout.example.com".to_owned()],
+                parent_refs: vec![RouteParentRefSummary {
+                    kind: Some("Gateway".to_owned()),
+                    namespace: Some("platform".to_owned()),
+                    name: Some("public-gateway".to_owned()),
+                    section_name: Some("https".to_owned()),
+                }],
+                rules: vec![HttpRouteRuleSummary {
+                    backend_refs: vec![
+                        HttpRouteBackendRefSummary {
+                            kind: Some("Service".to_owned()),
+                            namespace: None,
+                            name: Some("checkout-http".to_owned()),
+                            port: Some(80),
+                        },
+                        HttpRouteBackendRefSummary {
+                            kind: Some("Service".to_owned()),
+                            namespace: Some("shared".to_owned()),
+                            name: Some("checkout-canary".to_owned()),
+                            port: Some(8080),
+                        },
+                    ],
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_minimal_gateway_api_resources() {
+        let gateway_class = DynamicObject::new(
+            "minimal-class",
+            &gateway_api_resource("GatewayClass", "gatewayclasses"),
+        );
+        let gateway = DynamicObject::new(
+            "minimal-gateway",
+            &gateway_api_resource("Gateway", "gateways"),
+        );
+        let route = DynamicObject::new(
+            "minimal-route",
+            &gateway_api_resource("HTTPRoute", "httproutes"),
+        );
+
+        assert_eq!(
+            gateway_class_summary(&gateway_class),
+            GatewayClassSummary {
+                name: "minimal-class".to_owned(),
+                controller_name: None,
+                description: None,
+            }
+        );
+        assert_eq!(
+            gateway_summary(&gateway),
+            GatewaySummary {
+                namespace: String::new(),
+                name: "minimal-gateway".to_owned(),
+                gateway_class_name: None,
+                listeners: Vec::new(),
+            }
+        );
+        assert_eq!(
+            http_route_summary(&route),
+            HttpRouteSummary {
+                namespace: String::new(),
+                name: "minimal-route".to_owned(),
+                hostnames: Vec::new(),
+                parent_refs: Vec::new(),
+                rules: Vec::new(),
             }
         );
     }

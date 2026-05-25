@@ -645,6 +645,7 @@ dependencies = [
  "kply-test",
  "kube",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

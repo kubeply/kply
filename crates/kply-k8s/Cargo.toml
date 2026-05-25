@@ -11,6 +11,7 @@ k8s-openapi.workspace = true
 kply-core.workspace = true
 kube.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 kply-test.workspace = true
