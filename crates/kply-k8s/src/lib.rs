@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::core::v1::{Pod, Service};
+use k8s_openapi::api::core::v1::{Container, Pod, Probe, Service};
 use k8s_openapi::api::networking::v1::{Ingress, IngressBackend};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kply_core::WorkloadRef;
@@ -42,6 +42,8 @@ pub struct DeploymentSummary {
     pub updated_replicas: Option<i32>,
     /// Declared container images in pod template order.
     pub images: Vec<String>,
+    /// Readiness and liveness probes in pod template container order.
+    pub probes: Vec<ContainerProbeSummary>,
     /// Basic rollout status derived from Deployment status.
     pub rollout: DeploymentRolloutSummary,
 }
@@ -94,6 +96,73 @@ pub struct DeploymentConditionSummary {
     pub reason: Option<String>,
     /// Optional condition message.
     pub message: Option<String>,
+}
+
+/// Read-only readiness and liveness probe metadata for one container.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ContainerProbeSummary {
+    /// Container name.
+    pub container_name: String,
+    /// Readiness probe metadata when configured.
+    pub readiness: Option<ProbeSummary>,
+    /// Liveness probe metadata when configured.
+    pub liveness: Option<ProbeSummary>,
+}
+
+/// Read-only probe metadata without sensitive payload values.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProbeSummary {
+    /// Probe handler type and safe route metadata.
+    pub handler: ProbeHandlerSummary,
+    /// Initial delay before probing in seconds.
+    pub initial_delay_seconds: Option<i32>,
+    /// Probe period in seconds.
+    pub period_seconds: Option<i32>,
+    /// Probe timeout in seconds.
+    pub timeout_seconds: Option<i32>,
+    /// Consecutive success threshold.
+    pub success_threshold: Option<i32>,
+    /// Consecutive failure threshold.
+    pub failure_threshold: Option<i32>,
+    /// Probe-specific termination grace period in seconds.
+    pub termination_grace_period_seconds: Option<i64>,
+}
+
+/// Read-only probe handler metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProbeHandlerSummary {
+    /// Exec probe without command payload.
+    Exec,
+    /// HTTP GET probe metadata without header values.
+    HttpGet {
+        /// Optional HTTP host override.
+        host: Option<String>,
+        /// Optional HTTP request path.
+        path: Option<String>,
+        /// HTTP target port as a string, preserving named ports.
+        port: String,
+        /// Optional HTTP scheme.
+        scheme: Option<String>,
+        /// Number of configured HTTP headers.
+        header_count: usize,
+    },
+    /// TCP socket probe metadata.
+    TcpSocket {
+        /// Optional TCP host override.
+        host: Option<String>,
+        /// TCP target port as a string, preserving named ports.
+        port: String,
+    },
+    /// gRPC probe metadata.
+    Grpc {
+        /// gRPC health check port.
+        port: i32,
+        /// Optional gRPC service name.
+        service: Option<String>,
+    },
+    /// Probe has no supported handler metadata.
+    Unknown,
 }
 
 /// Read-only summary of a Kubernetes Service.
@@ -150,6 +219,8 @@ pub struct PodSummary {
     pub pod_ip: Option<String>,
     /// Declared container images in pod spec order.
     pub images: Vec<String>,
+    /// Readiness and liveness probes in pod spec container order.
+    pub probes: Vec<ContainerProbeSummary>,
     /// Owner references in manifest order.
     pub owner_references: Vec<OwnerReferenceSummary>,
 }
@@ -474,6 +545,10 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let probes = spec
+        .and_then(|spec| spec.template.spec.as_ref())
+        .map(|pod_spec| container_probe_summaries(&pod_spec.containers))
+        .unwrap_or_default();
 
     DeploymentSummary {
         namespace: deployment.namespace().unwrap_or_default(),
@@ -483,6 +558,7 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         ready_replicas: status.and_then(|status| status.ready_replicas),
         updated_replicas: status.and_then(|status| status.updated_replicas),
         images,
+        probes,
         rollout: deployment_rollout_summary(deployment),
     }
 }
@@ -570,6 +646,66 @@ fn deployment_rollout_phase(
     }
 
     DeploymentRolloutPhase::Progressing
+}
+
+fn container_probe_summaries(containers: &[Container]) -> Vec<ContainerProbeSummary> {
+    containers
+        .iter()
+        .filter_map(|container| {
+            let readiness = container.readiness_probe.as_ref().map(probe_summary);
+            let liveness = container.liveness_probe.as_ref().map(probe_summary);
+
+            (readiness.is_some() || liveness.is_some()).then(|| ContainerProbeSummary {
+                container_name: container.name.clone(),
+                readiness,
+                liveness,
+            })
+        })
+        .collect()
+}
+
+fn probe_summary(probe: &Probe) -> ProbeSummary {
+    ProbeSummary {
+        handler: probe_handler_summary(probe),
+        initial_delay_seconds: probe.initial_delay_seconds,
+        period_seconds: probe.period_seconds,
+        timeout_seconds: probe.timeout_seconds,
+        success_threshold: probe.success_threshold,
+        failure_threshold: probe.failure_threshold,
+        termination_grace_period_seconds: probe.termination_grace_period_seconds,
+    }
+}
+
+fn probe_handler_summary(probe: &Probe) -> ProbeHandlerSummary {
+    if let Some(http_get) = probe.http_get.as_ref() {
+        return ProbeHandlerSummary::HttpGet {
+            host: http_get.host.clone(),
+            path: http_get.path.clone(),
+            port: format_int_or_string(&http_get.port),
+            scheme: http_get.scheme.clone(),
+            header_count: http_get.http_headers.as_ref().map_or(0, Vec::len),
+        };
+    }
+
+    if let Some(tcp_socket) = probe.tcp_socket.as_ref() {
+        return ProbeHandlerSummary::TcpSocket {
+            host: tcp_socket.host.clone(),
+            port: format_int_or_string(&tcp_socket.port),
+        };
+    }
+
+    if let Some(grpc) = probe.grpc.as_ref() {
+        return ProbeHandlerSummary::Grpc {
+            port: grpc.port,
+            service: grpc.service.clone(),
+        };
+    }
+
+    if probe.exec.is_some() {
+        return ProbeHandlerSummary::Exec;
+    }
+
+    ProbeHandlerSummary::Unknown
 }
 
 /// Convert a Kubernetes [`Ingress`] into a deterministic summary.
@@ -776,6 +912,9 @@ pub fn pod_summary(pod: &Pod) -> PodSummary {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let probes = spec
+        .map(|spec| container_probe_summaries(&spec.containers))
+        .unwrap_or_default();
     let owner_references = pod
         .metadata
         .owner_references
@@ -797,6 +936,7 @@ pub fn pod_summary(pod: &Pod) -> PodSummary {
         node_name: spec.and_then(|spec| spec.node_name.clone()),
         pod_ip: status.and_then(|status| status.pod_ip.clone()),
         images,
+        probes,
         owner_references,
     }
 }
@@ -928,21 +1068,23 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterInfo, DeploymentConditionSummary, DeploymentRolloutPhase, DeploymentRolloutSummary,
-        DeploymentSummary, GatewayClassSummary, GatewayListenerSummary, GatewaySummary,
-        HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary, IngressBackendSummary,
-        IngressPathSummary, IngressRuleSummary, IngressSummary, IngressTlsSummary,
-        LabelSelectorEntry, OwnerReferenceSummary, PodSummary, RouteParentRefSummary,
-        ServicePortSummary, ServiceSummary, deployment_rollout_summary, deployment_summary,
-        gateway_api_resource, gateway_class_summary, gateway_summary, http_route_summary,
-        ingress_summary, load_kube_config_path, load_kube_config_with_options,
-        pod_is_owned_by_workload, pod_summary, service_summary,
+        ClusterInfo, ContainerProbeSummary, DeploymentConditionSummary, DeploymentRolloutPhase,
+        DeploymentRolloutSummary, DeploymentSummary, GatewayClassSummary, GatewayListenerSummary,
+        GatewaySummary, HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary,
+        IngressBackendSummary, IngressPathSummary, IngressRuleSummary, IngressSummary,
+        IngressTlsSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
+        ProbeHandlerSummary, ProbeSummary, RouteParentRefSummary, ServicePortSummary,
+        ServiceSummary, deployment_rollout_summary, deployment_summary, gateway_api_resource,
+        gateway_class_summary, gateway_summary, http_route_summary, ingress_summary,
+        load_kube_config_path, load_kube_config_with_options, pod_is_owned_by_workload,
+        pod_summary, service_summary,
     };
     use k8s_openapi::api::apps::v1::{
         Deployment, DeploymentCondition, DeploymentSpec, DeploymentStatus,
     };
     use k8s_openapi::api::core::v1::{
-        Container, Pod, PodSpec, PodStatus, PodTemplateSpec, Service, ServicePort, ServiceSpec,
+        Container, HTTPGetAction, HTTPHeader, Pod, PodSpec, PodStatus, PodTemplateSpec, Probe,
+        Service, ServicePort, ServiceSpec, TCPSocketAction,
     };
     use k8s_openapi::api::networking::v1::{
         HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule,
@@ -1001,6 +1143,11 @@ mod tests {
                 ready_replicas: Some(2),
                 updated_replicas: Some(3),
                 images: vec!["checkout:v2".to_owned(), "sidecar:v1".to_owned()],
+                probes: vec![ContainerProbeSummary {
+                    container_name: "checkout-v2".to_owned(),
+                    readiness: Some(http_probe_summary("/ready", "http")),
+                    liveness: Some(tcp_probe_summary(8080)),
+                }],
                 rollout: DeploymentRolloutSummary {
                     phase: DeploymentRolloutPhase::Progressing,
                     generation: Some(2),
@@ -1051,6 +1198,7 @@ mod tests {
                 ready_replicas: None,
                 updated_replicas: None,
                 images: Vec::new(),
+                probes: Vec::new(),
                 rollout: DeploymentRolloutSummary {
                     phase: DeploymentRolloutPhase::Unknown,
                     generation: None,
@@ -1132,6 +1280,11 @@ mod tests {
                 node_name: Some("worker-a".to_owned()),
                 pod_ip: Some("10.244.0.12".to_owned()),
                 images: vec!["checkout:v2".to_owned(), "sidecar:v1".to_owned()],
+                probes: vec![ContainerProbeSummary {
+                    container_name: "checkout".to_owned(),
+                    readiness: Some(http_probe_summary("/ready", "http")),
+                    liveness: Some(tcp_probe_summary(8080)),
+                }],
                 owner_references: vec![OwnerReferenceSummary {
                     kind: "ReplicaSet".to_owned(),
                     name: "checkout-api-7f7c8d9b9d".to_owned(),
@@ -1163,6 +1316,7 @@ mod tests {
                 node_name: None,
                 pod_ip: None,
                 images: Vec::new(),
+                probes: Vec::new(),
                 owner_references: Vec::new(),
             }
         );
@@ -1688,6 +1842,12 @@ current-context: context-a
                             .map(|image| Container {
                                 name: image.replace([':', '/'], "-"),
                                 image: Some((*image).to_owned()),
+                                liveness_probe: image
+                                    .starts_with("checkout:")
+                                    .then(|| tcp_probe(8080)),
+                                readiness_probe: image
+                                    .starts_with("checkout:")
+                                    .then(|| http_probe("/ready", "http")),
                                 ..Container::default()
                             })
                             .collect(),
@@ -1778,6 +1938,9 @@ current-context: context-a
                     .map(|(name, image)| Container {
                         name: (*name).to_owned(),
                         image: Some((*image).to_owned()),
+                        liveness_probe: (*name == "checkout").then(|| tcp_probe(8080)),
+                        readiness_probe: (*name == "checkout")
+                            .then(|| http_probe("/ready", "http")),
                         ..Container::default()
                     })
                     .collect(),
@@ -1789,6 +1952,76 @@ current-context: context-a
                 pod_ip: Some("10.244.0.12".to_owned()),
                 ..PodStatus::default()
             }),
+        }
+    }
+
+    fn http_probe(path: &str, port: &str) -> Probe {
+        Probe {
+            http_get: Some(HTTPGetAction {
+                http_headers: Some(vec![HTTPHeader {
+                    name: "Authorization".to_owned(),
+                    value: "Bearer redacted".to_owned(),
+                }]),
+                path: Some(path.to_owned()),
+                port: IntOrString::String(port.to_owned()),
+                scheme: Some("HTTP".to_owned()),
+                ..HTTPGetAction::default()
+            }),
+            failure_threshold: Some(3),
+            initial_delay_seconds: Some(5),
+            period_seconds: Some(10),
+            success_threshold: Some(1),
+            timeout_seconds: Some(2),
+            ..Probe::default()
+        }
+    }
+
+    fn tcp_probe(port: i32) -> Probe {
+        Probe {
+            tcp_socket: Some(TCPSocketAction {
+                port: IntOrString::Int(port),
+                ..TCPSocketAction::default()
+            }),
+            failure_threshold: Some(5),
+            initial_delay_seconds: Some(15),
+            period_seconds: Some(20),
+            success_threshold: Some(1),
+            termination_grace_period_seconds: Some(30),
+            timeout_seconds: Some(3),
+            ..Probe::default()
+        }
+    }
+
+    fn http_probe_summary(path: &str, port: &str) -> ProbeSummary {
+        ProbeSummary {
+            handler: ProbeHandlerSummary::HttpGet {
+                host: None,
+                path: Some(path.to_owned()),
+                port: port.to_owned(),
+                scheme: Some("HTTP".to_owned()),
+                header_count: 1,
+            },
+            failure_threshold: Some(3),
+            initial_delay_seconds: Some(5),
+            period_seconds: Some(10),
+            success_threshold: Some(1),
+            termination_grace_period_seconds: None,
+            timeout_seconds: Some(2),
+        }
+    }
+
+    fn tcp_probe_summary(port: i32) -> ProbeSummary {
+        ProbeSummary {
+            handler: ProbeHandlerSummary::TcpSocket {
+                host: None,
+                port: port.to_string(),
+            },
+            failure_threshold: Some(5),
+            initial_delay_seconds: Some(15),
+            period_seconds: Some(20),
+            success_threshold: Some(1),
+            termination_grace_period_seconds: Some(30),
+            timeout_seconds: Some(3),
         }
     }
 
