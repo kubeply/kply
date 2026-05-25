@@ -464,6 +464,96 @@ impl ServiceRouteRef {
     }
 }
 
+/// Stable container reference within a workload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct ContainerRef {
+    workload: WorkloadRef,
+    name: String,
+}
+
+impl ContainerRef {
+    /// Create a [`ContainerRef`] from a workload and validated container name.
+    pub fn new(workload: WorkloadRef, name: impl Into<String>) -> Result<Self, ContainerRefError> {
+        let name = name.into();
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(ContainerRefError::Name)?;
+        Ok(Self { workload, name })
+    }
+
+    /// Borrow the workload that owns this container.
+    pub fn workload(&self) -> &WorkloadRef {
+        &self.workload
+    }
+
+    /// Borrow the container name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for ContainerRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.workload, self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for ContainerRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = ContainerRefFields::deserialize(deserializer)?;
+        Self::new(fields.workload, fields.name).map_err(D::Error::custom)
+    }
+}
+
+/// Probe facts discovered for a workload container.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProbeFacts {
+    container: ContainerRef,
+    readiness_probe: bool,
+    liveness_probe: bool,
+    startup_probe: bool,
+}
+
+impl ProbeFacts {
+    /// Create [`ProbeFacts`] for a validated container reference.
+    pub fn new(
+        container: ContainerRef,
+        readiness_probe: bool,
+        liveness_probe: bool,
+        startup_probe: bool,
+    ) -> Self {
+        Self {
+            container,
+            readiness_probe,
+            liveness_probe,
+            startup_probe,
+        }
+    }
+
+    /// Borrow the container these probe facts describe.
+    pub fn container(&self) -> &ContainerRef {
+        &self.container
+    }
+
+    /// Return whether a readiness probe is configured.
+    pub fn readiness_probe(&self) -> bool {
+        self.readiness_probe
+    }
+
+    /// Return whether a liveness probe is configured.
+    pub fn liveness_probe(&self) -> bool {
+        self.liveness_probe
+    }
+
+    /// Return whether a startup probe is configured.
+    pub fn startup_probe(&self) -> bool {
+        self.startup_probe
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -478,6 +568,8 @@ pub struct AppGraph {
     selecting_services: Vec<ServiceRef>,
     #[serde(default)]
     service_routes: Vec<ServiceRouteRef>,
+    #[serde(default)]
+    probe_facts: Vec<ProbeFacts>,
 }
 
 impl AppGraph {
@@ -488,6 +580,7 @@ impl AppGraph {
             owned_pods: Vec::new(),
             selecting_services: Vec::new(),
             service_routes: Vec::new(),
+            probe_facts: Vec::new(),
         }
     }
 
@@ -496,6 +589,14 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with probe facts for workload containers.
+    pub fn with_probe_facts(mut self, probe_facts: impl IntoIterator<Item = ProbeFacts>) -> Self {
+        self.probe_facts = probe_facts.into_iter().collect();
+        self.probe_facts.sort_unstable();
+        self.probe_facts.dedup();
         self
     }
 
@@ -540,6 +641,11 @@ impl AppGraph {
     pub fn service_routes(&self) -> &[ServiceRouteRef] {
         &self.service_routes
     }
+
+    /// Borrow probe facts for workload containers in deterministic order.
+    pub fn probe_facts(&self) -> &[ProbeFacts] {
+        &self.probe_facts
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -551,7 +657,8 @@ impl<'de> Deserialize<'de> for AppGraph {
         Ok(Self::new(fields.workload)
             .with_owned_pods(fields.owned_pods)
             .with_selecting_services(fields.selecting_services)
-            .with_service_routes(fields.service_routes))
+            .with_service_routes(fields.service_routes)
+            .with_probe_facts(fields.probe_facts))
     }
 }
 
@@ -1489,6 +1596,23 @@ impl fmt::Display for RouteRefError {
 
 impl std::error::Error for RouteRefError {}
 
+/// Error returned when a [`ContainerRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerRefError {
+    /// Container names use the same token rules as workload names.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for ContainerRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(error) => write!(formatter, "invalid container name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ContainerRefError {}
+
 /// Error returned when a workload namespace or name is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkloadTokenError {
@@ -1621,6 +1745,12 @@ struct RouteRefFields {
 }
 
 #[derive(Deserialize)]
+struct ContainerRefFields {
+    workload: WorkloadRef,
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct AppGraphFields {
     workload: WorkloadRef,
     #[serde(default)]
@@ -1629,6 +1759,8 @@ struct AppGraphFields {
     selecting_services: Vec<ServiceRef>,
     #[serde(default)]
     service_routes: Vec<ServiceRouteRef>,
+    #[serde(default)]
+    probe_facts: Vec<ProbeFacts>,
 }
 
 #[derive(Deserialize)]
@@ -2013,15 +2145,15 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppGraph, IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, PodRef, PodRefError,
-        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
-        ROUTE_HOST_MAX_LEN, RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef,
-        RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef,
-        ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
-        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
-        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        AppGraph, ContainerRef, ContainerRefError, IMAGE_REF_MAX_LEN, ImageRef, ImageRefError,
+        PodRef, PodRefError, ProbeFacts, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
+        ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RouteHeaderNameError, RouteHeaderValueError,
+        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
+        SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent,
+        SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
+        SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
+        SessionReportError, SessionStatus, SessionTransitionError, WORKLOAD_KIND_MAX_LEN,
+        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -2063,6 +2195,41 @@ mod tests {
                 RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
             ),
         ])
+        .with_probe_facts([
+            ProbeFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                false,
+                true,
+                false,
+            ),
+            ProbeFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                true,
+                true,
+                false,
+            ),
+            ProbeFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                true,
+                true,
+                false,
+            ),
+        ])
     }
 
     #[test]
@@ -2076,6 +2243,7 @@ mod tests {
         assert!(graph.owned_pods().is_empty());
         assert!(graph.selecting_services().is_empty());
         assert!(graph.service_routes().is_empty());
+        assert!(graph.probe_facts().is_empty());
     }
 
     #[test]
@@ -2178,6 +2346,72 @@ mod tests {
     }
 
     #[test]
+    fn creates_container_ref_from_valid_parts() {
+        let workload =
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref");
+
+        let container =
+            ContainerRef::new(workload.clone(), "api").expect("container ref should be valid");
+
+        assert_eq!(container.workload(), &workload);
+        assert_eq!(container.name(), "api");
+        assert_eq!(
+            container.to_string(),
+            "checkout/Deployment/checkout-api/api"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_container_ref_name() {
+        let workload =
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref");
+
+        let error =
+            ContainerRef::new(workload, "api_container").expect_err("name should be invalid");
+
+        assert_eq!(
+            error,
+            ContainerRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_container_ref_json() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "name": "api_container"
+        });
+
+        let error = serde_json::from_value::<ContainerRef>(value)
+            .expect_err("invalid container name should be rejected");
+
+        assert!(
+            error.to_string().contains("invalid container name"),
+            "unexpected container ref error: {error}"
+        );
+    }
+
+    #[test]
+    fn creates_probe_facts_from_valid_container() {
+        let container = ContainerRef::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            "api",
+        )
+        .expect("container ref");
+
+        let facts = ProbeFacts::new(container.clone(), true, false, true);
+
+        assert_eq!(facts.container(), &container);
+        assert!(facts.readiness_probe());
+        assert!(!facts.liveness_probe());
+        assert!(facts.startup_probe());
+    }
+
+    #[test]
     fn records_owned_pods_in_stable_order() {
         let graph = test_app_graph();
 
@@ -2218,6 +2452,39 @@ mod tests {
                     ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
                     RouteRef::new("checkout", "HTTPRoute", "checkout-api-private")
                         .expect("route ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_probe_facts_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.probe_facts(),
+            &[
+                ProbeFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    true,
+                    true,
+                    false,
+                ),
+                ProbeFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    false,
+                    true,
+                    false,
                 ),
             ]
         );
@@ -2351,6 +2618,88 @@ mod tests {
                     ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
                     RouteRef::new("checkout", "HTTPRoute", "checkout-api-private")
                         .expect("route ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_probe_facts_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "probe_facts": [
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "worker"
+                    },
+                    "readiness_probe": false,
+                    "liveness_probe": true,
+                    "startup_probe": false
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "readiness_probe": true,
+                    "liveness_probe": true,
+                    "startup_probe": false
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "readiness_probe": true,
+                    "liveness_probe": true,
+                    "startup_probe": false
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.probe_facts(),
+            &[
+                ProbeFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    true,
+                    true,
+                    false,
+                ),
+                ProbeFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    false,
+                    true,
+                    false,
                 ),
             ]
         );
