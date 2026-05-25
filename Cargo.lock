@@ -1625,6 +1625,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "regex",
  "serde_norway",
  "tempfile",
  "toml",

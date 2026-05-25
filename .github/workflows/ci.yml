@@ -83,6 +83,9 @@ jobs:
       - name: Check module docs
         run: cargo xtask check-module-docs
 
+      - name: Check no Secret content reads
+        run: cargo xtask check-no-secret-content-reads
+
       - name: Check placeholder docs
         run: cargo xtask check-placeholder-docs
 

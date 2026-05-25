@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
+use regex::Regex;
 use serde_norway::Value as YamlValue;
 
 static YAML_JOBS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("jobs".to_owned()));
@@ -16,6 +17,16 @@ static YAML_RUN_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("r
 static YAML_STEPS_KEY: LazyLock<YamlValue> =
     LazyLock::new(|| YamlValue::String("steps".to_owned()));
 static YAML_TAGS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("tags".to_owned()));
+static SECRET_FIELD_ACCESS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*(data|string_data)\b")
+        .expect("Secret field access regex should compile")
+});
+static SECRET_TYPED_IDENTIFIER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:&\s*(?:'[A-Za-z_][A-Za-z0-9_]*\s*)?(?:mut\s+)?)?Secret\b",
+    )
+        .expect("Secret typed identifier regex should compile")
+});
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -32,6 +43,9 @@ fn main() -> Result<()> {
             println!("  check-future-session-docs verify future session docs are explicit");
             println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
+            println!(
+                "  check-no-secret-content-reads verify Kubernetes Secret contents stay unread"
+            );
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
             println!("  check-readme-roadmap-link verify README links the roadmap");
@@ -64,6 +78,9 @@ fn main() -> Result<()> {
         "check-module-docs" => {
             check_module_docs()?;
         }
+        "check-no-secret-content-reads" => {
+            check_no_secret_content_reads()?;
+        }
         "check-placeholder-docs" => {
             check_placeholder_docs()?;
         }
@@ -92,6 +109,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-future-session-docs");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
+            println!("cargo xtask check-no-secret-content-reads");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
             println!("cargo xtask check-readme-roadmap-link");
@@ -133,6 +151,11 @@ fn check_module_docs() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn check_no_secret_content_reads() -> Result<()> {
+    let source_paths = collect_crate_sources("crates/kply-k8s/src")?;
+    check_no_secret_content_reads_inner(source_paths, forbidden_secret_content_patterns())
 }
 
 fn check_crate_inventory_docs() -> Result<()> {
@@ -230,6 +253,16 @@ fn required_fixture_directories() -> &'static [&'static str] {
 
 fn required_rust_components() -> &'static [&'static str] {
     &["clippy", "rustfmt"]
+}
+
+fn forbidden_secret_content_patterns() -> &'static [&'static str] {
+    &[
+        "api::core::v1::Secret",
+        "core::v1::{Secret",
+        "Api<Secret",
+        "Api::<Secret",
+        "Secret::",
+    ]
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -684,6 +717,239 @@ fn check_toolchain_pin_inner(
     Ok(())
 }
 
+fn check_no_secret_content_reads_inner(
+    source_paths: impl IntoIterator<Item = impl AsRef<Path>>,
+    forbidden_patterns: &[&str],
+) -> Result<()> {
+    let mut matches = Vec::new();
+
+    for source_path in source_paths {
+        let source_path = source_path.as_ref();
+        let source = std::fs::read_to_string(source_path)
+            .with_context(|| format!("reading source file {}", source_path.display()))?;
+        let sanitized_lines = strip_rust_comments_and_strings(&source);
+        let secret_identifiers = sanitized_lines
+            .iter()
+            .flat_map(|line| SECRET_TYPED_IDENTIFIER_RE.captures_iter(line))
+            .filter_map(|capture| capture.get(1).map(|identifier| identifier.as_str()))
+            .collect::<BTreeSet<_>>();
+
+        for (line_index, (line, sanitized_line)) in
+            source.lines().zip(sanitized_lines.iter()).enumerate()
+        {
+            for pattern in forbidden_patterns {
+                if sanitized_line.contains(pattern) {
+                    matches.push((
+                        source_path.to_path_buf(),
+                        line_index + 1,
+                        (*pattern).to_owned(),
+                        line.trim().to_owned(),
+                    ));
+                }
+            }
+
+            for capture in SECRET_FIELD_ACCESS_RE.captures_iter(sanitized_line) {
+                let Some(identifier) = capture.get(1).map(|identifier| identifier.as_str()) else {
+                    continue;
+                };
+                if identifier.to_ascii_lowercase().contains("secret")
+                    || secret_identifiers.contains(identifier)
+                {
+                    let field = capture
+                        .get(2)
+                        .map_or("Secret content field".to_owned(), |field| {
+                            format!(".{}", field.as_str())
+                        });
+                    matches.push((
+                        source_path.to_path_buf(),
+                        line_index + 1,
+                        field,
+                        line.trim().to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    if !matches.is_empty() {
+        for (source_path, line, pattern, source_line) in &matches {
+            eprintln!(
+                "forbidden Secret content access pattern in {}:{line}: {pattern}: {source_line}",
+                source_path.display()
+            );
+        }
+        bail!(
+            "{} forbidden Secret content access pattern(s) found",
+            matches.len()
+        );
+    }
+
+    Ok(())
+}
+
+fn strip_rust_comments_and_strings(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut sanitized = String::new();
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        let character = chars[index];
+
+        if character == '\n' {
+            lines.push(std::mem::take(&mut sanitized));
+            index += 1;
+            continue;
+        }
+
+        if character == '/' && chars.get(index + 1) == Some(&'/') {
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+
+        if character == '/' && chars.get(index + 1) == Some(&'*') {
+            sanitized.push(' ');
+            sanitized.push(' ');
+            index += 2;
+            while index < chars.len() {
+                if chars[index] == '\n' {
+                    lines.push(std::mem::take(&mut sanitized));
+                    index += 1;
+                } else if chars[index] == '*' && chars.get(index + 1) == Some(&'/') {
+                    sanitized.push(' ');
+                    sanitized.push(' ');
+                    index += 2;
+                    break;
+                } else {
+                    sanitized.push(' ');
+                    index += 1;
+                }
+            }
+            continue;
+        }
+
+        if let Some(raw_string_hashes) = raw_string_hashes(&chars, index) {
+            sanitized.push(' ');
+            index += 1;
+            for _ in 0..raw_string_hashes {
+                sanitized.push(' ');
+                index += 1;
+            }
+            sanitized.push(' ');
+            index += 1;
+
+            while index < chars.len() {
+                if chars[index] == '\n' {
+                    lines.push(std::mem::take(&mut sanitized));
+                    index += 1;
+                    continue;
+                }
+                sanitized.push(' ');
+                if chars[index] == '"'
+                    && (0..raw_string_hashes)
+                        .all(|offset| chars.get(index + 1 + offset) == Some(&'#'))
+                {
+                    index += 1;
+                    for _ in 0..raw_string_hashes {
+                        sanitized.push(' ');
+                        index += 1;
+                    }
+                    break;
+                }
+                index += 1;
+            }
+            continue;
+        }
+
+        if character == '"' {
+            sanitized.push(' ');
+            index += 1;
+            while index < chars.len() {
+                if chars[index] == '\n' {
+                    lines.push(std::mem::take(&mut sanitized));
+                    index += 1;
+                    break;
+                }
+                sanitized.push(' ');
+                if chars[index] == '\\' {
+                    index += 2;
+                } else if chars[index] == '"' {
+                    index += 1;
+                    break;
+                } else {
+                    index += 1;
+                }
+            }
+        } else if character == '\'' {
+            sanitized.push(' ');
+            index += 1;
+
+            if chars
+                .get(index)
+                .is_some_and(|next| next.is_ascii_alphabetic() || *next == '_')
+            {
+                let identifier_start = index;
+                while chars
+                    .get(index)
+                    .is_some_and(|next| next.is_ascii_alphanumeric() || *next == '_')
+                {
+                    sanitized.push(' ');
+                    index += 1;
+                }
+
+                if index == identifier_start + 1 && chars.get(index) == Some(&'\'') {
+                    sanitized.push(' ');
+                    index += 1;
+                }
+            } else if chars.get(index) == Some(&'\\') {
+                sanitized.push(' ');
+                index += 1;
+                if index < chars.len() {
+                    sanitized.push(' ');
+                    index += 1;
+                }
+                if chars.get(index) == Some(&'\'') {
+                    sanitized.push(' ');
+                    index += 1;
+                }
+            } else {
+                while index < chars.len() {
+                    sanitized.push(' ');
+                    if chars[index] == '\'' {
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+        } else {
+            sanitized.push(character);
+            index += 1;
+        }
+    }
+
+    if !sanitized.is_empty() || source.ends_with('\n') {
+        lines.push(sanitized);
+    }
+
+    lines
+}
+
+fn raw_string_hashes(chars: &[char], start: usize) -> Option<usize> {
+    if chars.get(start) != Some(&'r') {
+        return None;
+    }
+
+    let mut index = start + 1;
+    while chars.get(index) == Some(&'#') {
+        index += 1;
+    }
+
+    (chars.get(index) == Some(&'"')).then_some(index - start - 1)
+}
+
 /// Returns true when any workflow line pins `toolchain:` to `expected_channel`.
 ///
 /// This intentionally checks presence, not uniqueness: if `workflow_source`
@@ -1008,10 +1274,10 @@ mod tests {
         DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
         check_docs_contain, check_fixture_directories_inner, check_fixture_naming_docs_inner,
         check_fixture_testing_docs_inner, check_future_session_docs_inner,
-        check_license_files_inner, check_placeholder_sources, check_readme_roadmap_link_inner,
-        check_release_planning_inner, check_toolchain_pin_inner, collect_workspace_members,
-        contains_crate_name, has_non_placeholder_public_item, has_placeholder_marker,
-        workflow_installs_toolchain,
+        check_license_files_inner, check_no_secret_content_reads_inner, check_placeholder_sources,
+        check_readme_roadmap_link_inner, check_release_planning_inner, check_toolchain_pin_inner,
+        collect_workspace_members, contains_crate_name, forbidden_secret_content_patterns,
+        has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1258,6 +1524,179 @@ pub fn
             .expect_err("future session docs missing note should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
+    }
+
+    #[test]
+    fn accepts_secret_metadata_without_content_reads() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+pub struct IngressTlsSummary {
+    pub secret_name: Option<String>,
+}
+",
+        );
+
+        check_no_secret_content_reads_inner([&source_path], forbidden_secret_content_patterns())
+            .expect("secret metadata references should pass");
+    }
+
+    #[test]
+    fn rejects_secret_type_imports_and_content_fields() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+use k8s_openapi::api::core::v1::Secret;
+
+fn read_secret(secret: Secret) {
+    let _ = secret.data;
+}
+",
+        );
+
+        let error = check_no_secret_content_reads_inner(
+            [&source_path],
+            forbidden_secret_content_patterns(),
+        )
+        .expect_err("secret content reads should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("forbidden Secret content access pattern")
+        );
+    }
+
+    #[test]
+    fn rejects_typed_secret_content_field_access_with_short_identifier() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+fn read_secret(s: Secret) {
+    let _ = s.string_data;
+}
+",
+        );
+
+        let error = check_no_secret_content_reads_inner(
+            [&source_path],
+            forbidden_secret_content_patterns(),
+        )
+        .expect_err("typed Secret content reads should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("forbidden Secret content access pattern")
+        );
+    }
+
+    #[test]
+    fn rejects_lifetime_secret_reference_content_field_access() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+fn read_secret<'a>(s: &'a Secret) {
+    let _ = s.data;
+}
+",
+        );
+
+        let error = check_no_secret_content_reads_inner(
+            [&source_path],
+            forbidden_secret_content_patterns(),
+        )
+        .expect_err("lifetime Secret references should still be tracked");
+
+        assert!(
+            error
+                .to_string()
+                .contains("forbidden Secret content access pattern")
+        );
+    }
+
+    #[test]
+    fn ignores_secret_content_patterns_in_comments_and_strings() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+fn describe() {
+    // secret.data should stay documented without failing.
+    let message = \"secret.string_data is forbidden\";
+}
+",
+        );
+
+        check_no_secret_content_reads_inner([&source_path], forbidden_secret_content_patterns())
+            .expect("comments and strings should be ignored");
+    }
+
+    #[test]
+    fn ignores_char_literals_before_secret_content_checks() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+fn describe() {
+    let quote = '\\'';
+    let newline = '\\n';
+    let plain = 'x';
+    let metadata = dynamic.data;
+}
+",
+        );
+
+        check_no_secret_content_reads_inner([&source_path], forbidden_secret_content_patterns())
+            .expect("char literals should not corrupt later scanning");
+    }
+
+    #[test]
+    fn ignores_block_comments_and_raw_strings() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "k8s.rs",
+            "\
+//! Kubernetes adapters.
+
+/*
+let _ = secret.data;
+*/
+
+fn describe() {
+    let raw = r#\"
+secret.string_data
+\"#;
+    let metadata = dynamic.data;
+}
+",
+        );
+
+        check_no_secret_content_reads_inner([&source_path], forbidden_secret_content_patterns())
+            .expect("block comments and raw strings should be ignored");
     }
 
     #[test]
