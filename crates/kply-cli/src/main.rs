@@ -8,8 +8,9 @@ use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
 };
 use kply_core::{
-    AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, RelationshipConfidence, RouteSelector,
-    ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
+    AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef,
+    RelationshipConfidence, RouteSelector, ServiceRef, SessionId, SessionName, SessionPlan,
+    SessionPolicy, TimeToLive, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
@@ -180,6 +181,10 @@ fn render_session_plan(
         println!("name: {}", plan.name());
         println!("workload: {}", plan.workload());
         println!("image: {}", plan.image());
+        println!("planned_resources: {}", plan.planned_resources().len());
+        for resource in plan.planned_resources() {
+            println!("  resource: {resource}");
+        }
         println!(
             "route_selector: {}",
             plan.route_selector()
@@ -252,7 +257,8 @@ fn session_plan_from_config(
         .map(TimeToLive::new)
         .transpose()
         .map_err(|error| SessionPlanBuildError::Usage(error.to_string()))?;
-    let route_selector = match route_strategy.unwrap_or_else(|| app.route_strategy().as_str()) {
+    let route_strategy = route_strategy.unwrap_or_else(|| app.route_strategy().as_str());
+    let route_selector = match route_strategy {
         "header" => Some(
             RouteSelector::header(SESSION_HEADER_NAME, session_id.as_str()).map_err(|error| {
                 SessionPlanBuildError::Config(format!("invalid session route selector: {error}"))
@@ -273,6 +279,14 @@ fn session_plan_from_config(
             )));
         }
     };
+    let planned_resources = planned_session_resources(
+        namespace,
+        app.workload_kind(),
+        session_id.as_str(),
+    )
+    .map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid planned kubernetes resource: {error}"))
+    })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -281,6 +295,7 @@ fn session_plan_from_config(
         image,
         SessionPolicy::sandbox(),
     );
+    plan = plan.with_planned_resources(planned_resources);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -289,6 +304,30 @@ fn session_plan_from_config(
     }
 
     Ok(plan)
+}
+
+fn planned_session_resources(
+    namespace: &str,
+    workload_kind: &str,
+    session_id: &str,
+) -> std::result::Result<Vec<KubernetesResourceRef>, String> {
+    [
+        (
+            workload_kind,
+            planned_resource_token(session_id, "workload"),
+        ),
+        ("Service", planned_resource_token(session_id, "service")),
+        ("HTTPRoute", planned_resource_token(session_id, "route")),
+    ]
+    .into_iter()
+    .map(|(kind, name)| {
+        KubernetesResourceRef::new(namespace, kind, name).map_err(|error| error.to_string())
+    })
+    .collect()
+}
+
+fn planned_resource_token(session_id: &str, suffix: &str) -> String {
+    unique_token(session_id, suffix)
 }
 
 fn supported_route_strategies() -> String {
@@ -301,10 +340,23 @@ fn supported_route_strategies() -> String {
 
 /// Derive a stable Kubernetes-compatible session token from an app name.
 fn session_token(app_name: &str, suffix: &str) -> String {
-    let mut token = String::with_capacity(app_name.len() + suffix.len() + 1);
+    unique_token(app_name, suffix)
+}
+
+fn unique_token(value: &str, suffix: &str) -> String {
+    let token = normalized_token_prefix(value);
+    if token.len() + suffix.len() < 63 {
+        return append_token_suffix(token, suffix, None);
+    }
+
+    append_token_suffix(token, suffix, Some(stable_token_hash(value)))
+}
+
+fn normalized_token_prefix(value: &str) -> String {
+    let mut token = String::with_capacity(value.len());
     let mut previous_was_separator = false;
 
-    for character in app_name.chars().flat_map(char::to_lowercase) {
+    for character in value.chars().flat_map(char::to_lowercase) {
         if character.is_ascii_alphanumeric() {
             token.push(character);
             previous_was_separator = false;
@@ -322,9 +374,15 @@ fn session_token(app_name: &str, suffix: &str) -> String {
         token.push_str("session");
     }
 
-    let max_app_name_len = 63usize.saturating_sub(suffix.len() + 1);
-    if token.len() > max_app_name_len {
-        token.truncate(max_app_name_len);
+    token
+}
+
+fn append_token_suffix(mut token: String, suffix: &str, hash: Option<String>) -> String {
+    let hash_len = hash.as_ref().map_or(0, String::len);
+    let separators = if hash.is_some() { 2 } else { 1 };
+    let max_prefix_len = 63usize.saturating_sub(suffix.len() + hash_len + separators);
+    if token.len() > max_prefix_len {
+        token.truncate(max_prefix_len);
         while token.ends_with('-') {
             token.pop();
         }
@@ -335,9 +393,24 @@ fn session_token(app_name: &str, suffix: &str) -> String {
     }
 
     token.push('-');
+    if let Some(hash) = hash {
+        token.push_str(&hash);
+        token.push('-');
+    }
     token.push_str(suffix);
 
     token
+}
+
+/// Compute a deterministic non-cryptographic 8-hex-digit token hash.
+///
+/// This uses a 32-bit FNV-1 style multiply-then-XOR fold for stable name
+/// derivation when long prefixes must be truncated. It is not for security.
+fn stable_token_hash(value: &str) -> String {
+    let hash = value.bytes().fold(0x811c9dc5u32, |hash, byte| {
+        hash.wrapping_mul(0x01000193) ^ u32::from(byte)
+    });
+    format!("{hash:08x}")
 }
 
 /// Render configured application targets.
@@ -771,7 +844,7 @@ fn print_verbose_trace(cli: &Cli) {
 
 #[cfg(test)]
 mod tests {
-    use super::session_token;
+    use super::{planned_resource_token, planned_session_resources, session_token};
 
     #[test]
     fn preserves_session_token_suffix_for_long_app_names() {
@@ -788,10 +861,81 @@ mod tests {
     }
 
     #[test]
+    fn session_tokens_preserve_long_app_uniqueness() {
+        let shared_prefix = "a".repeat(58);
+        let first_app = format!("{shared_prefix}1111");
+        let second_app = format!("{shared_prefix}2222");
+
+        let first_token = session_token(&first_app, "plan");
+        let second_token = session_token(&second_app, "plan");
+
+        assert_ne!(first_token, second_token);
+        assert!(first_token.ends_with("-plan"));
+        assert!(second_token.ends_with("-plan"));
+        assert!(first_token.len() <= 63);
+        assert!(second_token.len() <= 63);
+    }
+
+    #[test]
     fn normalizes_session_token_prefixes() {
         assert_eq!(session_token("", "plan"), "session-plan");
         assert_eq!(session_token("---", "plan"), "session-plan");
         assert_eq!(session_token("MyApp", "plan"), "myapp-plan");
         assert_eq!(session_token("my__app", "plan"), "my-app-plan");
+    }
+
+    #[test]
+    fn builds_planned_session_resources() {
+        let resources =
+            planned_session_resources("ns", "Workload", "sess").expect("planned resources");
+
+        assert_eq!(resources.len(), 3);
+        assert_eq!(resources[0].namespace(), "ns");
+        assert_eq!(resources[0].kind(), "Workload");
+        assert_eq!(
+            resources[0].name(),
+            &planned_resource_token("sess", "workload")
+        );
+        assert_eq!(resources[1].namespace(), "ns");
+        assert_eq!(resources[1].kind(), "Service");
+        assert_eq!(
+            resources[1].name(),
+            &planned_resource_token("sess", "service")
+        );
+        assert_eq!(resources[2].namespace(), "ns");
+        assert_eq!(resources[2].kind(), "HTTPRoute");
+        assert_eq!(
+            resources[2].name(),
+            &planned_resource_token("sess", "route")
+        );
+    }
+
+    #[test]
+    fn planned_session_resources_return_validation_errors() {
+        let error = planned_session_resources("Bad_Namespace", "Workload", "sess")
+            .expect_err("invalid namespace should fail");
+
+        assert!(error.contains("namespace"));
+    }
+
+    #[test]
+    fn planned_resource_tokens_preserve_long_session_uniqueness() {
+        let shared_prefix = "a".repeat(54);
+        let first_app = format!("{shared_prefix}1111");
+        let second_app = format!("{shared_prefix}2222");
+        let first_session = session_token(&first_app, "plan");
+        let second_session = session_token(&second_app, "plan");
+
+        assert_ne!(first_session, second_session);
+        for suffix in ["workload", "service", "route"] {
+            let first_resource = planned_resource_token(&first_session, suffix);
+            let second_resource = planned_resource_token(&second_session, suffix);
+
+            assert_ne!(first_resource, second_resource);
+            assert!(first_resource.ends_with(suffix));
+            assert!(second_resource.ends_with(suffix));
+            assert!(first_resource.len() <= 63);
+            assert!(second_resource.len() <= 63);
+        }
     }
 }

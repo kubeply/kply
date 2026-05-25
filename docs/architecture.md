@@ -111,6 +111,11 @@ Current provisional pre-`1.0.0` session plan fields:
 - `name`: human-readable session name string.
 - `workload`: target workload object with `namespace`, `kind`, and `name`.
 - `image`: proposed sandbox image reference string.
+- `ttl`: optional compact duration string for the planned session lifetime,
+  such as `30m`; serialized as `null` when unset.
+- `planned_resources`: list of Kubernetes resources Kply expects a future
+  session to create for the sandbox, deduplicated and serialized in
+  deterministic order.
 - `route_selector`: always serialized as a nullable field; it is a test
   traffic selector object when configured and `null` otherwise.
 - `policy`: allowed operation policy.
@@ -121,6 +126,13 @@ Current provisional pre-`1.0.0` workload fields:
 - `namespace`: Kubernetes namespace string.
 - `kind`: Kubernetes resource kind string such as `Deployment` or
   `StatefulSet`.
+- `name`: Kubernetes resource name string.
+
+Current provisional pre-`1.0.0` planned Kubernetes resource fields:
+
+- `namespace`: Kubernetes namespace string.
+- `kind`: Kubernetes resource kind string such as `Deployment`, `Service`, or
+  `HTTPRoute`.
 - `name`: Kubernetes resource name string.
 
 Current provisional pre-`1.0.0` route selector fields:

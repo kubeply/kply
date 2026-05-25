@@ -7,6 +7,23 @@ expression: value
   "id": "checkout-plan",
   "image": "ghcr.io/acme/checkout:next",
   "name": "checkout-session",
+  "planned_resources": [
+    {
+      "kind": "Deployment",
+      "name": "checkout-plan-workload",
+      "namespace": "staging"
+    },
+    {
+      "kind": "HTTPRoute",
+      "name": "checkout-plan-route",
+      "namespace": "staging"
+    },
+    {
+      "kind": "Service",
+      "name": "checkout-plan-service",
+      "namespace": "staging"
+    }
+  ],
   "policy": {
     "allowed_operations": [
       "inspect",

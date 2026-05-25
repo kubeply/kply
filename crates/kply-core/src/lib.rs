@@ -278,6 +278,72 @@ impl<'de> Deserialize<'de> for WorkloadRef {
     }
 }
 
+/// Namespaced Kubernetes resource planned for a future Kply session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct KubernetesResourceRef {
+    namespace: String,
+    kind: String,
+    name: String,
+}
+
+impl KubernetesResourceRef {
+    /// Create a [`KubernetesResourceRef`] from validated namespace, kind, and name parts.
+    pub fn new(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, KubernetesResourceRefError> {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        let name = name.into();
+
+        validate_session_token(&namespace)
+            .map_err(WorkloadTokenError::from)
+            .map_err(KubernetesResourceRefError::Namespace)?;
+        validate_workload_kind(&kind).map_err(KubernetesResourceRefError::Kind)?;
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(KubernetesResourceRefError::Name)?;
+
+        Ok(Self {
+            namespace,
+            kind,
+            name,
+        })
+    }
+
+    /// Borrow the resource namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the resource kind.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Borrow the resource name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for KubernetesResourceRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}/{}", self.namespace, self.kind, self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for KubernetesResourceRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = KubernetesResourceRefFields::deserialize(deserializer)?;
+        Self::new(fields.namespace, fields.kind, fields.name).map_err(D::Error::custom)
+    }
+}
+
 /// Kubernetes Pod reference used by the app graph model.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct PodRef {
@@ -1556,7 +1622,8 @@ impl std::error::Error for SessionPolicyError {}
 /// Dry-run description of a future Kply session.
 ///
 /// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
-/// proposed [`ImageRef`], optional time-to-live, optional [`RouteSelector`],
+/// proposed [`ImageRef`], optional time-to-live, planned
+/// [`KubernetesResourceRef`] resources, optional [`RouteSelector`],
 /// [`SessionPolicy`], and initial [`SessionStatus`] for a session that has not
 /// yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -1567,6 +1634,7 @@ pub struct SessionPlan {
     image: ImageRef,
     #[serde(rename = "ttl")]
     time_to_live: Option<TimeToLive>,
+    planned_resources: Vec<KubernetesResourceRef>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1587,6 +1655,7 @@ impl SessionPlan {
             workload,
             image,
             time_to_live: None,
+            planned_resources: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -1596,6 +1665,17 @@ impl SessionPlan {
     /// Return a copy of this plan with a session lifetime.
     pub fn with_time_to_live(mut self, time_to_live: TimeToLive) -> Self {
         self.time_to_live = Some(time_to_live);
+        self
+    }
+
+    /// Return a copy of this plan with planned [`KubernetesResourceRef`] resources.
+    pub fn with_planned_resources(
+        mut self,
+        planned_resources: impl IntoIterator<Item = KubernetesResourceRef>,
+    ) -> Self {
+        self.planned_resources = planned_resources.into_iter().collect();
+        self.planned_resources.sort_unstable();
+        self.planned_resources.dedup();
         self
     }
 
@@ -1628,6 +1708,11 @@ impl SessionPlan {
     /// Borrow the optional session lifetime.
     pub fn time_to_live(&self) -> Option<&TimeToLive> {
         self.time_to_live.as_ref()
+    }
+
+    /// Borrow planned [`KubernetesResourceRef`] resources in deterministic order.
+    pub fn planned_resources(&self) -> &[KubernetesResourceRef] {
+        &self.planned_resources
     }
 
     /// Borrow the optional [`RouteSelector`].
@@ -1666,6 +1751,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
             fields.image,
             fields.policy,
         );
+        plan = plan.with_planned_resources(fields.planned_resources);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -2231,6 +2317,31 @@ impl fmt::Display for WorkloadRefError {
 
 impl std::error::Error for WorkloadRefError {}
 
+/// Error returned when a [`KubernetesResourceRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KubernetesResourceRefError {
+    /// Resource namespaces use the same token rules as workload namespaces.
+    Namespace(WorkloadTokenError),
+    /// Resource kinds must be non-empty Kubernetes-style kind identifiers.
+    Kind(WorkloadKindError),
+    /// Resource names use the same token rules as workload names.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for KubernetesResourceRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(error) => {
+                write!(formatter, "invalid kubernetes resource namespace: {error}")
+            }
+            Self::Kind(error) => write!(formatter, "invalid kubernetes resource kind: {error}"),
+            Self::Name(error) => write!(formatter, "invalid kubernetes resource name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for KubernetesResourceRefError {}
+
 /// Error returned when a [`PodRef`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PodRefError {
@@ -2474,6 +2585,13 @@ struct WorkloadRefFields {
 }
 
 #[derive(Deserialize)]
+struct KubernetesResourceRefFields {
+    namespace: String,
+    kind: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct PodRefFields {
     namespace: String,
     name: String,
@@ -2571,6 +2689,8 @@ struct SessionPlanFields {
     image: ImageRef,
     #[serde(default, rename = "ttl")]
     time_to_live: Option<TimeToLive>,
+    #[serde(default)]
+    planned_resources: Vec<KubernetesResourceRef>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -2998,18 +3118,18 @@ mod tests {
     use super::{
         AppGraph, AppGraphWarning, ConfidenceLevel, ConfigMapRef, ConfigMapRefError,
         ConfigReference, ContainerRef, ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN,
-        ImageFacts, ImageRef, ImageRefError, PodRef, PodRefError, ProbeFacts, ProbeKind,
-        RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
-        ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts,
-        ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
-        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
-        SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError, SecretReference,
-        ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
-        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
-        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        ImageFacts, ImageRef, ImageRefError, KubernetesResourceRef, KubernetesResourceRefError,
+        PodRef, PodRefError, ProbeFacts, ProbeKind, RESOURCE_QUANTITY_MAX_LEN,
+        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
+        ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts, ResourceQuantity,
+        ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError, RouteHostError,
+        RouteRef, RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN,
+        SecretMetadataRef, SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError,
+        ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
+        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
+        SessionReport, SessionReportError, SessionStatus, SessionTransitionError,
+        TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError, WORKLOAD_KIND_MAX_LEN,
+        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -5231,7 +5351,14 @@ mod tests {
     fn snapshots_session_plan_json_contract() {
         let route_selector =
             RouteSelector::header("x-kply-session", "session-123").expect("route selector");
-        let plan = test_session_plan().with_route_selector(route_selector);
+        let plan = test_session_plan()
+            .with_planned_resources([
+                KubernetesResourceRef::new("checkout", "Deployment", "session-123-workload")
+                    .expect("planned workload"),
+                KubernetesResourceRef::new("checkout", "Service", "session-123-service")
+                    .expect("planned service"),
+            ])
+            .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
         insta::assert_json_snapshot!("session_plan_json_contract", value);
@@ -5249,6 +5376,18 @@ mod tests {
             },
             "image": "registry.example.com/checkout/api:v2",
             "ttl": "30m",
+            "planned_resources": [
+                {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "session-123-workload"
+                },
+                {
+                    "namespace": "checkout",
+                    "kind": "Service",
+                    "name": "session-123-service"
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -5274,6 +5413,8 @@ mod tests {
             Some("session-123.preview.example.com")
         );
         assert_eq!(plan.time_to_live().map(TimeToLive::as_str), Some("30m"));
+        assert_eq!(plan.planned_resources().len(), 2);
+        assert_eq!(plan.planned_resources()[0].name(), "session-123-workload");
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
 
@@ -5521,9 +5662,30 @@ mod tests {
         assert_eq!(plan.name(), &name);
         assert_eq!(plan.workload(), &workload);
         assert_eq!(plan.image(), &image);
+        assert_eq!(plan.planned_resources(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
+    }
+
+    #[test]
+    fn creates_session_plan_with_planned_resources() {
+        let planned_service =
+            KubernetesResourceRef::new("checkout", "Service", "session-123-service")
+                .expect("planned service");
+        let planned_workload =
+            KubernetesResourceRef::new("checkout", "Deployment", "session-123-workload")
+                .expect("planned workload");
+        let plan = test_session_plan().with_planned_resources([
+            planned_service.clone(),
+            planned_workload.clone(),
+            planned_service.clone(),
+        ]);
+
+        assert_eq!(
+            plan.planned_resources(),
+            [planned_workload, planned_service]
+        );
     }
 
     #[test]
@@ -5916,6 +6078,41 @@ mod tests {
             WorkloadRefError::Kind(WorkloadKindError::TooLong {
                 max_len: WORKLOAD_KIND_MAX_LEN
             })
+        );
+    }
+
+    #[test]
+    fn creates_kubernetes_resource_ref_from_valid_parts() {
+        let resource = KubernetesResourceRef::new("checkout", "HTTPRoute", "session-123-route")
+            .expect("resource ref");
+
+        assert_eq!(resource.namespace(), "checkout");
+        assert_eq!(resource.kind(), "HTTPRoute");
+        assert_eq!(resource.name(), "session-123-route");
+        assert_eq!(resource.to_string(), "checkout/HTTPRoute/session-123-route");
+    }
+
+    #[test]
+    fn rejects_invalid_kubernetes_resource_ref_parts() {
+        let namespace_error =
+            KubernetesResourceRef::new("Checkout", "HTTPRoute", "session-123-route")
+                .expect_err("namespace should be invalid");
+        let kind_error = KubernetesResourceRef::new("checkout", "", "session-123-route")
+            .expect_err("kind should be invalid");
+        let name_error = KubernetesResourceRef::new("checkout", "HTTPRoute", "Session-123")
+            .expect_err("name should be invalid");
+
+        assert_eq!(
+            namespace_error,
+            KubernetesResourceRefError::Namespace(WorkloadTokenError::InvalidBoundary)
+        );
+        assert_eq!(
+            kind_error,
+            KubernetesResourceRefError::Kind(WorkloadKindError::Empty)
+        );
+        assert_eq!(
+            name_error,
+            KubernetesResourceRefError::Name(WorkloadTokenError::InvalidBoundary)
         );
     }
 
