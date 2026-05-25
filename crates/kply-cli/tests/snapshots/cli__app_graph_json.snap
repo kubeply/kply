@@ -1,0 +1,38 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 702
+expression: value
+---
+{
+  "config_references": [],
+  "image_facts": [],
+  "owned_pods": [],
+  "probe_facts": [],
+  "relationship_confidences": [
+    {
+      "confidence": "high",
+      "relationship": {
+        "kind": "workload_service_selection",
+        "service": {
+          "name": "checkout-http",
+          "namespace": "shop"
+        }
+      }
+    }
+  ],
+  "resource_facts": [],
+  "secret_references": [],
+  "selecting_services": [
+    {
+      "name": "checkout-http",
+      "namespace": "shop"
+    }
+  ],
+  "service_routes": [],
+  "warnings": [],
+  "workload": {
+    "kind": "StatefulSet",
+    "name": "checkout-api",
+    "namespace": "shop"
+  }
+}

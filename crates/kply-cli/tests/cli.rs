@@ -665,6 +665,56 @@ apps:
 }
 
 #[test]
+fn prints_app_graph_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    workload_kind: StatefulSet
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = kply_cmd()
+        .args([
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "graph",
+            "checkout",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("app_graph_json", value);
+}
+
+#[test]
+fn rejects_app_graph_without_json() {
+    let output = assert_kply_exit_code(&["app", "graph", "checkout"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "app graph usage errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("app_graph_requires_json", stderr);
+}
+
+#[test]
 fn suppresses_app_inspect_text_when_quiet() {
     let workspace = temp_workspace();
     let config_path = write_temp_file(
@@ -910,7 +960,7 @@ fn covers_every_app_command() {
 
     assert_eq!(
         command_names,
-        ["inspect", "list"],
+        ["graph", "inspect", "list"],
         "update app command tests when the app command surface changes"
     );
 
@@ -922,6 +972,15 @@ fn covers_every_app_command() {
         .args([
             "app",
             AppCommand::Inspect { app: String::new() }.name(),
+            "missing",
+        ])
+        .assert()
+        .code(EXIT_USAGE);
+    kply_cmd()
+        .args([
+            "--json",
+            "app",
+            AppCommand::Graph { app: String::new() }.name(),
             "missing",
         ])
         .assert()
