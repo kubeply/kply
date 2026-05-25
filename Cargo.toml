@@ -29,6 +29,8 @@ kply-core = { path = "crates/kply-core" }
 kply-k8s = { path = "crates/kply-k8s" }
 kply-routing = { path = "crates/kply-routing" }
 kply-test = { path = "crates/kply-test" }
+k8s-openapi = { version = "0.27.1", features = ["v1_31"] }
+kube = { version = "3.1.0", default-features = false, features = ["client", "config"] }
 regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_norway = "0.9.42"
