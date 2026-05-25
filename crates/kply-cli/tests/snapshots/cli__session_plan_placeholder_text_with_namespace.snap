@@ -8,6 +8,10 @@ id: checkout-plan
 name: checkout-session
 workload: staging/Deployment/checkout-api
 image: ghcr.io/acme/checkout:next
+planned_resources: 3
+  resource: staging/Deployment/checkout-plan-workload
+  resource: staging/HTTPRoute/checkout-plan-route
+  resource: staging/Service/checkout-plan-service
 route_selector: header:x-kply-session=checkout-plan
 policy_operations: 6
 status: planned

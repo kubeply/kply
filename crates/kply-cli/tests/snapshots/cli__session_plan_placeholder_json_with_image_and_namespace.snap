@@ -7,6 +7,23 @@ expression: value
   "id": "checkout-plan",
   "image": "ghcr.io/kubeply/checkout:v2",
   "name": "checkout-session",
+  "planned_resources": [
+    {
+      "kind": "Deployment",
+      "name": "checkout-plan-workload",
+      "namespace": "staging"
+    },
+    {
+      "kind": "HTTPRoute",
+      "name": "checkout-plan-route",
+      "namespace": "staging"
+    },
+    {
+      "kind": "Service",
+      "name": "checkout-plan-service",
+      "namespace": "staging"
+    }
+  ],
   "policy": {
     "allowed_operations": [
       "inspect",
