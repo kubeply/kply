@@ -3183,6 +3183,84 @@ mod tests {
         ])
     }
 
+    fn minimal_app_graph() -> AppGraph {
+        AppGraph::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+        )
+    }
+
+    fn routed_app_graph() -> AppGraph {
+        AppGraph::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+        )
+        .with_selecting_services(
+            [ServiceRef::new("checkout", "checkout-api").expect("service ref")],
+        )
+        .with_service_routes([ServiceRouteRef::new(
+            ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+            RouteRef::new("checkout", "HTTPRoute", "checkout-api").expect("route ref"),
+        )])
+        .with_relationship_confidences([
+            RelationshipConfidence::new(
+                GraphRelationship::WorkloadServiceSelection {
+                    service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                },
+                ConfidenceLevel::High,
+            ),
+            RelationshipConfidence::new(
+                GraphRelationship::ServiceRouteReference {
+                    service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    route: RouteRef::new("checkout", "HTTPRoute", "checkout-api")
+                        .expect("route ref"),
+                },
+                ConfidenceLevel::High,
+            ),
+        ])
+    }
+
+    fn warning_app_graph() -> AppGraph {
+        AppGraph::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+        )
+        .with_selecting_services([
+            ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+            ServiceRef::new("checkout", "checkout-private").expect("service ref"),
+        ])
+        .with_probe_facts([ProbeFacts::new(
+            ContainerRef::new(
+                WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+                "api",
+            )
+            .expect("container ref"),
+            true,
+            false,
+            false,
+        )])
+        .with_warnings([
+            AppGraphWarning::ambiguous_service_selector(
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                [
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                        .expect("workload ref"),
+                ],
+            ),
+            AppGraphWarning::missing_route(
+                ServiceRef::new("checkout", "checkout-private").expect("service ref"),
+            ),
+            AppGraphWarning::missing_probes(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                [ProbeKind::Liveness, ProbeKind::Startup],
+            ),
+        ])
+    }
+
     #[test]
     fn creates_app_graph_from_workload_ref() {
         let workload =
@@ -4693,6 +4771,21 @@ mod tests {
     #[test]
     fn snapshots_app_graph_json_contract() {
         insta::assert_json_snapshot!("app_graph_json_contract", test_app_graph());
+    }
+
+    #[test]
+    fn snapshots_minimal_app_graph_shape() {
+        insta::assert_json_snapshot!("minimal_app_graph_shape", minimal_app_graph());
+    }
+
+    #[test]
+    fn snapshots_routed_app_graph_shape() {
+        insta::assert_json_snapshot!("routed_app_graph_shape", routed_app_graph());
+    }
+
+    #[test]
+    fn snapshots_warning_app_graph_shape() {
+        insta::assert_json_snapshot!("warning_app_graph_shape", warning_app_graph());
     }
 
     #[test]

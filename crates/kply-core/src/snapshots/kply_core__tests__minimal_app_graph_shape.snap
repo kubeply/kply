@@ -1,0 +1,22 @@
+---
+source: crates/kply-core/src/lib.rs
+assertion_line: 4778
+expression: minimal_app_graph()
+---
+{
+  "workload": {
+    "namespace": "checkout",
+    "kind": "Deployment",
+    "name": "checkout-api"
+  },
+  "owned_pods": [],
+  "selecting_services": [],
+  "service_routes": [],
+  "probe_facts": [],
+  "image_facts": [],
+  "resource_facts": [],
+  "config_references": [],
+  "secret_references": [],
+  "relationship_confidences": [],
+  "warnings": []
+}
