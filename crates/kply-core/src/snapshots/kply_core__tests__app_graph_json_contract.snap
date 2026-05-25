@@ -133,5 +133,65 @@ expression: test_app_graph()
       "memory_request": "128Mi",
       "memory_limit": "256Mi"
     }
+  ],
+  "config_references": [
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "config_map": {
+        "namespace": "checkout",
+        "name": "checkout-api-config"
+      }
+    },
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "worker"
+      },
+      "config_map": {
+        "namespace": "checkout",
+        "name": "checkout-worker-config"
+      }
+    }
+  ],
+  "secret_references": [
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "secret": {
+        "namespace": "checkout",
+        "name": "checkout-api-credentials"
+      }
+    },
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "worker"
+      },
+      "secret": {
+        "namespace": "checkout",
+        "name": "checkout-worker-credentials"
+      }
+    }
   ]
 }
