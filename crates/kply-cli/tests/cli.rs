@@ -3,6 +3,7 @@
 use clap::CommandFactory;
 use kply_cli::cli::Cli;
 use kply_cli::cli::Command;
+use kply_cli::cli::ConfigCommand;
 use kply_test::{EXIT_USAGE, assert_kply_exit_code, kply_cmd};
 
 #[test]
@@ -122,6 +123,44 @@ fn prints_command_group_json_placeholders() {
 }
 
 #[test]
+fn prints_config_show_text() {
+    let output = kply_cmd()
+        .args(["config", "show"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("config_show_text", output);
+}
+
+#[test]
+fn prints_config_show_json() {
+    let output = kply_cmd()
+        .args(["config", "show", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("config_show_json", value);
+}
+
+#[test]
+fn suppresses_config_show_text_when_quiet() {
+    kply_cmd()
+        .args(["config", "show", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
 fn covers_every_top_level_command() {
     let mut command_names = Cli::command()
         .get_subcommands()
@@ -148,6 +187,28 @@ fn covers_every_top_level_command() {
     for command in Command::PLACEHOLDER_GROUPS {
         kply_cmd().arg(command.name()).assert().success();
     }
+}
+
+#[test]
+fn covers_every_config_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("config")
+        .expect("config command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["show"],
+        "update config command tests when the config command surface changes"
+    );
+
+    kply_cmd()
+        .args(["config", ConfigCommand::Show.name()])
+        .assert()
+        .success();
 }
 
 #[test]

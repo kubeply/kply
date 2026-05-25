@@ -1,0 +1,13 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 136
+expression: output
+---
+kply config show
+{
+  "version": 1,
+  "apps": [],
+  "routing": {},
+  "checks": [],
+  "policies": []
+}

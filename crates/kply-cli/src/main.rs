@@ -3,7 +3,8 @@
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use kply_cli::cli::{Cli, Command};
+use kply_cli::cli::{Cli, Command, ConfigCommand};
+use kply_config::KplyConfig;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
@@ -30,12 +31,15 @@ fn run() -> Result<ExitCode> {
 
     print_verbose_trace(&cli);
 
-    match cli.command {
+    match &cli.command {
         Some(Command::Help) => {
             Cli::command().print_help()?;
             println!();
             return Ok(ExitCode::SUCCESS);
         }
+        Some(Command::Config {
+            command: Some(ConfigCommand::Show),
+        }) => return render_config_show(&cli),
         Some(command) => {
             if cli.json {
                 let value = serde_json::json!({
@@ -123,6 +127,20 @@ fn render_json_usage_error(error: &clap::Error) -> Result<()> {
     Ok(())
 }
 
+/// Render the currently resolved configuration.
+fn render_config_show(cli: &Cli) -> Result<ExitCode> {
+    let config = KplyConfig::default();
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&config)?);
+    } else if !cli.quiet {
+        println!("kply config show");
+        println!("{}", serde_json::to_string_pretty(&config)?);
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Convert documented small integer exit codes into process exit codes.
 fn exit_code(code: i32) -> ExitCode {
     let Ok(code) = u8::try_from(code) else {
@@ -137,7 +155,10 @@ fn print_verbose_trace(cli: &Cli) {
         return;
     }
 
-    let command = cli.command.map_or("<none>", |command| command.name());
+    let command = cli
+        .command
+        .as_ref()
+        .map_or("<none>", |command| command.name());
     let config = cli
         .config
         .as_ref()

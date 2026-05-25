@@ -1,5 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
+assertion_line: 86
 expression: output
 ---
 Top-level placeholder CLI options
@@ -10,7 +11,7 @@ Commands:
   help        Print top-level help
   session     Manage future sandbox sessions
   app         Inspect future application targets
-  config      Manage future Kply configuration
+  config      Manage Kply configuration
   cluster     Inspect future cluster capabilities
   completion  Generate future shell completion scripts
   report      Read future session reports
