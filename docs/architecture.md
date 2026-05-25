@@ -69,8 +69,8 @@ contract. It is independent from raw Kubernetes client types and currently
 contains the root workload, Pods directly owned by that workload, and Services
 that select that workload, route objects that reference those Services, and
 container probe, image, resource, config, and secret metadata facts, plus
-confidence metadata for inferred relationships. Future roadmap tasks will add
-warning relationships.
+confidence metadata for inferred relationships and graph warnings. Future
+roadmap tasks will add more warning variants.
 
 Current provisional pre-`1.0.0` app graph fields:
 
@@ -98,6 +98,9 @@ Current provisional pre-`1.0.0` app graph fields:
   graph relationships. Each entry contains a typed `relationship` object and a
   `confidence` level of `low`, `medium`, or `high`, serialized in
   deterministic order.
+- `warnings`: list of graph-building warnings, serialized in deterministic
+  order. Current warnings include `ambiguous_service_selector`, which names the
+  Service and candidate workloads when a selector is not specific enough.
 
 Current provisional pre-`1.0.0` session plan fields:
 

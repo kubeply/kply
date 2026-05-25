@@ -900,6 +900,50 @@ impl RelationshipConfidence {
     }
 }
 
+/// Warning emitted while building the app graph.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppGraphWarning {
+    /// A Service selector can plausibly refer to more than one workload.
+    AmbiguousServiceSelector {
+        service: ServiceRef,
+        candidate_workloads: Vec<WorkloadRef>,
+    },
+}
+
+impl AppGraphWarning {
+    /// Create an ambiguous Service selector warning with deterministic candidates.
+    pub fn ambiguous_service_selector(
+        service: ServiceRef,
+        candidate_workloads: impl IntoIterator<Item = WorkloadRef>,
+    ) -> Self {
+        let mut candidate_workloads = candidate_workloads.into_iter().collect::<Vec<_>>();
+        candidate_workloads.sort_unstable();
+        candidate_workloads.dedup();
+        Self::AmbiguousServiceSelector {
+            service,
+            candidate_workloads,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AppGraphWarning {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match AppGraphWarningFields::deserialize(deserializer)? {
+            AppGraphWarningFields::AmbiguousServiceSelector {
+                service,
+                candidate_workloads,
+            } => Ok(Self::ambiguous_service_selector(
+                service,
+                candidate_workloads,
+            )),
+        }
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -926,6 +970,8 @@ pub struct AppGraph {
     secret_references: Vec<SecretReference>,
     #[serde(default)]
     relationship_confidences: Vec<RelationshipConfidence>,
+    #[serde(default)]
+    warnings: Vec<AppGraphWarning>,
 }
 
 impl AppGraph {
@@ -942,6 +988,7 @@ impl AppGraph {
             config_references: Vec::new(),
             secret_references: Vec::new(),
             relationship_confidences: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -950,6 +997,14 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with graph-building warnings.
+    pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = AppGraphWarning>) -> Self {
+        self.warnings = warnings.into_iter().collect();
+        self.warnings.sort_unstable();
+        self.warnings.dedup();
         self
     }
 
@@ -1084,6 +1139,11 @@ impl AppGraph {
     pub fn relationship_confidences(&self) -> &[RelationshipConfidence] {
         &self.relationship_confidences
     }
+
+    /// Borrow graph-building warnings in deterministic order.
+    pub fn warnings(&self) -> &[AppGraphWarning] {
+        &self.warnings
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -1101,7 +1161,8 @@ impl<'de> Deserialize<'de> for AppGraph {
             .with_resource_facts(fields.resource_facts)
             .with_config_references(fields.config_references)
             .with_secret_references(fields.secret_references)
-            .with_relationship_confidences(fields.relationship_confidences))
+            .with_relationship_confidences(fields.relationship_confidences)
+            .with_warnings(fields.warnings))
     }
 }
 
@@ -2305,6 +2366,17 @@ struct AppGraphFields {
     secret_references: Vec<SecretReference>,
     #[serde(default)]
     relationship_confidences: Vec<RelationshipConfidence>,
+    #[serde(default)]
+    warnings: Vec<AppGraphWarning>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum AppGraphWarningFields {
+    AmbiguousServiceSelector {
+        service: ServiceRef,
+        candidate_workloads: Vec<WorkloadRef>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -2722,19 +2794,19 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppGraph, ConfidenceLevel, ConfigMapRef, ConfigMapRefError, ConfigReference, ContainerRef,
-        ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef,
-        ImageRefError, PodRef, PodRefError, ProbeFacts, RESOURCE_QUANTITY_MAX_LEN,
-        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
-        ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts, ResourceQuantity,
-        ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError, RouteHostError,
-        RouteRef, RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN,
-        SecretMetadataRef, SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError,
-        ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
-        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
-        SessionReport, SessionReportError, SessionStatus, SessionTransitionError,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        AppGraph, AppGraphWarning, ConfidenceLevel, ConfigMapRef, ConfigMapRefError,
+        ConfigReference, ContainerRef, ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN,
+        ImageFacts, ImageRef, ImageRefError, PodRef, PodRefError, ProbeFacts,
+        RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
+        ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts,
+        ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
+        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
+        SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError, SecretReference,
+        ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
+        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
+        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
+        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -2992,6 +3064,28 @@ mod tests {
                 ConfidenceLevel::High,
             ),
         ])
+        .with_warnings([
+            AppGraphWarning::ambiguous_service_selector(
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                [
+                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                ],
+            ),
+            AppGraphWarning::ambiguous_service_selector(
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                [
+                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                ],
+            ),
+        ])
     }
 
     #[test]
@@ -3011,6 +3105,7 @@ mod tests {
         assert!(graph.config_references().is_empty());
         assert!(graph.secret_references().is_empty());
         assert!(graph.relationship_confidences().is_empty());
+        assert!(graph.warnings().is_empty());
     }
 
     #[test]
@@ -3576,6 +3671,50 @@ mod tests {
                     ConfidenceLevel::Low,
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn creates_ambiguous_service_selector_warning_in_stable_order() {
+        let warning = AppGraphWarning::ambiguous_service_selector(
+            ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+            [
+                WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                    .expect("workload ref"),
+                WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+                WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            ],
+        );
+
+        assert_eq!(
+            warning,
+            AppGraphWarning::AmbiguousServiceSelector {
+                service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                candidate_workloads: vec![
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                        .expect("workload ref"),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn records_warnings_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.warnings(),
+            &[AppGraphWarning::AmbiguousServiceSelector {
+                service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                candidate_workloads: vec![
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                        .expect("workload ref"),
+                ],
+            }]
         );
     }
 
@@ -4267,6 +4406,58 @@ mod tests {
                     ConfidenceLevel::Low,
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn deserializes_warnings_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "warnings": [
+                {
+                    "kind": "ambiguous_service_selector",
+                    "service": {
+                        "namespace": "checkout",
+                        "name": "checkout-api"
+                    },
+                    "candidate_workloads": [
+                        {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-worker"
+                        },
+                        {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.warnings(),
+            &[AppGraphWarning::AmbiguousServiceSelector {
+                service: ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                candidate_workloads: vec![
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    WorkloadRef::new("checkout", "Deployment", "checkout-worker")
+                        .expect("workload ref"),
+                ],
+            }]
         );
     }
 
