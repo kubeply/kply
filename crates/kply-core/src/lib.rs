@@ -376,6 +376,94 @@ impl<'de> Deserialize<'de> for ServiceRef {
     }
 }
 
+/// Stable Kubernetes route reference.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct RouteRef {
+    namespace: String,
+    kind: String,
+    name: String,
+}
+
+impl RouteRef {
+    /// Create a [`RouteRef`] from validated namespace, kind, and name parts.
+    pub fn new(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, RouteRefError> {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        let name = name.into();
+        validate_session_token(&namespace)
+            .map_err(WorkloadTokenError::from)
+            .map_err(RouteRefError::Namespace)?;
+        validate_workload_kind(&kind).map_err(RouteRefError::Kind)?;
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(RouteRefError::Name)?;
+        Ok(Self {
+            namespace,
+            kind,
+            name,
+        })
+    }
+
+    /// Borrow the route namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the route kind.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Borrow the route name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for RouteRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}/{}", self.namespace, self.kind, self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for RouteRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = RouteRefFields::deserialize(deserializer)?;
+        Self::new(fields.namespace, fields.kind, fields.name).map_err(D::Error::custom)
+    }
+}
+
+/// Directed graph edge from a Service to a route object.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ServiceRouteRef {
+    service: ServiceRef,
+    route: RouteRef,
+}
+
+impl ServiceRouteRef {
+    /// Create a [`ServiceRouteRef`] from validated Service and route references.
+    pub fn new(service: ServiceRef, route: RouteRef) -> Self {
+        Self { service, route }
+    }
+
+    /// Borrow the Service side of the route reference.
+    pub fn service(&self) -> &ServiceRef {
+        &self.service
+    }
+
+    /// Borrow the route side of the route reference.
+    pub fn route(&self) -> &RouteRef {
+        &self.route
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -388,6 +476,8 @@ pub struct AppGraph {
     owned_pods: Vec<PodRef>,
     #[serde(default)]
     selecting_services: Vec<ServiceRef>,
+    #[serde(default)]
+    service_routes: Vec<ServiceRouteRef>,
 }
 
 impl AppGraph {
@@ -397,6 +487,7 @@ impl AppGraph {
             workload,
             owned_pods: Vec::new(),
             selecting_services: Vec::new(),
+            service_routes: Vec::new(),
         }
     }
 
@@ -405,6 +496,17 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with route references for selected Services.
+    pub fn with_service_routes(
+        mut self,
+        service_routes: impl IntoIterator<Item = ServiceRouteRef>,
+    ) -> Self {
+        self.service_routes = service_routes.into_iter().collect();
+        self.service_routes.sort_unstable();
+        self.service_routes.dedup();
         self
     }
 
@@ -433,6 +535,11 @@ impl AppGraph {
     pub fn selecting_services(&self) -> &[ServiceRef] {
         &self.selecting_services
     }
+
+    /// Borrow route references for selected Services in deterministic order.
+    pub fn service_routes(&self) -> &[ServiceRouteRef] {
+        &self.service_routes
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -443,7 +550,8 @@ impl<'de> Deserialize<'de> for AppGraph {
         let fields = AppGraphFields::deserialize(deserializer)?;
         Ok(Self::new(fields.workload)
             .with_owned_pods(fields.owned_pods)
-            .with_selecting_services(fields.selecting_services))
+            .with_selecting_services(fields.selecting_services)
+            .with_service_routes(fields.service_routes))
     }
 }
 
@@ -1356,6 +1464,31 @@ impl fmt::Display for ServiceRefError {
 
 impl std::error::Error for ServiceRefError {}
 
+/// Error returned when a [`RouteRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteRefError {
+    /// Route namespaces use the same token rules as workload namespaces.
+    Namespace(WorkloadTokenError),
+    /// Route kinds must be non-empty Kubernetes-style kind identifiers.
+    Kind(WorkloadKindError),
+    /// Route names use the same token rules as workload names.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for RouteRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(error) => {
+                write!(formatter, "invalid route namespace: {error}")
+            }
+            Self::Kind(error) => write!(formatter, "invalid route kind: {error}"),
+            Self::Name(error) => write!(formatter, "invalid route name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RouteRefError {}
+
 /// Error returned when a workload namespace or name is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkloadTokenError {
@@ -1481,12 +1614,21 @@ struct ServiceRefFields {
 }
 
 #[derive(Deserialize)]
+struct RouteRefFields {
+    namespace: String,
+    kind: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct AppGraphFields {
     workload: WorkloadRef,
     #[serde(default)]
     owned_pods: Vec<PodRef>,
     #[serde(default)]
     selecting_services: Vec<ServiceRef>,
+    #[serde(default)]
+    service_routes: Vec<ServiceRouteRef>,
 }
 
 #[derive(Deserialize)]
@@ -1873,12 +2015,13 @@ mod tests {
     use super::{
         AppGraph, IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, PodRef, PodRefError,
         ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
-        ROUTE_HOST_MAX_LEN, RouteHeaderNameError, RouteHeaderValueError, RouteHostError,
-        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError,
-        SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
-        SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportError, SessionStatus, SessionTransitionError, WORKLOAD_KIND_MAX_LEN,
-        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
+        ROUTE_HOST_MAX_LEN, RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef,
+        RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef,
+        ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
+        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
+        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
+        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -1906,6 +2049,20 @@ mod tests {
             ServiceRef::new("checkout", "checkout-api").expect("service ref"),
             ServiceRef::new("checkout", "checkout-api").expect("service ref"),
         ])
+        .with_service_routes([
+            ServiceRouteRef::new(
+                ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+                RouteRef::new("checkout", "HTTPRoute", "checkout-api-private").expect("route ref"),
+            ),
+            ServiceRouteRef::new(
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+            ),
+            ServiceRouteRef::new(
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+            ),
+        ])
     }
 
     #[test]
@@ -1918,6 +2075,7 @@ mod tests {
         assert_eq!(graph.workload(), &workload);
         assert!(graph.owned_pods().is_empty());
         assert!(graph.selecting_services().is_empty());
+        assert!(graph.service_routes().is_empty());
     }
 
     #[test]
@@ -1975,6 +2133,51 @@ mod tests {
     }
 
     #[test]
+    fn creates_route_ref_from_valid_parts() {
+        let route = RouteRef::new("checkout", "HTTPRoute", "checkout-api")
+            .expect("route ref should be valid");
+
+        assert_eq!(route.namespace(), "checkout");
+        assert_eq!(route.kind(), "HTTPRoute");
+        assert_eq!(route.name(), "checkout-api");
+        assert_eq!(route.to_string(), "checkout/HTTPRoute/checkout-api");
+    }
+
+    #[test]
+    fn rejects_invalid_route_ref_parts() {
+        let namespace_error = RouteRef::new("Checkout", "HTTPRoute", "checkout-api")
+            .expect_err("namespace should be invalid");
+        let kind_error = RouteRef::new("checkout", "_HTTPRoute", "checkout-api")
+            .expect_err("kind should be invalid");
+        let name_error = RouteRef::new("checkout", "HTTPRoute", "checkout_api")
+            .expect_err("name should be invalid");
+
+        assert_eq!(
+            namespace_error,
+            RouteRefError::Namespace(WorkloadTokenError::InvalidBoundary)
+        );
+        assert_eq!(
+            kind_error,
+            RouteRefError::Kind(WorkloadKindError::InvalidBoundary)
+        );
+        assert_eq!(
+            name_error,
+            RouteRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
+    fn creates_service_route_ref_from_valid_refs() {
+        let service = ServiceRef::new("checkout", "checkout-api").expect("service ref");
+        let route = RouteRef::new("checkout", "Ingress", "checkout").expect("route ref");
+
+        let edge = ServiceRouteRef::new(service.clone(), route.clone());
+
+        assert_eq!(edge.service(), &service);
+        assert_eq!(edge.route(), &route);
+    }
+
+    #[test]
     fn records_owned_pods_in_stable_order() {
         let graph = test_app_graph();
 
@@ -1996,6 +2199,26 @@ mod tests {
             &[
                 ServiceRef::new("checkout", "checkout-api").expect("service ref"),
                 ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_service_routes_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.service_routes(),
+            &[
+                ServiceRouteRef::new(
+                    ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+                ),
+                ServiceRouteRef::new(
+                    ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+                    RouteRef::new("checkout", "HTTPRoute", "checkout-api-private")
+                        .expect("route ref"),
+                ),
             ]
         );
     }
@@ -2066,6 +2289,69 @@ mod tests {
             &[
                 ServiceRef::new("checkout", "checkout-api").expect("service ref"),
                 ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_service_routes_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "service_routes": [
+                {
+                    "service": {
+                        "namespace": "checkout",
+                        "name": "checkout-api-private"
+                    },
+                    "route": {
+                        "namespace": "checkout",
+                        "kind": "HTTPRoute",
+                        "name": "checkout-api-private"
+                    }
+                },
+                {
+                    "service": {
+                        "namespace": "checkout",
+                        "name": "checkout-api"
+                    },
+                    "route": {
+                        "namespace": "checkout",
+                        "kind": "Ingress",
+                        "name": "checkout"
+                    }
+                },
+                {
+                    "service": {
+                        "namespace": "checkout",
+                        "name": "checkout-api"
+                    },
+                    "route": {
+                        "namespace": "checkout",
+                        "kind": "Ingress",
+                        "name": "checkout"
+                    }
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.service_routes(),
+            &[
+                ServiceRouteRef::new(
+                    ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                    RouteRef::new("checkout", "Ingress", "checkout").expect("route ref"),
+                ),
+                ServiceRouteRef::new(
+                    ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+                    RouteRef::new("checkout", "HTTPRoute", "checkout-api-private")
+                        .expect("route ref"),
+                ),
             ]
         );
     }
