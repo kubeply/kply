@@ -325,6 +325,57 @@ impl<'de> Deserialize<'de> for PodRef {
     }
 }
 
+/// Stable Kubernetes Service reference.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct ServiceRef {
+    namespace: String,
+    name: String,
+}
+
+impl ServiceRef {
+    /// Create a [`ServiceRef`] from validated namespace and Service name parts.
+    pub fn new(
+        namespace: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, ServiceRefError> {
+        let namespace = namespace.into();
+        let name = name.into();
+        validate_session_token(&namespace)
+            .map_err(WorkloadTokenError::from)
+            .map_err(ServiceRefError::Namespace)?;
+        validate_session_token(&name)
+            .map_err(WorkloadTokenError::from)
+            .map_err(ServiceRefError::Name)?;
+        Ok(Self { namespace, name })
+    }
+
+    /// Borrow the Service namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the Service name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for ServiceRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.namespace, self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for ServiceRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = ServiceRefFields::deserialize(deserializer)?;
+        Self::new(fields.namespace, fields.name).map_err(D::Error::custom)
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -335,6 +386,8 @@ pub struct AppGraph {
     workload: WorkloadRef,
     #[serde(default)]
     owned_pods: Vec<PodRef>,
+    #[serde(default)]
+    selecting_services: Vec<ServiceRef>,
 }
 
 impl AppGraph {
@@ -343,6 +396,7 @@ impl AppGraph {
         Self {
             workload,
             owned_pods: Vec::new(),
+            selecting_services: Vec::new(),
         }
     }
 
@@ -351,6 +405,17 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with Services selecting the root workload.
+    pub fn with_selecting_services(
+        mut self,
+        selecting_services: impl IntoIterator<Item = ServiceRef>,
+    ) -> Self {
+        self.selecting_services = selecting_services.into_iter().collect();
+        self.selecting_services.sort_unstable();
+        self.selecting_services.dedup();
         self
     }
 
@@ -363,6 +428,11 @@ impl AppGraph {
     pub fn owned_pods(&self) -> &[PodRef] {
         &self.owned_pods
     }
+
+    /// Borrow Services selecting the root workload in deterministic order.
+    pub fn selecting_services(&self) -> &[ServiceRef] {
+        &self.selecting_services
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -371,7 +441,9 @@ impl<'de> Deserialize<'de> for AppGraph {
         D: Deserializer<'de>,
     {
         let fields = AppGraphFields::deserialize(deserializer)?;
-        Ok(Self::new(fields.workload).with_owned_pods(fields.owned_pods))
+        Ok(Self::new(fields.workload)
+            .with_owned_pods(fields.owned_pods)
+            .with_selecting_services(fields.selecting_services))
     }
 }
 
@@ -1262,6 +1334,28 @@ impl fmt::Display for PodRefError {
 
 impl std::error::Error for PodRefError {}
 
+/// Error returned when a [`ServiceRef`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceRefError {
+    /// Service namespaces use the same token rules as workload namespaces.
+    Namespace(WorkloadTokenError),
+    /// Service names use the same token rules as workload names.
+    Name(WorkloadTokenError),
+}
+
+impl fmt::Display for ServiceRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(error) => {
+                write!(formatter, "invalid service namespace: {error}")
+            }
+            Self::Name(error) => write!(formatter, "invalid service name: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ServiceRefError {}
+
 /// Error returned when a workload namespace or name is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkloadTokenError {
@@ -1381,10 +1475,18 @@ struct PodRefFields {
 }
 
 #[derive(Deserialize)]
+struct ServiceRefFields {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct AppGraphFields {
     workload: WorkloadRef,
     #[serde(default)]
     owned_pods: Vec<PodRef>,
+    #[serde(default)]
+    selecting_services: Vec<ServiceRef>,
 }
 
 #[derive(Deserialize)]
@@ -1772,11 +1874,11 @@ mod tests {
         AppGraph, IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, PodRef, PodRefError,
         ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
         ROUTE_HOST_MAX_LEN, RouteHeaderNameError, RouteHeaderValueError, RouteHostError,
-        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionEvent, SessionEventKind,
-        SessionId, SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
-        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
-        SessionTransitionError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError,
+        SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
+        SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
+        SessionReportError, SessionStatus, SessionTransitionError, WORKLOAD_KIND_MAX_LEN,
+        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -1799,6 +1901,11 @@ mod tests {
             PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
             PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
         ])
+        .with_selecting_services([
+            ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
+            ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+            ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+        ])
     }
 
     #[test]
@@ -1810,6 +1917,7 @@ mod tests {
 
         assert_eq!(graph.workload(), &workload);
         assert!(graph.owned_pods().is_empty());
+        assert!(graph.selecting_services().is_empty());
     }
 
     #[test]
@@ -1840,6 +1948,33 @@ mod tests {
     }
 
     #[test]
+    fn creates_service_ref_from_valid_parts() {
+        let service =
+            ServiceRef::new("checkout", "checkout-api").expect("service ref should be valid");
+
+        assert_eq!(service.namespace(), "checkout");
+        assert_eq!(service.name(), "checkout-api");
+        assert_eq!(service.to_string(), "checkout/checkout-api");
+    }
+
+    #[test]
+    fn rejects_invalid_service_ref_parts() {
+        let namespace_error =
+            ServiceRef::new("Checkout", "checkout-api").expect_err("namespace should be invalid");
+        let name_error =
+            ServiceRef::new("checkout", "checkout_api").expect_err("name should be invalid");
+
+        assert_eq!(
+            namespace_error,
+            ServiceRefError::Namespace(WorkloadTokenError::InvalidBoundary)
+        );
+        assert_eq!(
+            name_error,
+            ServiceRefError::Name(WorkloadTokenError::InvalidCharacter { character: '_' })
+        );
+    }
+
+    #[test]
     fn records_owned_pods_in_stable_order() {
         let graph = test_app_graph();
 
@@ -1848,6 +1983,19 @@ mod tests {
             &[
                 PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
                 PodRef::new("checkout", "checkout-api-7d9f4d9d-b").expect("pod ref"),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_selecting_services_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.selecting_services(),
+            &[
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
             ]
         );
     }
@@ -1883,6 +2031,41 @@ mod tests {
             &[
                 PodRef::new("checkout", "checkout-api-7d9f4d9d-a").expect("pod ref"),
                 PodRef::new("checkout", "checkout-api-7d9f4d9d-b").expect("pod ref"),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_selecting_services_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "selecting_services": [
+                {
+                    "namespace": "checkout",
+                    "name": "checkout-api-private"
+                },
+                {
+                    "namespace": "checkout",
+                    "name": "checkout-api"
+                },
+                {
+                    "namespace": "checkout",
+                    "name": "checkout-api"
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.selecting_services(),
+            &[
+                ServiceRef::new("checkout", "checkout-api").expect("service ref"),
+                ServiceRef::new("checkout", "checkout-api-private").expect("service ref"),
             ]
         );
     }

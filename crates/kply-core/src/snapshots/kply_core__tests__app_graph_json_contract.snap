@@ -17,5 +17,15 @@ expression: test_app_graph()
       "namespace": "checkout",
       "name": "checkout-api-7d9f4d9d-b"
     }
+  ],
+  "selecting_services": [
+    {
+      "namespace": "checkout",
+      "name": "checkout-api"
+    },
+    {
+      "namespace": "checkout",
+      "name": "checkout-api-private"
+    }
   ]
 }
