@@ -60,8 +60,8 @@ fn run() -> Result<ExitCode> {
             command: Some(AppCommand::Graph { app }),
         }) => return render_app_graph(&cli, app),
         Some(Command::Session {
-            command: Some(SessionCommand::Plan { app }),
-        }) => return render_session_plan_placeholder(&cli, app),
+            command: Some(SessionCommand::Plan { app, image }),
+        }) => return render_session_plan_placeholder(&cli, app, image.as_deref()),
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
@@ -113,16 +113,24 @@ fn run() -> Result<ExitCode> {
 }
 
 /// Render the provisional session plan command placeholder.
-fn render_session_plan_placeholder(cli: &Cli, app_name: &str) -> Result<ExitCode> {
+fn render_session_plan_placeholder(
+    cli: &Cli,
+    app_name: &str,
+    image: Option<&str>,
+) -> Result<ExitCode> {
     if cli.json {
         let value = serde_json::json!({
             "command": "session plan",
             "app": app_name,
+            "image": image,
             "status": "placeholder"
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else if !cli.quiet {
         println!("kply session plan {app_name}");
+        if let Some(image) = image {
+            println!("Image: {image}");
+        }
         println!("Session planning is defined but behavior is intentionally pending.");
     }
 

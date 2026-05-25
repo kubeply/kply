@@ -158,9 +158,64 @@ fn prints_session_plan_placeholder_json() {
 }
 
 #[test]
+fn prints_session_plan_placeholder_text_with_image() {
+    let output = kply_cmd()
+        .args([
+            "session",
+            "plan",
+            "checkout",
+            "--image",
+            "ghcr.io/kubeply/checkout:v2",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_plan_placeholder_text_with_image", output);
+}
+
+#[test]
+fn prints_session_plan_placeholder_json_with_image() {
+    let output = kply_cmd()
+        .args([
+            "session",
+            "plan",
+            "checkout",
+            "--image",
+            "ghcr.io/kubeply/checkout:v2",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("session_plan_placeholder_json_with_image", value);
+}
+
+#[test]
 fn suppresses_session_plan_placeholder_text_when_quiet() {
     kply_cmd()
         .args(["session", "plan", "checkout", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+
+    kply_cmd()
+        .args([
+            "session",
+            "plan",
+            "checkout",
+            "--image",
+            "ghcr.io/kubeply/checkout:v2",
+            "--quiet",
+        ])
         .assert()
         .success()
         .stdout("");
@@ -1061,7 +1116,11 @@ fn covers_every_session_command() {
     kply_cmd()
         .args([
             "session",
-            SessionCommand::Plan { app: String::new() }.name(),
+            SessionCommand::Plan {
+                app: String::new(),
+                image: None,
+            }
+            .name(),
             "checkout",
         ])
         .assert()
