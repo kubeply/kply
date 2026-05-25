@@ -12,6 +12,15 @@ planned_resources: 3
   resource: shop/Deployment/checkout-plan-workload
   resource: shop/HTTPRoute/checkout-plan-route
   resource: shop/Service/checkout-plan-service
+planned_labels: 4
+  label: kply.dev/app=checkout
+  label: kply.dev/managed-by=kply
+  label: kply.dev/session-id=checkout-plan
+  label: kply.dev/session-name=checkout-session
+planned_annotations: 3
+  annotation: kply.dev/image=ghcr.io/acme/checkout:next
+  annotation: kply.dev/route-strategy=header
+  annotation: kply.dev/workload=shop/Deployment/checkout-api
 route_selector: header:x-kply-session=checkout-plan
 policy_operations: 6
 status: planned

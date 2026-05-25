@@ -2,11 +2,13 @@
 
 use serde::de::Error as DeserializeError;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
 const WORKLOAD_KIND_MAX_LEN: usize = 63;
 const RESOURCE_QUANTITY_MAX_LEN: usize = 63;
+const METADATA_NAME_MAX_LEN: usize = 63;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -20,6 +22,10 @@ pub const ROUTE_HOST_MAX_LEN: usize = 253;
 pub const ROUTE_HOST_LABEL_MAX_LEN: usize = 63;
 /// Maximum allowed length for a session time-to-live value.
 pub const TIME_TO_LIVE_MAX_LEN: usize = 32;
+/// Maximum allowed length for a planned metadata key.
+pub const METADATA_KEY_MAX_LEN: usize = 253;
+/// Maximum allowed length for a planned metadata value.
+pub const METADATA_VALUE_MAX_LEN: usize = 253;
 
 /// Stable identifier for a future Kply session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1388,6 +1394,69 @@ impl<'de> Deserialize<'de> for TimeToLive {
     }
 }
 
+/// Planned Kubernetes metadata key/value pair for session-owned resources.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct MetadataEntry {
+    key: String,
+    value: String,
+}
+
+impl MetadataEntry {
+    /// Create a [`MetadataEntry`] from validated key and value parts.
+    pub fn new(
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, MetadataEntryError> {
+        let key = key.into();
+        let value = value.into();
+
+        validate_metadata_key(&key).map_err(MetadataEntryError::Key)?;
+        validate_metadata_value(&value).map_err(MetadataEntryError::Value)?;
+
+        Ok(Self { key, value })
+    }
+
+    /// Create a [`MetadataEntry`] with Kubernetes label value validation.
+    pub fn new_label(
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, MetadataEntryError> {
+        let key = key.into();
+        let value = value.into();
+
+        validate_metadata_key(&key).map_err(MetadataEntryError::Key)?;
+        validate_metadata_label_value(&value).map_err(MetadataEntryError::Value)?;
+
+        Ok(Self { key, value })
+    }
+
+    /// Borrow the metadata key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Borrow the metadata value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+impl fmt::Display for MetadataEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}={}", self.key, self.value)
+    }
+}
+
+impl<'de> Deserialize<'de> for MetadataEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = MetadataEntryFields::deserialize(deserializer)?;
+        Self::new(fields.key, fields.value).map_err(D::Error::custom)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1623,9 +1692,9 @@ impl std::error::Error for SessionPolicyError {}
 ///
 /// A plan captures the [`SessionId`], [`SessionName`], target [`WorkloadRef`],
 /// proposed [`ImageRef`], optional time-to-live, planned
-/// [`KubernetesResourceRef`] resources, optional [`RouteSelector`],
-/// [`SessionPolicy`], and initial [`SessionStatus`] for a session that has not
-/// yet been executed.
+/// [`KubernetesResourceRef`] resources, planned [`MetadataEntry`] labels and
+/// annotations, optional [`RouteSelector`], [`SessionPolicy`], and initial
+/// [`SessionStatus`] for a session that has not yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
@@ -1635,6 +1704,8 @@ pub struct SessionPlan {
     #[serde(rename = "ttl")]
     time_to_live: Option<TimeToLive>,
     planned_resources: Vec<KubernetesResourceRef>,
+    planned_labels: Vec<MetadataEntry>,
+    planned_annotations: Vec<MetadataEntry>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1656,6 +1727,8 @@ impl SessionPlan {
             image,
             time_to_live: None,
             planned_resources: Vec::new(),
+            planned_labels: Vec::new(),
+            planned_annotations: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -1676,6 +1749,28 @@ impl SessionPlan {
         self.planned_resources = planned_resources.into_iter().collect();
         self.planned_resources.sort_unstable();
         self.planned_resources.dedup();
+        self
+    }
+
+    /// Return a copy of this plan with planned label [`MetadataEntry`] values.
+    pub fn with_planned_labels(
+        mut self,
+        planned_labels: impl IntoIterator<Item = MetadataEntry>,
+    ) -> Result<Self, MetadataEntryError> {
+        let planned_labels = planned_labels
+            .into_iter()
+            .map(validate_planned_label_entry)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.planned_labels = deduplicate_metadata_by_key(planned_labels);
+        Ok(self)
+    }
+
+    /// Return a copy of this plan with planned annotation [`MetadataEntry`] values.
+    pub fn with_planned_annotations(
+        mut self,
+        planned_annotations: impl IntoIterator<Item = MetadataEntry>,
+    ) -> Self {
+        self.planned_annotations = deduplicate_metadata_by_key(planned_annotations);
         self
     }
 
@@ -1715,6 +1810,16 @@ impl SessionPlan {
         &self.planned_resources
     }
 
+    /// Borrow planned label [`MetadataEntry`] values in deterministic order.
+    pub fn planned_labels(&self) -> &[MetadataEntry] {
+        &self.planned_labels
+    }
+
+    /// Borrow planned annotation [`MetadataEntry`] values in deterministic order.
+    pub fn planned_annotations(&self) -> &[MetadataEntry] {
+        &self.planned_annotations
+    }
+
     /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
@@ -1752,6 +1857,16 @@ impl<'de> Deserialize<'de> for SessionPlan {
             fields.policy,
         );
         plan = plan.with_planned_resources(fields.planned_resources);
+        let planned_labels = fields
+            .planned_labels
+            .into_iter()
+            .map(|entry| MetadataEntry::new_label(entry.key, entry.value))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(D::Error::custom)?;
+        plan = plan
+            .with_planned_labels(planned_labels)
+            .map_err(D::Error::custom)?;
+        plan = plan.with_planned_annotations(fields.planned_annotations);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -2126,6 +2241,98 @@ impl fmt::Display for TimeToLiveError {
 }
 
 impl std::error::Error for TimeToLiveError {}
+
+/// Error returned when a [`MetadataEntry`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataEntryError {
+    /// Metadata keys must be valid.
+    Key(MetadataKeyError),
+    /// Metadata values must be valid.
+    Value(MetadataValueError),
+}
+
+impl fmt::Display for MetadataEntryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Key(error) => write!(formatter, "invalid metadata key: {error}"),
+            Self::Value(error) => write!(formatter, "invalid metadata value: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for MetadataEntryError {}
+
+/// Error returned when a metadata key is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataKeyError {
+    /// Metadata keys cannot be empty.
+    Empty,
+    /// Metadata keys must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Metadata keys must start and end with an ASCII letter or digit.
+    InvalidBoundary,
+    /// Metadata keys only allow ASCII Kubernetes metadata key characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for MetadataKeyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("metadata key cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(formatter, "metadata key cannot exceed {max_len} characters")
+            }
+            Self::InvalidBoundary => {
+                formatter.write_str("metadata key must start and end with an ASCII letter or digit")
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "metadata key contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for MetadataKeyError {}
+
+/// Error returned when a metadata value is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataValueError {
+    /// Metadata values cannot be empty.
+    Empty,
+    /// Metadata values must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Metadata values must start and end with an ASCII letter or digit when required.
+    InvalidBoundary,
+    /// Metadata values only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for MetadataValueError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("metadata value cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "metadata value cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("metadata value must start and end with an ASCII letter or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "metadata value contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for MetadataValueError {}
 
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2691,9 +2898,19 @@ struct SessionPlanFields {
     time_to_live: Option<TimeToLive>,
     #[serde(default)]
     planned_resources: Vec<KubernetesResourceRef>,
+    #[serde(default)]
+    planned_labels: Vec<MetadataEntry>,
+    #[serde(default)]
+    planned_annotations: Vec<MetadataEntry>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
+}
+
+#[derive(Deserialize)]
+struct MetadataEntryFields {
+    key: String,
+    value: String,
 }
 
 #[derive(Deserialize)]
@@ -2994,6 +3211,177 @@ fn validate_time_to_live(value: &str) -> Result<(), TimeToLiveError> {
     Ok(())
 }
 
+fn validate_metadata_key(value: &str) -> Result<(), MetadataKeyError> {
+    if value.is_empty() {
+        return Err(MetadataKeyError::Empty);
+    }
+
+    if value.len() > METADATA_KEY_MAX_LEN {
+        return Err(MetadataKeyError::TooLong {
+            max_len: METADATA_KEY_MAX_LEN,
+        });
+    }
+
+    let (prefix, name) = match value.split_once('/') {
+        Some((prefix, name)) => (Some(prefix), name),
+        None => (None, value),
+    };
+
+    if value.matches('/').count() > 1 || name.is_empty() {
+        return Err(MetadataKeyError::InvalidBoundary);
+    }
+
+    if name.len() > METADATA_NAME_MAX_LEN {
+        return Err(MetadataKeyError::TooLong {
+            max_len: METADATA_NAME_MAX_LEN,
+        });
+    }
+
+    if let Some(prefix) = prefix {
+        validate_metadata_key_prefix(prefix)?;
+    }
+
+    validate_metadata_name(name)?;
+
+    Ok(())
+}
+
+fn validate_metadata_key_prefix(value: &str) -> Result<(), MetadataKeyError> {
+    if value.is_empty() || value.starts_with('.') || value.ends_with('.') {
+        return Err(MetadataKeyError::InvalidBoundary);
+    }
+
+    for label in value.split('.') {
+        validate_metadata_dns_label(label)?;
+    }
+
+    Ok(())
+}
+
+fn validate_metadata_dns_label(value: &str) -> Result<(), MetadataKeyError> {
+    if value.is_empty() {
+        return Err(MetadataKeyError::Empty);
+    }
+
+    if value.len() > METADATA_NAME_MAX_LEN {
+        return Err(MetadataKeyError::TooLong {
+            max_len: METADATA_NAME_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !(is_metadata_dns_label_alphanumeric(*character) || *character == '-'))
+    {
+        return Err(MetadataKeyError::InvalidCharacter { character });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(MetadataKeyError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !is_metadata_dns_label_alphanumeric(first_character)
+        || !is_metadata_dns_label_alphanumeric(last_character)
+    {
+        return Err(MetadataKeyError::InvalidBoundary);
+    }
+
+    Ok(())
+}
+
+fn is_metadata_dns_label_alphanumeric(character: char) -> bool {
+    character.is_ascii_lowercase() || character.is_ascii_digit()
+}
+
+fn validate_metadata_name(value: &str) -> Result<(), MetadataKeyError> {
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(MetadataKeyError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+        return Err(MetadataKeyError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_metadata_name_character(*character))
+    {
+        return Err(MetadataKeyError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_metadata_name_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+}
+
+fn validate_metadata_value(value: &str) -> Result<(), MetadataValueError> {
+    if value.is_empty() {
+        return Err(MetadataValueError::Empty);
+    }
+
+    if value.len() > METADATA_VALUE_MAX_LEN {
+        return Err(MetadataValueError::TooLong {
+            max_len: METADATA_VALUE_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_metadata_value_character(*character))
+    {
+        return Err(MetadataValueError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_metadata_value_character(character: char) -> bool {
+    character.is_ascii_graphic()
+}
+
+fn validate_metadata_label_value(value: &str) -> Result<(), MetadataValueError> {
+    if value.len() > METADATA_NAME_MAX_LEN {
+        return Err(MetadataValueError::TooLong {
+            max_len: METADATA_NAME_MAX_LEN,
+        });
+    }
+
+    if value.is_empty() {
+        return Ok(());
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(MetadataValueError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+        return Err(MetadataValueError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_metadata_name_character(*character))
+    {
+        return Err(MetadataValueError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn deduplicate_metadata_by_key(
+    metadata: impl IntoIterator<Item = MetadataEntry>,
+) -> Vec<MetadataEntry> {
+    metadata
+        .into_iter()
+        .map(|entry| (entry.key.clone(), entry))
+        .collect::<BTreeMap<_, _>>()
+        .into_values()
+        .collect()
+}
+
+fn validate_planned_label_entry(entry: MetadataEntry) -> Result<MetadataEntry, MetadataEntryError> {
+    MetadataEntry::new_label(entry.key, entry.value)
+}
+
 fn validate_resource_quantity(value: &str) -> Result<(), ResourceQuantityError> {
     if value.is_empty() {
         return Err(ResourceQuantityError::Empty);
@@ -3119,17 +3507,19 @@ mod tests {
         AppGraph, AppGraphWarning, ConfidenceLevel, ConfigMapRef, ConfigMapRefError,
         ConfigReference, ContainerRef, ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN,
         ImageFacts, ImageRef, ImageRefError, KubernetesResourceRef, KubernetesResourceRefError,
-        PodRef, PodRefError, ProbeFacts, ProbeKind, RESOURCE_QUANTITY_MAX_LEN,
-        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
-        ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts, ResourceQuantity,
-        ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError, RouteHostError,
-        RouteRef, RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN,
-        SecretMetadataRef, SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError,
-        ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
-        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
-        SessionReport, SessionReportError, SessionStatus, SessionTransitionError,
-        TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError, WORKLOAD_KIND_MAX_LEN,
-        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
+        METADATA_KEY_MAX_LEN, METADATA_VALUE_MAX_LEN, MetadataEntry, MetadataEntryError,
+        MetadataKeyError, MetadataValueError, PodRef, PodRefError, ProbeFacts, ProbeKind,
+        RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
+        ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RelationshipConfidence, ResourceFacts,
+        ResourceQuantity, ResourceQuantityError, RouteHeaderNameError, RouteHeaderValueError,
+        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
+        SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError, SecretReference,
+        ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent, SessionEventKind, SessionId,
+        SessionIdError, SessionName, SessionNameError, SessionOperation, SessionPlan,
+        SessionPolicy, SessionPolicyError, SessionReport, SessionReportError, SessionStatus,
+        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -5358,6 +5748,16 @@ mod tests {
                 KubernetesResourceRef::new("checkout", "Service", "session-123-service")
                     .expect("planned service"),
             ])
+            .with_planned_labels([
+                MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
+                MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label"),
+            ])
+            .expect("planned labels")
+            .with_planned_annotations([
+                MetadataEntry::new("kply.dev/workload", "checkout/Deployment/checkout-api")
+                    .expect("annotation"),
+                MetadataEntry::new("kply.dev/route-strategy", "header").expect("annotation"),
+            ])
             .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
@@ -5388,6 +5788,26 @@ mod tests {
                     "name": "session-123-service"
                 }
             ],
+            "planned_labels": [
+                {
+                    "key": "kply.dev/managed-by",
+                    "value": "kply"
+                },
+                {
+                    "key": "kply.dev/session-id",
+                    "value": "session-123"
+                }
+            ],
+            "planned_annotations": [
+                {
+                    "key": "kply.dev/route-strategy",
+                    "value": "host"
+                },
+                {
+                    "key": "kply.dev/workload",
+                    "value": "checkout/Deployment/checkout-api"
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -5415,6 +5835,8 @@ mod tests {
         assert_eq!(plan.time_to_live().map(TimeToLive::as_str), Some("30m"));
         assert_eq!(plan.planned_resources().len(), 2);
         assert_eq!(plan.planned_resources()[0].name(), "session-123-workload");
+        assert_eq!(plan.planned_labels().len(), 2);
+        assert_eq!(plan.planned_annotations().len(), 2);
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
 
@@ -5461,6 +5883,34 @@ mod tests {
         .expect_err("invalid session id should be rejected");
 
         assert!(error.to_string().contains("session id"));
+    }
+
+    #[test]
+    fn rejects_invalid_session_plan_label_json() {
+        let error = serde_json::from_value::<SessionPlan>(json!({
+            "id": "session-123",
+            "name": "checkout-test",
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "image": "registry.example.com/checkout/api:v2",
+            "planned_labels": [
+                {
+                    "key": "kply.dev/session-id",
+                    "value": "bad/value"
+                }
+            ],
+            "route_selector": null,
+            "policy": {
+                "allowed_operations": ["inspect"]
+            },
+            "status": "planned"
+        }))
+        .expect_err("invalid label value should be rejected");
+
+        assert!(error.to_string().contains("metadata value"));
     }
 
     #[test]
@@ -5663,6 +6113,8 @@ mod tests {
         assert_eq!(plan.workload(), &workload);
         assert_eq!(plan.image(), &image);
         assert_eq!(plan.planned_resources(), []);
+        assert_eq!(plan.planned_labels(), []);
+        assert_eq!(plan.planned_annotations(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
@@ -5686,6 +6138,54 @@ mod tests {
             plan.planned_resources(),
             [planned_workload, planned_service]
         );
+    }
+
+    #[test]
+    fn creates_session_plan_with_planned_metadata() {
+        let session_label =
+            MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label");
+        let managed_by_label =
+            MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label");
+        let workload_annotation =
+            MetadataEntry::new("kply.dev/workload", "checkout/Deployment/checkout-api")
+                .expect("annotation");
+        let route_annotation =
+            MetadataEntry::new("kply.dev/route-strategy", "header").expect("annotation");
+        let plan = test_session_plan()
+            .with_planned_labels([
+                session_label.clone(),
+                managed_by_label.clone(),
+                session_label.clone(),
+            ])
+            .expect("planned labels")
+            .with_planned_annotations([
+                workload_annotation.clone(),
+                route_annotation.clone(),
+                workload_annotation.clone(),
+            ]);
+
+        assert_eq!(plan.planned_labels(), [managed_by_label, session_label]);
+        assert_eq!(
+            plan.planned_annotations(),
+            [route_annotation, workload_annotation]
+        );
+    }
+
+    #[test]
+    fn planned_metadata_deduplicates_by_key() {
+        let first_label = MetadataEntry::new_label("kply.dev/session-id", "first").expect("label");
+        let last_label = MetadataEntry::new_label("kply.dev/session-id", "last").expect("label");
+        let first_annotation = MetadataEntry::new("kply.dev/workload", "checkout/Deployment/first")
+            .expect("annotation");
+        let last_annotation = MetadataEntry::new("kply.dev/workload", "checkout/Deployment/last")
+            .expect("annotation");
+        let plan = test_session_plan()
+            .with_planned_labels([first_label, last_label.clone()])
+            .expect("planned labels")
+            .with_planned_annotations([first_annotation, last_annotation.clone()]);
+
+        assert_eq!(plan.planned_labels(), [last_label]);
+        assert_eq!(plan.planned_annotations(), [last_annotation]);
     }
 
     #[test]
@@ -6253,6 +6753,72 @@ mod tests {
             TimeToLiveError::TooLong {
                 max_len: TIME_TO_LIVE_MAX_LEN
             }
+        );
+    }
+
+    #[test]
+    fn creates_metadata_entry_from_valid_parts() {
+        let entry =
+            MetadataEntry::new("kply.dev/session-id", "session-123").expect("metadata entry");
+        let label =
+            MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label entry");
+
+        assert_eq!(entry.key(), "kply.dev/session-id");
+        assert_eq!(entry.value(), "session-123");
+        assert_eq!(entry.to_string(), "kply.dev/session-id=session-123");
+        assert_eq!(label.key(), "kply.dev/session-id");
+        assert_eq!(label.value(), "session-123");
+        assert_eq!(
+            MetadataEntry::new_label("kply.dev/debug", "")
+                .expect("empty label value")
+                .value(),
+            ""
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_metadata_entry_parts() {
+        let key_error = MetadataEntry::new("", "session-123").expect_err("empty key");
+        let value_error = MetadataEntry::new("kply.dev/session-id", "").expect_err("empty value");
+        let long_key = "a".repeat(METADATA_KEY_MAX_LEN + 1);
+        let long_value = "a".repeat(METADATA_VALUE_MAX_LEN + 1);
+
+        assert_eq!(key_error, MetadataEntryError::Key(MetadataKeyError::Empty));
+        assert_eq!(
+            value_error,
+            MetadataEntryError::Value(MetadataValueError::Empty)
+        );
+        assert_eq!(
+            MetadataEntry::new(long_key, "session-123").unwrap_err(),
+            MetadataEntryError::Key(MetadataKeyError::TooLong {
+                max_len: METADATA_KEY_MAX_LEN
+            })
+        );
+        assert_eq!(
+            MetadataEntry::new("kply.dev/session-id", long_value).unwrap_err(),
+            MetadataEntryError::Value(MetadataValueError::TooLong {
+                max_len: METADATA_VALUE_MAX_LEN
+            })
+        );
+        assert_eq!(
+            MetadataEntry::new("-bad", "session-123").unwrap_err(),
+            MetadataEntryError::Key(MetadataKeyError::InvalidBoundary)
+        );
+        assert_eq!(
+            MetadataEntry::new("Kply.dev/session-id", "session-123").unwrap_err(),
+            MetadataEntryError::Key(MetadataKeyError::InvalidCharacter { character: 'K' })
+        );
+        assert_eq!(
+            MetadataEntry::new("kply.dev/session-id", "session 123").unwrap_err(),
+            MetadataEntryError::Value(MetadataValueError::InvalidCharacter { character: ' ' })
+        );
+        assert_eq!(
+            MetadataEntry::new_label("kply.dev/session-id", "bad/value").unwrap_err(),
+            MetadataEntryError::Value(MetadataValueError::InvalidCharacter { character: '/' })
+        );
+        assert_eq!(
+            MetadataEntry::new_label("kply.dev/session-id", "-bad").unwrap_err(),
+            MetadataEntryError::Value(MetadataValueError::InvalidBoundary)
         );
     }
 
