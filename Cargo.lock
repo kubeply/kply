@@ -606,11 +606,14 @@ dependencies = [
  "anyhow",
  "clap",
  "insta",
+ "k8s-openapi",
  "kply-checks",
  "kply-config",
  "kply-core",
+ "kply-k8s",
  "kply-test",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -641,6 +644,7 @@ dependencies = [
  "kply-core",
  "kply-test",
  "kube",
+ "serde",
  "tokio",
 ]
 

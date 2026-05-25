@@ -3,9 +3,10 @@
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use kply_cli::cli::{Cli, Command, ConfigCommand};
+use kply_cli::cli::{Cli, ClusterCommand, Command, ConfigCommand};
 use kply_config::{ConfigLoadError, KplyConfig, load_config_path};
 use std::ffi::OsString;
+use std::fmt::Display;
 use std::process::ExitCode;
 
 const EXIT_USAGE: i32 = 2;
@@ -44,6 +45,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Config {
             command: Some(ConfigCommand::Validate),
         }) => return render_config_validate(&cli),
+        Some(Command::Cluster {
+            command: Some(ClusterCommand::Info),
+        }) => return render_cluster_info(&cli),
         Some(command) => {
             if cli.json {
                 let value = serde_json::json!({
@@ -86,6 +90,25 @@ fn run() -> Result<ExitCode> {
     } else if !cli.quiet {
         println!("kply {}", env!("CARGO_PKG_VERSION"));
         println!("Placeholder CLI. Roadmap and commands are intentionally pending.");
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render read-only cluster facts resolved from kubeconfig.
+fn render_cluster_info(cli: &Cli) -> Result<ExitCode> {
+    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+    let info = match runtime.block_on(kply_k8s::cluster_info()) {
+        Ok(info) => info,
+        Err(error) => return render_kubeconfig_error(&error, cli.json),
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&info)?);
+    } else if !cli.quiet {
+        println!("kply cluster info");
+        println!("cluster_url: {}", info.cluster_url);
+        println!("default_namespace: {}", info.default_namespace);
     }
 
     Ok(ExitCode::SUCCESS)
@@ -200,6 +223,25 @@ fn render_config_load_error(error: &ConfigLoadError, wants_json: bool) -> Result
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: config\n\n{error}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render kubeconfig resolution errors as user-facing usage/auth errors.
+fn render_kubeconfig_error(error: &impl Display, wants_json: bool) -> Result<ExitCode> {
+    let message = error.to_string();
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "kubernetes_config",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: kubernetes config\n\n{message}");
     }
 
     Ok(exit_code(EXIT_USAGE))

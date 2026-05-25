@@ -6,6 +6,37 @@ use kube::{
     Config,
     config::{KubeConfigOptions, Kubeconfig, KubeconfigError},
 };
+use serde::Serialize;
+
+/// Read-only Kubernetes cluster facts resolved from kubeconfig.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ClusterInfo {
+    /// Kubernetes API server URL selected by kubeconfig resolution.
+    pub cluster_url: String,
+    /// Default namespace selected by the active kubeconfig context.
+    pub default_namespace: String,
+}
+
+impl From<Config> for ClusterInfo {
+    fn from(config: Config) -> Self {
+        Self {
+            cluster_url: config.cluster_url.to_string(),
+            default_namespace: config.default_namespace,
+        }
+    }
+}
+
+/// Load read-only cluster facts using standard kubeconfig conventions.
+///
+/// This resolves kubeconfig locally and does not contact the cluster.
+///
+/// # Errors
+///
+/// Returns [`KubeconfigError`] when kube-rs cannot find, read, parse, or
+/// resolve the selected kubeconfig.
+pub async fn cluster_info() -> Result<ClusterInfo, KubeconfigError> {
+    load_kube_config().await.map(ClusterInfo::from)
+}
 
 /// Load Kubernetes client config using standard kubeconfig conventions.
 ///
@@ -52,7 +83,7 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 
 #[cfg(test)]
 mod tests {
-    use super::{load_kube_config_path, load_kube_config_with_options};
+    use super::{ClusterInfo, load_kube_config_path, load_kube_config_with_options};
     use kube::config::KubeConfigOptions;
     use std::env;
     use tokio::sync::Mutex;
@@ -70,6 +101,16 @@ mod tests {
 
         assert_eq!(config.cluster_url.to_string(), "https://127.0.0.1:6443/");
         assert_eq!(config.default_namespace, "default");
+    }
+
+    #[test]
+    fn creates_cluster_info_from_kube_config() {
+        let config = kube::Config::new("https://127.0.0.1:6443".parse().expect("valid URL"));
+
+        let info = ClusterInfo::from(config);
+
+        assert_eq!(info.cluster_url, "https://127.0.0.1:6443/");
+        assert_eq!(info.default_namespace, "default");
     }
 
     #[tokio::test(flavor = "current_thread")]

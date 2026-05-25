@@ -65,8 +65,12 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<ConfigCommand>,
     },
-    /// Inspect future cluster capabilities.
-    Cluster,
+    /// Inspect Kubernetes cluster facts.
+    Cluster {
+        /// Optional cluster command.
+        #[command(subcommand)]
+        command: Option<ClusterCommand>,
+    },
     /// Generate future shell completion scripts.
     Completion,
     /// Read future session reports.
@@ -79,7 +83,7 @@ impl Command {
         Self::Session,
         Self::App,
         Self::Config { command: None },
-        Self::Cluster,
+        Self::Cluster { command: None },
         Self::Completion,
         Self::Report,
     ];
@@ -91,9 +95,25 @@ impl Command {
             Self::Session => "session",
             Self::App => "app",
             Self::Config { .. } => "config",
-            Self::Cluster => "cluster",
+            Self::Cluster { .. } => "cluster",
             Self::Completion => "completion",
             Self::Report => "report",
+        }
+    }
+}
+
+/// Kubernetes cluster commands.
+#[derive(Clone, Copy, Debug, Subcommand)]
+pub enum ClusterCommand {
+    /// Show read-only cluster facts from kubeconfig.
+    Info,
+}
+
+impl ClusterCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Info => "info",
         }
     }
 }
