@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 157
+expression: value
+---
+{
+  "app": "checkout",
+  "command": "session plan",
+  "status": "placeholder"
+}

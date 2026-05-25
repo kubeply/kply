@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand};
+use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand, SessionCommand};
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, load_config_path,
 };
@@ -59,6 +59,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::App {
             command: Some(AppCommand::Graph { app }),
         }) => return render_app_graph(&cli, app),
+        Some(Command::Session {
+            command: Some(SessionCommand::Plan { app }),
+        }) => return render_session_plan_placeholder(&cli, app),
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
@@ -104,6 +107,23 @@ fn run() -> Result<ExitCode> {
     } else if !cli.quiet {
         println!("kply {}", env!("CARGO_PKG_VERSION"));
         println!("Placeholder CLI. Roadmap and commands are intentionally pending.");
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render the provisional session plan command placeholder.
+fn render_session_plan_placeholder(cli: &Cli, app_name: &str) -> Result<ExitCode> {
+    if cli.json {
+        let value = serde_json::json!({
+            "command": "session plan",
+            "app": app_name,
+            "status": "placeholder"
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else if !cli.quiet {
+        println!("kply session plan {app_name}");
+        println!("Session planning is defined but behavior is intentionally pending.");
     }
 
     Ok(ExitCode::SUCCESS)
