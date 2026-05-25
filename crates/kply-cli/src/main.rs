@@ -207,12 +207,8 @@ fn render_app_inspect(cli: &Cli, app_name: &str) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Render one configured application graph as stable JSON.
+/// Render one configured application graph.
 fn render_app_graph(cli: &Cli, app_name: &str) -> Result<ExitCode> {
-    if !cli.json {
-        return render_app_graph_requires_json_error();
-    }
-
     let config = match resolved_config(cli) {
         Ok(config) => config,
         Err(error) => return render_config_load_error(&error, cli.json),
@@ -236,9 +232,35 @@ fn render_app_graph(cli: &Cli, app_name: &str) -> Result<ExitCode> {
         Err(message) => return render_app_graph_config_error(&message),
     };
 
-    println!("{}", serde_json::to_string_pretty(&graph)?);
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&graph)?);
+    } else if !cli.quiet {
+        render_app_graph_text(app.name(), &graph);
+    }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render a concise human-readable app graph summary.
+fn render_app_graph_text(app_name: &str, graph: &AppGraph) {
+    println!("kply app graph {app_name}");
+    println!("workload: {}", graph.workload());
+    println!("owned_pods: {}", graph.owned_pods().len());
+    println!("selecting_services: {}", graph.selecting_services().len());
+    for service in graph.selecting_services() {
+        println!("  service: {service}");
+    }
+    println!("service_routes: {}", graph.service_routes().len());
+    println!("probe_facts: {}", graph.probe_facts().len());
+    println!("image_facts: {}", graph.image_facts().len());
+    println!("resource_facts: {}", graph.resource_facts().len());
+    println!("config_references: {}", graph.config_references().len());
+    println!("secret_references: {}", graph.secret_references().len());
+    println!(
+        "relationship_confidences: {}",
+        graph.relationship_confidences().len()
+    );
+    println!("warnings: {}", graph.warnings().len());
 }
 
 /// Build a provisional app graph from static app configuration.
@@ -264,12 +286,6 @@ fn app_graph_from_config(app: &AppConfig) -> Result<AppGraph, String> {
             service_relationship,
             ConfidenceLevel::High,
         )]))
-}
-
-/// Render the provisional app graph JSON-only contract.
-fn render_app_graph_requires_json_error() -> Result<ExitCode> {
-    eprintln!("kply error: usage\n\nkply app graph currently requires --json");
-    Ok(exit_code(EXIT_USAGE))
 }
 
 /// Render an app graph config-to-domain conversion error.

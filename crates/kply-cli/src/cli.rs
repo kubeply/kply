@@ -116,7 +116,7 @@ pub enum AppCommand {
         /// Configured app name to inspect.
         app: String,
     },
-    /// Print one configured application graph as JSON.
+    /// Print one configured application graph.
     Graph {
         /// Configured app name to graph.
         app: String,

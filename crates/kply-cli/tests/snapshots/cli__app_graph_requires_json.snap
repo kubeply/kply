@@ -1,8 +1,0 @@
----
-source: crates/kply-cli/tests/cli.rs
-assertion_line: 713
-expression: stderr
----
-kply error: usage
-
-kply app graph currently requires --json

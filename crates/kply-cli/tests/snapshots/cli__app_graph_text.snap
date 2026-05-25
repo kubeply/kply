@@ -1,0 +1,18 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 738
+expression: output
+---
+kply app graph checkout
+workload: shop/StatefulSet/checkout-api
+owned_pods: 0
+selecting_services: 1
+  service: shop/checkout-http
+service_routes: 0
+probe_facts: 0
+image_facts: 0
+resource_facts: 0
+config_references: 0
+secret_references: 0
+relationship_confidences: 1
+warnings: 0
