@@ -174,6 +174,15 @@ The top-level configuration model has these sections:
 - `checks`: verification checks.
 - `policies`: safety policies.
 
+Application config entries define these fields:
+
+- `name`: Kply app name used by humans and agents.
+- `namespace`: Kubernetes namespace containing the app.
+- `workload`: Kubernetes workload name.
+- `service`: Kubernetes service name used for routed traffic.
+- `default_image`: optional default sandbox image.
+- `route_strategy`: requested sandbox route strategy.
+
 ## Current Workflow
 
 The current workflow is intentionally minimal:
