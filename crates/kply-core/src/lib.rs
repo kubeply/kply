@@ -6,6 +6,7 @@ use std::fmt;
 
 const SESSION_TOKEN_MAX_LEN: usize = 63;
 const WORKLOAD_KIND_MAX_LEN: usize = 63;
+const RESOURCE_QUANTITY_MAX_LEN: usize = 63;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -578,6 +579,93 @@ impl ImageFacts {
     }
 }
 
+/// Kubernetes resource quantity string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct ResourceQuantity(String);
+
+impl ResourceQuantity {
+    /// Create a [`ResourceQuantity`] from a validated Kubernetes quantity string.
+    pub fn new(value: impl Into<String>) -> Result<Self, ResourceQuantityError> {
+        let value = value.into();
+        validate_resource_quantity(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Borrow the resource quantity as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ResourceQuantity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ResourceQuantity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_validated_string(deserializer, Self::new)
+    }
+}
+
+/// Resource facts discovered for a workload container.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ResourceFacts {
+    container: ContainerRef,
+    cpu_request: Option<ResourceQuantity>,
+    cpu_limit: Option<ResourceQuantity>,
+    memory_request: Option<ResourceQuantity>,
+    memory_limit: Option<ResourceQuantity>,
+}
+
+impl ResourceFacts {
+    /// Create [`ResourceFacts`] for a validated container reference.
+    pub fn new(
+        container: ContainerRef,
+        cpu_request: Option<ResourceQuantity>,
+        cpu_limit: Option<ResourceQuantity>,
+        memory_request: Option<ResourceQuantity>,
+        memory_limit: Option<ResourceQuantity>,
+    ) -> Self {
+        Self {
+            container,
+            cpu_request,
+            cpu_limit,
+            memory_request,
+            memory_limit,
+        }
+    }
+
+    /// Borrow the container these resource facts describe.
+    pub fn container(&self) -> &ContainerRef {
+        &self.container
+    }
+
+    /// Borrow the CPU request quantity when configured.
+    pub fn cpu_request(&self) -> Option<&ResourceQuantity> {
+        self.cpu_request.as_ref()
+    }
+
+    /// Borrow the CPU limit quantity when configured.
+    pub fn cpu_limit(&self) -> Option<&ResourceQuantity> {
+        self.cpu_limit.as_ref()
+    }
+
+    /// Borrow the memory request quantity when configured.
+    pub fn memory_request(&self) -> Option<&ResourceQuantity> {
+        self.memory_request.as_ref()
+    }
+
+    /// Borrow the memory limit quantity when configured.
+    pub fn memory_limit(&self) -> Option<&ResourceQuantity> {
+        self.memory_limit.as_ref()
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -596,6 +684,8 @@ pub struct AppGraph {
     probe_facts: Vec<ProbeFacts>,
     #[serde(default)]
     image_facts: Vec<ImageFacts>,
+    #[serde(default)]
+    resource_facts: Vec<ResourceFacts>,
 }
 
 impl AppGraph {
@@ -608,6 +698,7 @@ impl AppGraph {
             service_routes: Vec::new(),
             probe_facts: Vec::new(),
             image_facts: Vec::new(),
+            resource_facts: Vec::new(),
         }
     }
 
@@ -616,6 +707,17 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with resource facts for workload containers.
+    pub fn with_resource_facts(
+        mut self,
+        resource_facts: impl IntoIterator<Item = ResourceFacts>,
+    ) -> Self {
+        self.resource_facts = resource_facts.into_iter().collect();
+        self.resource_facts.sort_unstable();
+        self.resource_facts.dedup();
         self
     }
 
@@ -686,6 +788,11 @@ impl AppGraph {
     pub fn image_facts(&self) -> &[ImageFacts] {
         &self.image_facts
     }
+
+    /// Borrow resource facts for workload containers in deterministic order.
+    pub fn resource_facts(&self) -> &[ResourceFacts] {
+        &self.resource_facts
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -699,7 +806,8 @@ impl<'de> Deserialize<'de> for AppGraph {
             .with_selecting_services(fields.selecting_services)
             .with_service_routes(fields.service_routes)
             .with_probe_facts(fields.probe_facts)
-            .with_image_facts(fields.image_facts))
+            .with_image_facts(fields.image_facts)
+            .with_resource_facts(fields.resource_facts))
     }
 }
 
@@ -1413,6 +1521,41 @@ impl fmt::Display for ImageRefError {
 
 impl std::error::Error for ImageRefError {}
 
+/// Error returned when a [`ResourceQuantity`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceQuantityError {
+    /// Resource quantities cannot be empty.
+    Empty,
+    /// Resource quantities must stay bounded for stable reports and labels.
+    TooLong { max_len: usize },
+    /// Resource quantities must start and end with an ASCII letter or digit.
+    InvalidBoundary,
+    /// Resource quantities only allow ASCII letters, digits, dots, plus, minus, and underscores.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for ResourceQuantityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("resource quantity cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "resource quantity cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("resource quantity must start and end with an ASCII letter or digit"),
+            Self::InvalidCharacter { character } => write!(
+                formatter,
+                "resource quantity contains invalid character `{character}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResourceQuantityError {}
+
 /// Error returned when a [`RouteSelector`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteSelectorError {
@@ -1804,6 +1947,8 @@ struct AppGraphFields {
     probe_facts: Vec<ProbeFacts>,
     #[serde(default)]
     image_facts: Vec<ImageFacts>,
+    #[serde(default)]
+    resource_facts: Vec<ResourceFacts>,
 }
 
 #[derive(Deserialize)]
@@ -2099,6 +2244,39 @@ fn validate_image_ref(value: &str) -> Result<(), ImageRefError> {
     Ok(())
 }
 
+fn validate_resource_quantity(value: &str) -> Result<(), ResourceQuantityError> {
+    if value.is_empty() {
+        return Err(ResourceQuantityError::Empty);
+    }
+
+    if value.len() > RESOURCE_QUANTITY_MAX_LEN {
+        return Err(ResourceQuantityError::TooLong {
+            max_len: RESOURCE_QUANTITY_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(ResourceQuantityError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+
+    if !first_character.is_ascii_alphanumeric() || !last_character.is_ascii_alphanumeric() {
+        return Err(ResourceQuantityError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_resource_quantity_character(*character))
+    {
+        return Err(ResourceQuantityError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_resource_quantity_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '.' | '+' | '-' | '_')
+}
+
 fn is_image_ref_character(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '/' | ':' | '@')
 }
@@ -2189,8 +2367,9 @@ fn is_workload_kind_character(character: char) -> bool {
 mod tests {
     use super::{
         AppGraph, ContainerRef, ContainerRefError, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef,
-        ImageRefError, PodRef, PodRefError, ProbeFacts, ROUTE_HEADER_NAME_MAX_LEN,
-        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
+        ImageRefError, PodRef, PodRefError, ProbeFacts, RESOURCE_QUANTITY_MAX_LEN,
+        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
+        ROUTE_HOST_MAX_LEN, ResourceFacts, ResourceQuantity, ResourceQuantityError,
         RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError,
         RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError,
         ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
@@ -2303,6 +2482,44 @@ mod tests {
                 ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
             ),
         ])
+        .with_resource_facts([
+            ResourceFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                None,
+                None,
+                Some(ResourceQuantity::new("128Mi").expect("resource quantity")),
+                Some(ResourceQuantity::new("256Mi").expect("resource quantity")),
+            ),
+            ResourceFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                Some(ResourceQuantity::new("250m").expect("resource quantity")),
+                Some(ResourceQuantity::new("500m").expect("resource quantity")),
+                Some(ResourceQuantity::new("512Mi").expect("resource quantity")),
+                Some(ResourceQuantity::new("1Gi").expect("resource quantity")),
+            ),
+            ResourceFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                Some(ResourceQuantity::new("250m").expect("resource quantity")),
+                Some(ResourceQuantity::new("500m").expect("resource quantity")),
+                Some(ResourceQuantity::new("512Mi").expect("resource quantity")),
+                Some(ResourceQuantity::new("1Gi").expect("resource quantity")),
+            ),
+        ])
     }
 
     #[test]
@@ -2318,6 +2535,7 @@ mod tests {
         assert!(graph.service_routes().is_empty());
         assert!(graph.probe_facts().is_empty());
         assert!(graph.image_facts().is_empty());
+        assert!(graph.resource_facts().is_empty());
     }
 
     #[test]
@@ -2501,6 +2719,64 @@ mod tests {
     }
 
     #[test]
+    fn creates_resource_quantity_from_valid_value() {
+        let quantity = ResourceQuantity::new("250m").expect("resource quantity should be valid");
+
+        assert_eq!(quantity.as_str(), "250m");
+        assert_eq!(quantity.to_string(), "250m");
+    }
+
+    #[test]
+    fn rejects_invalid_resource_quantity_values() {
+        let empty_error = ResourceQuantity::new("").expect_err("empty quantity should be invalid");
+        let boundary_error =
+            ResourceQuantity::new("-250m").expect_err("boundary should be invalid");
+        let character_error = ResourceQuantity::new("250 m").expect_err("space should be invalid");
+        let long_error = ResourceQuantity::new("1".repeat(RESOURCE_QUANTITY_MAX_LEN + 1))
+            .expect_err("long quantity should be invalid");
+
+        assert_eq!(empty_error, ResourceQuantityError::Empty);
+        assert_eq!(boundary_error, ResourceQuantityError::InvalidBoundary);
+        assert_eq!(
+            character_error,
+            ResourceQuantityError::InvalidCharacter { character: ' ' }
+        );
+        assert_eq!(
+            long_error,
+            ResourceQuantityError::TooLong {
+                max_len: RESOURCE_QUANTITY_MAX_LEN
+            }
+        );
+    }
+
+    #[test]
+    fn creates_resource_facts_from_valid_container_and_quantities() {
+        let container = ContainerRef::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            "api",
+        )
+        .expect("container ref");
+        let cpu_request = ResourceQuantity::new("250m").expect("resource quantity");
+        let cpu_limit = ResourceQuantity::new("500m").expect("resource quantity");
+        let memory_request = ResourceQuantity::new("512Mi").expect("resource quantity");
+        let memory_limit = ResourceQuantity::new("1Gi").expect("resource quantity");
+
+        let facts = ResourceFacts::new(
+            container.clone(),
+            Some(cpu_request.clone()),
+            Some(cpu_limit.clone()),
+            Some(memory_request.clone()),
+            Some(memory_limit.clone()),
+        );
+
+        assert_eq!(facts.container(), &container);
+        assert_eq!(facts.cpu_request(), Some(&cpu_request));
+        assert_eq!(facts.cpu_limit(), Some(&cpu_limit));
+        assert_eq!(facts.memory_request(), Some(&memory_request));
+        assert_eq!(facts.memory_limit(), Some(&memory_limit));
+    }
+
+    #[test]
     fn records_owned_pods_in_stable_order() {
         let graph = test_app_graph();
 
@@ -2603,6 +2879,41 @@ mod tests {
                     )
                     .expect("container ref"),
                     ImageRef::new("registry.example.com/checkout/worker:v1").expect("image ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_resource_facts_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.resource_facts(),
+            &[
+                ResourceFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    Some(ResourceQuantity::new("250m").expect("resource quantity")),
+                    Some(ResourceQuantity::new("500m").expect("resource quantity")),
+                    Some(ResourceQuantity::new("512Mi").expect("resource quantity")),
+                    Some(ResourceQuantity::new("1Gi").expect("resource quantity")),
+                ),
+                ResourceFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    None,
+                    None,
+                    Some(ResourceQuantity::new("128Mi").expect("resource quantity")),
+                    Some(ResourceQuantity::new("256Mi").expect("resource quantity")),
                 ),
             ]
         );
@@ -2890,6 +3201,93 @@ mod tests {
                     )
                     .expect("container ref"),
                     ImageRef::new("registry.example.com/checkout/worker:v1").expect("image ref"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_resource_facts_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "resource_facts": [
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "worker"
+                    },
+                    "cpu_request": null,
+                    "cpu_limit": null,
+                    "memory_request": "128Mi",
+                    "memory_limit": "256Mi"
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "cpu_request": "250m",
+                    "cpu_limit": "500m",
+                    "memory_request": "512Mi",
+                    "memory_limit": "1Gi"
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "cpu_request": "250m",
+                    "cpu_limit": "500m",
+                    "memory_request": "512Mi",
+                    "memory_limit": "1Gi"
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.resource_facts(),
+            &[
+                ResourceFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    Some(ResourceQuantity::new("250m").expect("resource quantity")),
+                    Some(ResourceQuantity::new("500m").expect("resource quantity")),
+                    Some(ResourceQuantity::new("512Mi").expect("resource quantity")),
+                    Some(ResourceQuantity::new("1Gi").expect("resource quantity")),
+                ),
+                ResourceFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    None,
+                    None,
+                    Some(ResourceQuantity::new("128Mi").expect("resource quantity")),
+                    Some(ResourceQuantity::new("256Mi").expect("resource quantity")),
                 ),
             ]
         );
