@@ -117,6 +117,9 @@ pub enum SessionCommand {
     Plan {
         /// Configured app name to plan.
         app: String,
+        /// Candidate image reference for the sandbox workload.
+        #[arg(long, value_name = "IMAGE")]
+        image: Option<String>,
     },
 }
 

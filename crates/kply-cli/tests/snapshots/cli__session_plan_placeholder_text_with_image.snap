@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 177
+expression: output
+---
+kply session plan checkout
+Image: ghcr.io/kubeply/checkout:v2
+Session planning is defined but behavior is intentionally pending.
