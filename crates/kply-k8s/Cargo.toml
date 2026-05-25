@@ -12,3 +12,5 @@ kube.workspace = true
 
 [dev-dependencies]
 k8s-openapi.workspace = true
+kply-test.workspace = true
+tokio.workspace = true
