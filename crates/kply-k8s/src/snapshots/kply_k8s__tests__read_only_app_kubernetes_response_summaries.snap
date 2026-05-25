@@ -1,0 +1,279 @@
+---
+source: crates/kply-k8s/src/lib.rs
+expression: "json!({\n    \"deployment\": deployment, \"service\": service, \"pod\": pod, \"ingress\":\n    ingress, \"gateway_class\": gateway_class, \"gateway\": gateway, \"http_route\":\n    http_route,\n})"
+---
+{
+  "deployment": {
+    "available_replicas": 3,
+    "images": [
+      "registry.example.com/shop/checkout:v2",
+      "registry.example.com/shop/metrics:v1"
+    ],
+    "name": "checkout-api",
+    "namespace": "shop",
+    "probes": [
+      {
+        "container_name": "checkout",
+        "liveness": {
+          "failure_threshold": 5,
+          "handler": {
+            "host": null,
+            "port": "http",
+            "type": "tcp_socket"
+          },
+          "initial_delay_seconds": 15,
+          "period_seconds": 20,
+          "success_threshold": 1,
+          "termination_grace_period_seconds": null,
+          "timeout_seconds": 3
+        },
+        "readiness": {
+          "failure_threshold": 3,
+          "handler": {
+            "header_count": 0,
+            "host": null,
+            "path": "/ready",
+            "port": "http",
+            "scheme": "HTTP",
+            "type": "http_get"
+          },
+          "initial_delay_seconds": 5,
+          "period_seconds": 10,
+          "success_threshold": 1,
+          "termination_grace_period_seconds": null,
+          "timeout_seconds": 2
+        }
+      }
+    ],
+    "ready_replicas": 3,
+    "replicas": 3,
+    "resources": [
+      {
+        "container_name": "checkout",
+        "limits": [
+          {
+            "name": "cpu",
+            "quantity": "500m"
+          },
+          {
+            "name": "memory",
+            "quantity": "512Mi"
+          }
+        ],
+        "requests": [
+          {
+            "name": "cpu",
+            "quantity": "250m"
+          },
+          {
+            "name": "memory",
+            "quantity": "256Mi"
+          }
+        ]
+      }
+    ],
+    "rollout": {
+      "available_replicas": 3,
+      "conditions": [
+        {
+          "message": "ReplicaSet checkout-api-7d9f4d9d is available",
+          "reason": "NewReplicaSetAvailable",
+          "status": "True",
+          "type_": "Progressing"
+        },
+        {
+          "message": "Deployment has minimum availability",
+          "reason": "MinimumReplicasAvailable",
+          "status": "True",
+          "type_": "Available"
+        }
+      ],
+      "desired_replicas": 3,
+      "generation": 7,
+      "observed_generation": 7,
+      "phase": "complete",
+      "ready_replicas": 3,
+      "unavailable_replicas": 0,
+      "updated_replicas": 3
+    },
+    "updated_replicas": 3
+  },
+  "gateway": {
+    "gateway_class_name": "public",
+    "listeners": [
+      {
+        "hostname": "checkout.example.com",
+        "name": "http",
+        "port": 80,
+        "protocol": "HTTP"
+      },
+      {
+        "hostname": "checkout.example.com",
+        "name": "https",
+        "port": 443,
+        "protocol": "HTTPS"
+      }
+    ],
+    "name": "public-gateway",
+    "namespace": "shop"
+  },
+  "gateway_class": {
+    "controller_name": "example.com/gateway-controller",
+    "description": "Public edge gateways",
+    "name": "public"
+  },
+  "http_route": {
+    "hostnames": [
+      "checkout.example.com"
+    ],
+    "name": "checkout-route",
+    "namespace": "shop",
+    "parent_refs": [
+      {
+        "kind": "Gateway",
+        "name": "public-gateway",
+        "namespace": "shop",
+        "section_name": null
+      }
+    ],
+    "rules": [
+      {
+        "backend_refs": [
+          {
+            "kind": "Service",
+            "name": "checkout-http",
+            "namespace": "shop",
+            "port": 80
+          }
+        ]
+      }
+    ]
+  },
+  "ingress": {
+    "default_backend": null,
+    "ingress_class_name": "nginx",
+    "name": "checkout-ingress",
+    "namespace": "shop",
+    "rules": [
+      {
+        "host": "checkout.example.com",
+        "paths": [
+          {
+            "backend": {
+              "service_name": "checkout-http",
+              "service_port": "http"
+            },
+            "path": "/",
+            "path_type": "Prefix"
+          }
+        ]
+      }
+    ],
+    "tls": [
+      {
+        "hosts": [
+          "checkout.example.com"
+        ],
+        "secret_name": "checkout-tls"
+      }
+    ]
+  },
+  "pod": {
+    "images": [
+      "registry.example.com/shop/checkout:v2",
+      "registry.example.com/shop/metrics:v1"
+    ],
+    "name": "checkout-api-7d9f4d9d-x1",
+    "namespace": "shop",
+    "node_name": "worker-a",
+    "owner_references": [
+      {
+        "controller": true,
+        "kind": "ReplicaSet",
+        "name": "checkout-api-7d9f4d9d",
+        "uid": "11111111-1111-1111-1111-111111111111"
+      }
+    ],
+    "phase": "Running",
+    "pod_ip": "10.244.0.12",
+    "probes": [
+      {
+        "container_name": "checkout",
+        "liveness": {
+          "failure_threshold": 5,
+          "handler": {
+            "host": null,
+            "port": "http",
+            "type": "tcp_socket"
+          },
+          "initial_delay_seconds": 15,
+          "period_seconds": 20,
+          "success_threshold": 1,
+          "termination_grace_period_seconds": null,
+          "timeout_seconds": 3
+        },
+        "readiness": {
+          "failure_threshold": 3,
+          "handler": {
+            "header_count": 0,
+            "host": null,
+            "path": "/ready",
+            "port": "http",
+            "scheme": "HTTP",
+            "type": "http_get"
+          },
+          "initial_delay_seconds": 5,
+          "period_seconds": 10,
+          "success_threshold": 1,
+          "termination_grace_period_seconds": null,
+          "timeout_seconds": 2
+        }
+      }
+    ],
+    "resources": [
+      {
+        "container_name": "checkout",
+        "limits": [
+          {
+            "name": "cpu",
+            "quantity": "500m"
+          },
+          {
+            "name": "memory",
+            "quantity": "512Mi"
+          }
+        ],
+        "requests": [
+          {
+            "name": "cpu",
+            "quantity": "250m"
+          },
+          {
+            "name": "memory",
+            "quantity": "256Mi"
+          }
+        ]
+      }
+    ]
+  },
+  "service": {
+    "name": "checkout-http",
+    "namespace": "shop",
+    "ports": [
+      {
+        "app_protocol": "http",
+        "name": "http",
+        "port": 80,
+        "protocol": "TCP",
+        "target_port": "http"
+      }
+    ],
+    "selector": [
+      {
+        "key": "app.kubernetes.io/name",
+        "value": "checkout-api"
+      }
+    ],
+    "service_type": "ClusterIP"
+  }
+}

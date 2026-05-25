@@ -1,0 +1,49 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "IngressList",
+  "metadata": {
+    "resourceVersion": "1003"
+  },
+  "items": [
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "Ingress",
+      "metadata": {
+        "name": "checkout-ingress",
+        "namespace": "shop"
+      },
+      "spec": {
+        "ingressClassName": "nginx",
+        "tls": [
+          {
+            "hosts": [
+              "checkout.example.com"
+            ],
+            "secretName": "checkout-tls"
+          }
+        ],
+        "rules": [
+          {
+            "host": "checkout.example.com",
+            "http": {
+              "paths": [
+                {
+                  "path": "/",
+                  "pathType": "Prefix",
+                  "backend": {
+                    "service": {
+                      "name": "checkout-http",
+                      "port": {
+                        "name": "http"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
