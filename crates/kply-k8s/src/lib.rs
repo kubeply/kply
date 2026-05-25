@@ -1,6 +1,6 @@
 //! Kubernetes adapters for future safe session execution.
 
-use std::path::Path;
+use std::{error::Error, fmt, path::Path};
 
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{Container, Pod, Probe, Service};
@@ -8,14 +8,124 @@ use k8s_openapi::api::networking::v1::{Ingress, IngressBackend};
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kply_core::WorkloadRef;
+pub use kube::config::KubeconfigError;
 use kube::{
     Api, Client, Config, ResourceExt,
     api::ListParams,
-    config::{KubeConfigOptions, Kubeconfig, KubeconfigError},
+    config::{KubeConfigOptions, Kubeconfig},
     core::{ApiResource, DynamicObject, GroupVersionKind},
 };
 use serde::Serialize;
 use serde_json::Value;
+
+/// Stable read-only Kubernetes discovery error for users and agents.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DiscoveryError {
+    /// Machine-readable error code.
+    pub code: DiscoveryErrorCode,
+    /// Human-readable remediation-oriented message.
+    pub message: String,
+}
+
+/// Machine-readable read-only Kubernetes discovery error code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryErrorCode {
+    /// Kubeconfig could not be found or read.
+    MissingKubeconfig,
+    /// Kubernetes denied a read-only API request.
+    ForbiddenAccess,
+    /// The requested workload was not present in discovered objects.
+    MissingWorkload,
+    /// Kubeconfig was present but invalid or incomplete.
+    KubernetesConfig,
+    /// Kubernetes returned a non-RBAC API error.
+    KubernetesApi,
+}
+
+impl DiscoveryErrorCode {
+    /// Return the stable snake_case string form of this code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingKubeconfig => "missing_kubeconfig",
+            Self::ForbiddenAccess => "forbidden_access",
+            Self::MissingWorkload => "missing_workload",
+            Self::KubernetesConfig => "kubernetes_config",
+            Self::KubernetesApi => "kubernetes_api",
+        }
+    }
+}
+
+impl DiscoveryError {
+    /// Classify kubeconfig resolution errors into user-facing discovery errors.
+    pub fn from_kubeconfig_error(error: &KubeconfigError) -> Self {
+        match error {
+            KubeconfigError::FindPath => Self {
+                code: DiscoveryErrorCode::MissingKubeconfig,
+                message: "kubeconfig was not found; set KUBECONFIG or create ~/.kube/config"
+                    .to_owned(),
+            },
+            KubeconfigError::ReadConfig(_, path) => Self {
+                code: DiscoveryErrorCode::MissingKubeconfig,
+                message: format!(
+                    "kubeconfig could not be read at {}; set KUBECONFIG or create ~/.kube/config",
+                    path.display()
+                ),
+            },
+            _ => Self {
+                code: DiscoveryErrorCode::KubernetesConfig,
+                message: format!("kubeconfig could not be resolved: {error}"),
+            },
+        }
+    }
+
+    /// Classify Kubernetes API errors from read-only discovery requests.
+    pub fn from_kubernetes_api_error(operation: &str, error: &kube::Error) -> Self {
+        if let kube::Error::Api(status) = error
+            && (status.code == 401
+                || status.code == 403
+                || status.reason == "Unauthorized"
+                || status.reason == "Forbidden")
+        {
+            let detail = if status.message.is_empty() {
+                "Kubernetes RBAC denied the request".to_owned()
+            } else {
+                status.message.clone()
+            };
+
+            return Self {
+                code: DiscoveryErrorCode::ForbiddenAccess,
+                message: format!("{operation} was forbidden by Kubernetes: {detail}"),
+            };
+        }
+
+        Self {
+            code: DiscoveryErrorCode::KubernetesApi,
+            message: format!("{operation} failed: {error}"),
+        }
+    }
+
+    /// Build a clear error for a requested workload missing from discovery.
+    pub fn missing_workload(workload: &WorkloadRef) -> Self {
+        Self {
+            code: DiscoveryErrorCode::MissingWorkload,
+            message: format!(
+                "workload {}/{}/{} was not found during read-only discovery",
+                workload.namespace(),
+                workload.kind(),
+                workload.name()
+            ),
+        }
+    }
+}
+
+impl fmt::Display for DiscoveryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.message)
+    }
+}
+
+impl Error for DiscoveryError {}
 
 /// Read-only Kubernetes cluster facts resolved from kubeconfig.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -421,6 +531,28 @@ pub async fn list_deployments(
         .collect::<Vec<_>>();
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(summaries)
+}
+
+/// Return a discovered Deployment summary matching a requested workload.
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError`] when the workload is not a Deployment or no
+/// matching Deployment summary was discovered.
+pub fn require_deployment_workload<'a>(
+    deployments: &'a [DeploymentSummary],
+    workload: &WorkloadRef,
+) -> Result<&'a DeploymentSummary, DiscoveryError> {
+    if workload.kind() != "Deployment" {
+        return Err(DiscoveryError::missing_workload(workload));
+    }
+
+    deployments
+        .iter()
+        .find(|deployment| {
+            deployment.namespace == workload.namespace() && deployment.name == workload.name()
+        })
+        .ok_or_else(|| DiscoveryError::missing_workload(workload))
 }
 
 /// List Services in one namespace without mutating cluster state.
@@ -1133,15 +1265,16 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 mod tests {
     use super::{
         ClusterInfo, ContainerProbeSummary, ContainerResourceSummary, DeploymentConditionSummary,
-        DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, GatewayClassSummary,
-        GatewayListenerSummary, GatewaySummary, HttpRouteBackendRefSummary, HttpRouteRuleSummary,
-        HttpRouteSummary, IngressBackendSummary, IngressPathSummary, IngressRuleSummary,
-        IngressSummary, IngressTlsSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
-        ProbeHandlerSummary, ProbeSummary, ResourceQuantitySummary, RouteParentRefSummary,
-        ServicePortSummary, ServiceSummary, deployment_rollout_summary, deployment_summary,
-        gateway_api_resource, gateway_class_summary, gateway_summary, http_route_summary,
-        ingress_summary, load_kube_config_path, load_kube_config_with_options,
-        pod_is_owned_by_workload, pod_summary, service_summary,
+        DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, DiscoveryError,
+        DiscoveryErrorCode, GatewayClassSummary, GatewayListenerSummary, GatewaySummary,
+        HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary, IngressBackendSummary,
+        IngressPathSummary, IngressRuleSummary, IngressSummary, IngressTlsSummary,
+        LabelSelectorEntry, OwnerReferenceSummary, PodSummary, ProbeHandlerSummary, ProbeSummary,
+        ResourceQuantitySummary, RouteParentRefSummary, ServicePortSummary, ServiceSummary,
+        deployment_rollout_summary, deployment_summary, gateway_api_resource,
+        gateway_class_summary, gateway_summary, http_route_summary, ingress_summary,
+        load_kube_config_path, load_kube_config_with_options, pod_is_owned_by_workload,
+        pod_summary, require_deployment_workload, service_summary,
     };
     use k8s_openapi::api::apps::v1::{
         Deployment, DeploymentCondition, DeploymentSpec, DeploymentStatus,
@@ -1162,6 +1295,7 @@ mod tests {
     use kply_core::WorkloadRef;
     use kube::config::KubeConfigOptions;
     use kube::core::{DynamicObject, ObjectList};
+    use kube::error::Status;
     use serde_json::json;
     use std::{collections::BTreeMap, env, fs, path::Path};
     use tokio::sync::Mutex;
@@ -1925,6 +2059,129 @@ current-context: context-a
         assert!(
             matches!(error, kube::config::KubeconfigError::ReadConfig(_, _)),
             "unexpected kubeconfig error: {error}"
+        );
+
+        let discovery_error = DiscoveryError::from_kubeconfig_error(&error);
+
+        assert_eq!(discovery_error.code, DiscoveryErrorCode::MissingKubeconfig);
+        assert!(
+            discovery_error.message.contains("set KUBECONFIG"),
+            "missing kubeconfig error should explain remediation"
+        );
+    }
+
+    #[test]
+    fn classifies_forbidden_kubernetes_api_errors() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 403,
+                reason: "Forbidden".to_owned(),
+                message: "deployments.apps is forbidden".to_owned(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let discovery_error = DiscoveryError::from_kubernetes_api_error("list Deployments", &error);
+
+        assert_eq!(discovery_error.code, DiscoveryErrorCode::ForbiddenAccess);
+        assert_eq!(
+            discovery_error.message,
+            "list Deployments was forbidden by Kubernetes: deployments.apps is forbidden"
+        );
+    }
+
+    #[test]
+    fn classifies_unauthorized_kubernetes_api_errors_as_access_errors() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 401,
+                reason: "Unauthorized".to_owned(),
+                message: "credentials are not valid".to_owned(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let discovery_error = DiscoveryError::from_kubernetes_api_error("list Deployments", &error);
+
+        assert_eq!(discovery_error.code, DiscoveryErrorCode::ForbiddenAccess);
+        assert_eq!(
+            discovery_error.message,
+            "list Deployments was forbidden by Kubernetes: credentials are not valid"
+        );
+    }
+
+    #[test]
+    fn classifies_non_rbac_kubernetes_api_errors() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 500,
+                reason: "InternalError".to_owned(),
+                message: "internal server error".to_owned(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let discovery_error = DiscoveryError::from_kubernetes_api_error("list Deployments", &error);
+
+        assert_eq!(discovery_error.code, DiscoveryErrorCode::KubernetesApi);
+        assert!(
+            discovery_error.message.contains("list Deployments failed"),
+            "non-RBAC API errors should include the operation"
+        );
+    }
+
+    #[test]
+    fn serializes_discovery_error_codes_like_as_str() {
+        let codes = [
+            DiscoveryErrorCode::MissingKubeconfig,
+            DiscoveryErrorCode::ForbiddenAccess,
+            DiscoveryErrorCode::MissingWorkload,
+            DiscoveryErrorCode::KubernetesConfig,
+            DiscoveryErrorCode::KubernetesApi,
+        ];
+
+        for code in codes {
+            let value = serde_json::to_value(code).expect("error code should serialize");
+
+            assert_eq!(value, json!(code.as_str()));
+        }
+    }
+
+    #[test]
+    fn reports_missing_deployment_workload() {
+        let workload = WorkloadRef::new("shop", "Deployment", "checkout-api").expect("workload");
+
+        let error = require_deployment_workload(&[], &workload)
+            .expect_err("missing workload should report a discovery error");
+
+        assert_eq!(error.code, DiscoveryErrorCode::MissingWorkload);
+        assert_eq!(
+            error.message,
+            "workload shop/Deployment/checkout-api was not found during read-only discovery"
+        );
+    }
+
+    #[test]
+    fn reports_wrong_kind_workload() {
+        let deployment = deployment_summary(&fake_deployment("shop", "checkout-api", &[]));
+        let workload = WorkloadRef::new("shop", "StatefulSet", "checkout-api").expect("workload");
+
+        let error = require_deployment_workload(&[deployment], &workload)
+            .expect_err("wrong workload kind should report a discovery error");
+
+        assert_eq!(error.code, DiscoveryErrorCode::MissingWorkload);
+        assert!(
+            error.message.contains("StatefulSet"),
+            "wrong-kind workload error should mention the requested kind"
         );
     }
 
