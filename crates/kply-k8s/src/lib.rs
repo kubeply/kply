@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::core::v1::Service;
+use k8s_openapi::api::core::v1::{Pod, Service};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+use kply_core::WorkloadRef;
 use kube::{
     Api, Client, Config, ResourceExt,
     api::ListParams,
@@ -79,6 +80,38 @@ pub struct ServicePortSummary {
     pub target_port: Option<String>,
 }
 
+/// Read-only summary of a Kubernetes Pod.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PodSummary {
+    /// Pod namespace.
+    pub namespace: String,
+    /// Pod name.
+    pub name: String,
+    /// Current Pod phase, such as `Running`, `Pending`, or `Failed`.
+    pub phase: Option<String>,
+    /// Node name where the Pod is scheduled.
+    pub node_name: Option<String>,
+    /// Pod IP assigned by Kubernetes.
+    pub pod_ip: Option<String>,
+    /// Declared container images in pod spec order.
+    pub images: Vec<String>,
+    /// Owner references in manifest order.
+    pub owner_references: Vec<OwnerReferenceSummary>,
+}
+
+/// Read-only summary of a Kubernetes owner reference.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OwnerReferenceSummary {
+    /// Referenced owner kind.
+    pub kind: String,
+    /// Referenced owner name.
+    pub name: String,
+    /// Referenced owner uid.
+    pub uid: String,
+    /// Whether this owner reference is marked as the controlling owner.
+    pub controller: Option<bool>,
+}
+
 /// List Deployments in one namespace without mutating cluster state.
 ///
 /// # Errors
@@ -119,6 +152,31 @@ pub async fn list_services(
     Ok(summaries)
 }
 
+/// List [`Pod`] objects directly owned by a [`WorkloadRef`] in one namespace.
+///
+/// This matches [`Pod`] owner references against the [`WorkloadRef`] kind and
+/// name. It does not follow intermediate controller chains such as Deployment
+/// to ReplicaSet to [`Pod`].
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_pods_owned_by_workload(
+    client: Client,
+    workload: &WorkloadRef,
+) -> Result<Vec<PodSummary>, kube::Error> {
+    let pods: Api<Pod> = Api::namespaced(client, workload.namespace());
+    let mut summaries = pods
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .filter(|pod| pod_is_owned_by_workload(pod, workload))
+        .map(pod_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
+}
+
 /// Convert a Kubernetes [`Deployment`] into a deterministic summary.
 pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
     let spec = deployment.spec.as_ref();
@@ -143,6 +201,55 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         updated_replicas: status.and_then(|status| status.updated_replicas),
         images,
     }
+}
+
+/// Convert a Kubernetes [`Pod`] into a deterministic summary.
+pub fn pod_summary(pod: &Pod) -> PodSummary {
+    let spec = pod.spec.as_ref();
+    let status = pod.status.as_ref();
+    let images = spec
+        .map(|spec| {
+            spec.containers
+                .iter()
+                .map(|container| container.image.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let owner_references = pod
+        .metadata
+        .owner_references
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|owner| OwnerReferenceSummary {
+            kind: owner.kind.clone(),
+            name: owner.name.clone(),
+            uid: owner.uid.clone(),
+            controller: owner.controller,
+        })
+        .collect::<Vec<_>>();
+
+    PodSummary {
+        namespace: pod.namespace().unwrap_or_default(),
+        name: pod.name_any(),
+        phase: status.and_then(|status| status.phase.clone()),
+        node_name: spec.and_then(|spec| spec.node_name.clone()),
+        pod_ip: status.and_then(|status| status.pod_ip.clone()),
+        images,
+        owner_references,
+    }
+}
+
+/// Return true when a [`Pod`] has a direct owner reference to `workload`.
+pub fn pod_is_owned_by_workload(pod: &Pod, workload: &WorkloadRef) -> bool {
+    pod.namespace().as_deref() == Some(workload.namespace())
+        && pod
+            .metadata
+            .owner_references
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|owner| owner.kind == workload.kind() && owner.name == workload.name())
 }
 
 /// Convert a Kubernetes [`Service`] into a deterministic summary.
@@ -260,15 +367,19 @@ pub async fn load_kube_config_path(path: impl AsRef<Path>) -> Result<Config, Kub
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterInfo, DeploymentSummary, LabelSelectorEntry, ServicePortSummary, ServiceSummary,
-        deployment_summary, load_kube_config_path, load_kube_config_with_options, service_summary,
+        ClusterInfo, DeploymentSummary, LabelSelectorEntry, OwnerReferenceSummary, PodSummary,
+        ServicePortSummary, ServiceSummary, deployment_summary, load_kube_config_path,
+        load_kube_config_with_options, pod_is_owned_by_workload, pod_summary, service_summary,
     };
     use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStatus};
     use k8s_openapi::api::core::v1::{
-        Container, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
+        Container, Pod, PodSpec, PodStatus, PodTemplateSpec, Service, ServicePort, ServiceSpec,
     };
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{
+        LabelSelector, ObjectMeta, OwnerReference,
+    };
     use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+    use kply_core::WorkloadRef;
     use kube::config::KubeConfigOptions;
     use std::collections::BTreeMap;
     use std::env;
@@ -343,6 +454,115 @@ mod tests {
                 images: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn summarizes_pod_metadata_status_and_owners() {
+        let pod = fake_pod(
+            "shop",
+            "checkout-api-7f7c8d9b9d-x1",
+            &[("checkout", "checkout:v2"), ("sidecar", "sidecar:v1")],
+            vec![OwnerReference {
+                api_version: "apps/v1".to_owned(),
+                kind: "ReplicaSet".to_owned(),
+                name: "checkout-api-7f7c8d9b9d".to_owned(),
+                uid: "replicaset-uid".to_owned(),
+                controller: Some(true),
+                ..OwnerReference::default()
+            }],
+        );
+
+        let summary = pod_summary(&pod);
+
+        assert_eq!(
+            summary,
+            PodSummary {
+                namespace: "shop".to_owned(),
+                name: "checkout-api-7f7c8d9b9d-x1".to_owned(),
+                phase: Some("Running".to_owned()),
+                node_name: Some("worker-a".to_owned()),
+                pod_ip: Some("10.244.0.12".to_owned()),
+                images: vec!["checkout:v2".to_owned(), "sidecar:v1".to_owned()],
+                owner_references: vec![OwnerReferenceSummary {
+                    kind: "ReplicaSet".to_owned(),
+                    name: "checkout-api-7f7c8d9b9d".to_owned(),
+                    uid: "replicaset-uid".to_owned(),
+                    controller: Some(true),
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn summarizes_minimal_pod_without_optional_fields() {
+        let pod = Pod {
+            metadata: ObjectMeta {
+                name: Some("minimal".to_owned()),
+                ..ObjectMeta::default()
+            },
+            ..Pod::default()
+        };
+
+        let summary = pod_summary(&pod);
+
+        assert_eq!(
+            summary,
+            PodSummary {
+                namespace: String::new(),
+                name: "minimal".to_owned(),
+                phase: None,
+                node_name: None,
+                pod_ip: None,
+                images: Vec::new(),
+                owner_references: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn detects_pods_directly_owned_by_workload() {
+        let workload =
+            WorkloadRef::new("shop", "ReplicaSet", "checkout-api-7f7c8d9b9d").expect("workload");
+        let owned_pod = fake_pod(
+            "shop",
+            "checkout-api-7f7c8d9b9d-x1",
+            &[("checkout", "checkout:v2")],
+            vec![OwnerReference {
+                api_version: "apps/v1".to_owned(),
+                kind: "ReplicaSet".to_owned(),
+                name: "checkout-api-7f7c8d9b9d".to_owned(),
+                uid: "replicaset-uid".to_owned(),
+                ..OwnerReference::default()
+            }],
+        );
+        let other_namespace_pod = fake_pod(
+            "qa",
+            "checkout-api-7f7c8d9b9d-x2",
+            &[("checkout", "checkout:v2")],
+            vec![OwnerReference {
+                api_version: "apps/v1".to_owned(),
+                kind: "ReplicaSet".to_owned(),
+                name: "checkout-api-7f7c8d9b9d".to_owned(),
+                uid: "replicaset-uid".to_owned(),
+                ..OwnerReference::default()
+            }],
+        );
+        let unrelated_pod = fake_pod(
+            "shop",
+            "catalog-api-5c7d9f5c6f-z1",
+            &[("catalog", "catalog:v1")],
+            vec![OwnerReference {
+                api_version: "apps/v1".to_owned(),
+                kind: "ReplicaSet".to_owned(),
+                name: "catalog-api-5c7d9f5c6f".to_owned(),
+                uid: "catalog-replicaset-uid".to_owned(),
+                ..OwnerReference::default()
+            }],
+        );
+
+        assert!(pod_is_owned_by_workload(&owned_pod, &workload));
+        assert!(!pod_is_owned_by_workload(&other_namespace_pod, &workload));
+        assert!(!pod_is_owned_by_workload(&unrelated_pod, &workload));
     }
 
     #[test]
@@ -568,6 +788,39 @@ current-context: context-a
                 ready_replicas: Some(2),
                 updated_replicas: Some(3),
                 ..DeploymentStatus::default()
+            }),
+        }
+    }
+
+    fn fake_pod(
+        namespace: &str,
+        name: &str,
+        containers: &[(&str, &str)],
+        owner_references: Vec<OwnerReference>,
+    ) -> Pod {
+        Pod {
+            metadata: ObjectMeta {
+                name: Some(name.to_owned()),
+                namespace: Some(namespace.to_owned()),
+                owner_references: Some(owner_references),
+                ..ObjectMeta::default()
+            },
+            spec: Some(PodSpec {
+                containers: containers
+                    .iter()
+                    .map(|(name, image)| Container {
+                        name: (*name).to_owned(),
+                        image: Some((*image).to_owned()),
+                        ..Container::default()
+                    })
+                    .collect(),
+                node_name: Some("worker-a".to_owned()),
+                ..PodSpec::default()
+            }),
+            status: Some(PodStatus {
+                phase: Some("Running".to_owned()),
+                pod_ip: Some("10.244.0.12".to_owned()),
+                ..PodStatus::default()
             }),
         }
     }
