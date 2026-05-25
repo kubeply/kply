@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: usage
+
+error: the argument '--config <PATH>' cannot be used with '--no-config'
+
+Usage: kply --config <PATH>
+
+For more information, try '--help'.

@@ -22,4 +22,5 @@ Options:
       --verbose        Print local debugging details to stderr
       --no-color       Disable ANSI color output
       --config <PATH>  Specify an explicit configuration file path
+      --no-config      Disable configuration discovery and loading
   -h, --help           Print help

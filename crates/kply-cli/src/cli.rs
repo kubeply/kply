@@ -41,6 +41,10 @@ pub struct Cli {
     )]
     pub config: Option<PathBuf>,
 
+    /// Disable configuration discovery and loading.
+    #[arg(long, global = true, conflicts_with = "config")]
+    pub no_config: bool,
+
     /// Optional top-level command.
     #[command(subcommand)]
     pub command: Option<Command>,

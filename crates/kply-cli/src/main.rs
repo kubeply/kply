@@ -144,7 +144,7 @@ fn print_verbose_trace(cli: &Cli) {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<none>".to_owned());
     eprintln!(
-        "debug: command={command} json={} quiet={} no_color={} config={config}",
-        cli.json, cli.quiet, cli.no_color
+        "debug: command={command} json={} quiet={} no_color={} config={} no_config={}",
+        cli.json, cli.quiet, cli.no_color, config, cli.no_config
     );
 }

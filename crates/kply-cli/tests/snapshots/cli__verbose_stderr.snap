@@ -2,4 +2,4 @@
 source: crates/kply-cli/tests/cli.rs
 expression: output
 ---
-debug: command=<none> json=false quiet=false no_color=false config=<none>
+debug: command=<none> json=false quiet=false no_color=false config=<none> no_config=false

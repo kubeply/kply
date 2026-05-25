@@ -27,6 +27,9 @@ user or infrastructure condition.
 filename is `kply.yaml`. The configured path is shown in `--verbose` output;
 loading and validation are not implemented yet.
 
+`--no-config` disables future configuration discovery and loading. It conflicts
+with `--config <path>` so command intent remains explicit.
+
 ## Compatibility
 
 Exit codes are part of the CLI contract. Changes to these meanings must update
