@@ -120,9 +120,90 @@ impl AppConfigs {
     }
 }
 
-/// Placeholder for a future app config entry.
+/// Application target configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppConfig;
+pub struct AppConfig {
+    name: String,
+    namespace: String,
+    workload: String,
+    service: String,
+    default_image: Option<String>,
+    route_strategy: RouteStrategy,
+}
+
+impl AppConfig {
+    /// Create an [`AppConfig`] from explicit app fields.
+    pub fn new(
+        name: impl Into<String>,
+        namespace: impl Into<String>,
+        workload: impl Into<String>,
+        service: impl Into<String>,
+        default_image: Option<String>,
+        route_strategy: RouteStrategy,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            namespace: namespace.into(),
+            workload: workload.into(),
+            service: service.into(),
+            default_image,
+            route_strategy,
+        }
+    }
+
+    /// Borrow the configured app name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Borrow the Kubernetes namespace for the app.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Borrow the Kubernetes workload name for the app.
+    pub fn workload(&self) -> &str {
+        &self.workload
+    }
+
+    /// Borrow the Kubernetes service name for the app.
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// Borrow the optional default sandbox image for the app.
+    pub fn default_image(&self) -> Option<&str> {
+        self.default_image.as_deref()
+    }
+
+    /// Return the configured [`RouteStrategy`] for the app.
+    pub const fn route_strategy(&self) -> RouteStrategy {
+        self.route_strategy
+    }
+}
+
+/// Routing strategy requested for an application target.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RouteStrategy {
+    /// Route sandbox traffic by matching a request header.
+    Header,
+    /// Route sandbox traffic by matching a host name.
+    Host,
+    /// Expose sandbox traffic through a preview endpoint.
+    Preview,
+}
+
+impl RouteStrategy {
+    /// Return the stable config spelling for this [`RouteStrategy`].
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Header => "header",
+            Self::Host => "host",
+            Self::Preview => "preview",
+        }
+    }
+}
 
 /// Top-level routing config section.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -201,7 +282,8 @@ pub fn discover_config_path_from(start: impl AsRef<Path>) -> Option<PathBuf> {
 mod tests {
     use super::{
         AppConfig, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig, CheckConfigs, ConfigVersion,
-        KplyConfig, PolicyConfig, PolicyConfigs, RoutingConfig, discover_config_path_from,
+        KplyConfig, PolicyConfig, PolicyConfigs, RouteStrategy, RoutingConfig,
+        discover_config_path_from,
     };
     use std::env;
     use std::fs;
@@ -220,17 +302,54 @@ mod tests {
     fn creates_top_level_config_with_explicit_sections() {
         let config = KplyConfig::new(
             ConfigVersion::new(7),
-            AppConfigs::new(vec![AppConfig]),
+            AppConfigs::new(vec![app_config()]),
             RoutingConfig,
             CheckConfigs::new(vec![CheckConfig]),
             PolicyConfigs::new(vec![PolicyConfig]),
         );
 
         assert_eq!(config.version().get(), 7);
-        assert_eq!(config.apps().entries(), &[AppConfig]);
+        assert_eq!(config.apps().entries(), &[app_config()]);
         assert_eq!(config.routing(), &RoutingConfig);
         assert_eq!(config.checks().entries(), &[CheckConfig]);
         assert_eq!(config.policies().entries(), &[PolicyConfig]);
+    }
+
+    #[test]
+    fn creates_app_config_with_explicit_fields() {
+        let config = app_config();
+
+        assert_eq!(config.name(), "checkout");
+        assert_eq!(config.namespace(), "shop");
+        assert_eq!(config.workload(), "checkout-api");
+        assert_eq!(config.service(), "checkout-http");
+        assert_eq!(
+            config.default_image(),
+            Some("registry.example.com/shop/checkout:test")
+        );
+        assert_eq!(config.route_strategy(), RouteStrategy::Header);
+    }
+
+    #[test]
+    fn creates_app_config_without_default_image() {
+        let config = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            None,
+            RouteStrategy::Host,
+        );
+
+        assert_eq!(config.default_image(), None);
+        assert_eq!(config.route_strategy(), RouteStrategy::Host);
+    }
+
+    #[test]
+    fn renders_route_strategy_names() {
+        assert_eq!(RouteStrategy::Header.as_str(), "header");
+        assert_eq!(RouteStrategy::Host.as_str(), "host");
+        assert_eq!(RouteStrategy::Preview.as_str(), "preview");
     }
 
     #[test]
@@ -320,5 +439,16 @@ mod tests {
         let config_path = directory.join(CANONICAL_CONFIG_FILENAME);
         fs::write(&config_path, "version: 1\n").expect("config file");
         config_path
+    }
+
+    fn app_config() -> AppConfig {
+        AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("registry.example.com/shop/checkout:test".to_string()),
+            RouteStrategy::Header,
+        )
     }
 }
