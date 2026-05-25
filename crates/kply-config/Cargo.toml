@@ -11,5 +11,6 @@ serde.workspace = true
 serde_norway.workspace = true
 
 [dev-dependencies]
+kply-test.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

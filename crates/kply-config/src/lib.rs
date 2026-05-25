@@ -525,9 +525,38 @@ impl RouteStrategy {
 }
 
 /// Top-level routing config section.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingConfig;
+
+impl<'de> Deserialize<'de> for RoutingConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(RoutingConfigVisitor)
+    }
+}
+
+struct RoutingConfigVisitor;
+
+impl<'de> serde::de::Visitor<'de> for RoutingConfigVisitor {
+    type Value = RoutingConfig;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an empty routing config object")
+    }
+
+    fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+    where
+        M: serde::de::MapAccess<'de>,
+    {
+        if let Some(key) = access.next_key::<String>()? {
+            return Err(serde::de::Error::unknown_field(&key, &[]));
+        }
+
+        Ok(RoutingConfig)
+    }
+}
 
 impl Serialize for RoutingConfig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -719,6 +748,11 @@ mod tests {
     use tempfile::TempDir;
 
     static CURRENT_DIR_LOCK: Mutex<()> = Mutex::new(());
+    const VALID_CONFIG_FIXTURES: &[&str] = &[
+        "minimal-defaults",
+        "complete-single-app",
+        "multi-app-route-strategies",
+    ];
 
     #[test]
     fn uses_kply_yaml_as_canonical_config_filename() {
@@ -931,6 +965,23 @@ unexpected: true
     }
 
     #[test]
+    fn rejects_unknown_routing_config_yaml_fields() {
+        let error = serde_norway::from_str::<KplyConfig>(
+            r#"
+version: 1
+routing:
+  mode: gateway
+"#,
+        )
+        .expect_err("unknown routing field should be rejected");
+
+        assert!(
+            error.to_string().contains("unknown field"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn loads_config_from_file() {
         let workspace = TempDir::new().expect("temporary workspace");
         let config_path = write_config_contents(
@@ -952,6 +1003,56 @@ apps:
             config.apps().entries()[0].route_strategy(),
             RouteStrategy::Host
         );
+    }
+
+    #[test]
+    fn loads_valid_config_fixtures() {
+        for fixture_name in VALID_CONFIG_FIXTURES {
+            let config_path = kply_test::fixture_path(format!("config/{fixture_name}/kply.yaml"));
+
+            let config = load_config_path(&config_path)
+                .unwrap_or_else(|error| panic!("fixture {fixture_name} should load: {error}"));
+
+            config
+                .validate()
+                .unwrap_or_else(|error| panic!("fixture {fixture_name} should validate: {error}"));
+        }
+    }
+
+    #[test]
+    fn validates_multi_app_route_strategy_fixture_shape() {
+        let config = load_config_path(kply_test::fixture_path(
+            "config/multi-app-route-strategies/kply.yaml",
+        ))
+        .expect("multi-app fixture should load");
+
+        let route_strategies = config
+            .apps()
+            .entries()
+            .iter()
+            .map(AppConfig::route_strategy)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            route_strategies,
+            vec![
+                RouteStrategy::Header,
+                RouteStrategy::Host,
+                RouteStrategy::Preview
+            ]
+        );
+    }
+
+    #[test]
+    fn validates_minimal_config_fixture_defaults() {
+        let config = load_config_path(kply_test::fixture_path("config/minimal-defaults/kply.yaml"))
+            .expect("minimal fixture should load");
+
+        assert_eq!(config.version(), ConfigVersion::CURRENT);
+        assert!(config.apps().is_empty());
+        assert!(config.checks().is_empty());
+        assert!(config.policies().is_empty());
+        assert_eq!(config.validate(), Ok(()));
     }
 
     #[test]

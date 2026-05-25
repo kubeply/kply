@@ -1,0 +1,21 @@
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: registry.example.com/shop/checkout:test
+    route_strategy: header
+  - name: storefront
+    namespace: shop
+    workload: storefront-web
+    service: storefront-http
+    route_strategy: host
+  - name: worker
+    namespace: jobs
+    workload: invoice-worker
+    service: invoice-worker
+    route_strategy: preview
+routing: {}
+checks: []
+policies: []
