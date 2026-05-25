@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 591
+expression: value
+---
+{
+  "errors": [
+    "apps[0].namespace: field is required"
+  ],
+  "status": "invalid"
+}

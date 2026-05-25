@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 418
+expression: output
+---
+kply app list
+No apps configured.

@@ -1,6 +1,7 @@
 //! CLI placeholder behavior tests for Kply.
 
 use clap::CommandFactory;
+use kply_cli::cli::AppCommand;
 use kply_cli::cli::Cli;
 use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
@@ -404,6 +405,193 @@ fn suppresses_config_validate_text_when_quiet() {
 }
 
 #[test]
+fn prints_app_list_empty_text() {
+    let output = kply_cmd()
+        .args(["app", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("app_list_empty_text", output);
+}
+
+#[test]
+fn prints_app_list_empty_json() {
+    let output = kply_cmd()
+        .args(["app", "list", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("app_list_empty_json", value);
+}
+
+#[test]
+fn prints_app_list_configured_text() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+  - name: catalog
+    namespace: shop
+    workload: catalog-api
+    service: catalog-http
+    route_strategy: preview
+"#,
+    );
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "list",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("app_list_configured_text", output);
+}
+
+#[test]
+fn prints_app_list_configured_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+"#,
+    );
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "list",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("app_list_configured_json", value);
+}
+
+#[test]
+fn suppresses_app_list_text_when_quiet() {
+    kply_cmd()
+        .args(["app", "list", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rejects_invalid_app_list_config() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: ""
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "list",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid app list config should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("app_list_invalid_config", stderr);
+}
+
+#[test]
+fn rejects_invalid_app_list_config_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: ""
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "list",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid app list JSON config should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("app_list_invalid_config_json", value);
+}
+
+#[test]
 fn prints_cluster_info_text() {
     let workspace = temp_workspace();
     let kubeconfig_path = write_fake_kubeconfig(&workspace);
@@ -553,6 +741,28 @@ fn covers_every_config_command() {
         .success();
     kply_cmd()
         .args(["config", ConfigCommand::Validate.name()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn covers_every_app_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("app")
+        .expect("app command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["list"],
+        "update app command tests when the app command surface changes"
+    );
+
+    kply_cmd()
+        .args(["app", AppCommand::List.name()])
         .assert()
         .success();
 }
