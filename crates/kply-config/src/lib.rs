@@ -753,6 +753,14 @@ mod tests {
         "complete-single-app",
         "multi-app-route-strategies",
     ];
+    const INVALID_VALIDATION_CONFIG_FIXTURES: &[(&str, usize)] = &[
+        ("invalid-empty-app-fields", 4),
+        ("invalid-unsupported-version", 1),
+    ];
+    const INVALID_LOAD_CONFIG_FIXTURES: &[&str] = &[
+        "invalid-unknown-top-level-field",
+        "invalid-unknown-routing-field",
+    ];
 
     #[test]
     fn uses_kply_yaml_as_canonical_config_filename() {
@@ -1053,6 +1061,39 @@ apps:
         assert!(config.checks().is_empty());
         assert!(config.policies().is_empty());
         assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_invalid_config_validation_fixtures() {
+        for (fixture_name, expected_error_count) in INVALID_VALIDATION_CONFIG_FIXTURES {
+            let config_path = kply_test::fixture_path(format!("config/{fixture_name}/kply.yaml"));
+            let config = load_config_path(&config_path)
+                .unwrap_or_else(|error| panic!("fixture {fixture_name} should load: {error}"));
+
+            let errors = config
+                .validate()
+                .expect_err("fixture should fail validation");
+
+            assert_eq!(
+                errors.len(),
+                *expected_error_count,
+                "fixture {fixture_name} should report the expected validation error count"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_config_load_fixtures() {
+        for fixture_name in INVALID_LOAD_CONFIG_FIXTURES {
+            let config_path = kply_test::fixture_path(format!("config/{fixture_name}/kply.yaml"));
+
+            let error = load_config_path(&config_path).expect_err("fixture should fail to load");
+
+            assert!(
+                matches!(error, ConfigLoadError::Parse { .. }),
+                "fixture {fixture_name} should fail during parsing"
+            );
+        }
     }
 
     #[test]
