@@ -1,0 +1,11 @@
+---
+source: crates/kply-core/src/lib.rs
+expression: test_app_graph()
+---
+{
+  "workload": {
+    "namespace": "checkout",
+    "kind": "Deployment",
+    "name": "checkout-api"
+  }
+}

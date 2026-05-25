@@ -275,6 +275,28 @@ impl<'de> Deserialize<'de> for WorkloadRef {
     }
 }
 
+/// App-level graph rooted at a Kubernetes workload.
+///
+/// This first graph model intentionally stores only the root [`WorkloadRef`].
+/// Future roadmap tasks add pod, service, route, fact, confidence, and warning
+/// relationships without depending on raw Kubernetes client types.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AppGraph {
+    workload: WorkloadRef,
+}
+
+impl AppGraph {
+    /// Create an [`AppGraph`] rooted at a validated workload reference.
+    pub fn new(workload: WorkloadRef) -> Self {
+        Self { workload }
+    }
+
+    /// Borrow the root workload for this app graph.
+    pub fn workload(&self) -> &WorkloadRef {
+        &self.workload
+    }
+}
+
 /// Container image reference proposed for a future sandbox workload.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct ImageRef(String);
@@ -1634,7 +1656,7 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, ROUTE_HEADER_NAME_MAX_LEN,
+        AppGraph, IMAGE_REF_MAX_LEN, ImageRef, ImageRefError, ROUTE_HEADER_NAME_MAX_LEN,
         ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
         RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteSelector,
         RouteSelectorError, SESSION_TOKEN_MAX_LEN, SessionEvent, SessionEventKind, SessionId,
@@ -1653,6 +1675,58 @@ mod tests {
             ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
             SessionPolicy::sandbox(),
         )
+    }
+
+    fn test_app_graph() -> AppGraph {
+        AppGraph::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+        )
+    }
+
+    #[test]
+    fn creates_app_graph_from_workload_ref() {
+        let workload =
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref");
+
+        let graph = AppGraph::new(workload.clone());
+
+        assert_eq!(graph.workload(), &workload);
+    }
+
+    #[test]
+    fn round_trips_app_graph_json() {
+        let graph = test_app_graph();
+        let value = serde_json::to_value(&graph).expect("app graph should serialize");
+
+        let parsed: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(parsed, graph);
+    }
+
+    #[test]
+    fn rejects_invalid_app_graph_workload_json() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "CheckoutApi"
+            }
+        });
+
+        let error = serde_json::from_value::<AppGraph>(value)
+            .expect_err("invalid workload name should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid workload name: value must start and end"),
+            "unexpected app graph error: {error}"
+        );
+    }
+
+    #[test]
+    fn snapshots_app_graph_json_contract() {
+        insta::assert_json_snapshot!("app_graph_json_contract", test_app_graph());
     }
 
     #[test]

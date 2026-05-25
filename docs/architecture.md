@@ -64,6 +64,16 @@ agent-readable JSON contract. This contract is provisional and may change
 before `1.0.0` when the roadmap requires it. Intentional changes must update
 snapshots in the same pull request.
 
+The current `kply-core` app graph model defines the first pre-`1.0.0` graph
+contract. It is independent from raw Kubernetes client types and currently
+contains only the root workload. Future roadmap tasks will add workload-to-pod,
+workload-to-service, service-to-route, fact, confidence, and warning
+relationships.
+
+Current provisional pre-`1.0.0` app graph fields:
+
+- `workload`: root workload object with `namespace`, `kind`, and `name`.
+
 Current provisional pre-`1.0.0` session plan fields:
 
 - `id`: session identifier string.
