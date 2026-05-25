@@ -79,5 +79,29 @@ expression: test_app_graph()
       "liveness_probe": true,
       "startup_probe": false
     }
+  ],
+  "image_facts": [
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "api"
+      },
+      "image": "registry.example.com/checkout/api:v2"
+    },
+    {
+      "container": {
+        "workload": {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        "name": "worker"
+      },
+      "image": "registry.example.com/checkout/worker:v1"
+    }
   ]
 }

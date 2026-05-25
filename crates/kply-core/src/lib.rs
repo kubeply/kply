@@ -554,6 +554,30 @@ impl ProbeFacts {
     }
 }
 
+/// Image facts discovered for a workload container.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ImageFacts {
+    container: ContainerRef,
+    image: ImageRef,
+}
+
+impl ImageFacts {
+    /// Create [`ImageFacts`] for a validated container and image reference.
+    pub fn new(container: ContainerRef, image: ImageRef) -> Self {
+        Self { container, image }
+    }
+
+    /// Borrow the container these image facts describe.
+    pub fn container(&self) -> &ContainerRef {
+        &self.container
+    }
+
+    /// Borrow the image reference configured for this container.
+    pub fn image(&self) -> &ImageRef {
+        &self.image
+    }
+}
+
 /// App-level graph rooted at a Kubernetes workload.
 ///
 /// The graph stores relationships as Kply domain references instead of raw
@@ -570,6 +594,8 @@ pub struct AppGraph {
     service_routes: Vec<ServiceRouteRef>,
     #[serde(default)]
     probe_facts: Vec<ProbeFacts>,
+    #[serde(default)]
+    image_facts: Vec<ImageFacts>,
 }
 
 impl AppGraph {
@@ -581,6 +607,7 @@ impl AppGraph {
             selecting_services: Vec::new(),
             service_routes: Vec::new(),
             probe_facts: Vec::new(),
+            image_facts: Vec::new(),
         }
     }
 
@@ -589,6 +616,14 @@ impl AppGraph {
         self.owned_pods = owned_pods.into_iter().collect();
         self.owned_pods.sort_unstable();
         self.owned_pods.dedup();
+        self
+    }
+
+    /// Return a copy of this graph with image facts for workload containers.
+    pub fn with_image_facts(mut self, image_facts: impl IntoIterator<Item = ImageFacts>) -> Self {
+        self.image_facts = image_facts.into_iter().collect();
+        self.image_facts.sort_unstable();
+        self.image_facts.dedup();
         self
     }
 
@@ -646,6 +681,11 @@ impl AppGraph {
     pub fn probe_facts(&self) -> &[ProbeFacts] {
         &self.probe_facts
     }
+
+    /// Borrow image facts for workload containers in deterministic order.
+    pub fn image_facts(&self) -> &[ImageFacts] {
+        &self.image_facts
+    }
 }
 
 impl<'de> Deserialize<'de> for AppGraph {
@@ -658,7 +698,8 @@ impl<'de> Deserialize<'de> for AppGraph {
             .with_owned_pods(fields.owned_pods)
             .with_selecting_services(fields.selecting_services)
             .with_service_routes(fields.service_routes)
-            .with_probe_facts(fields.probe_facts))
+            .with_probe_facts(fields.probe_facts)
+            .with_image_facts(fields.image_facts))
     }
 }
 
@@ -1761,6 +1802,8 @@ struct AppGraphFields {
     service_routes: Vec<ServiceRouteRef>,
     #[serde(default)]
     probe_facts: Vec<ProbeFacts>,
+    #[serde(default)]
+    image_facts: Vec<ImageFacts>,
 }
 
 #[derive(Deserialize)]
@@ -2145,15 +2188,16 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppGraph, ContainerRef, ContainerRefError, IMAGE_REF_MAX_LEN, ImageRef, ImageRefError,
-        PodRef, PodRefError, ProbeFacts, ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN,
-        ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN, RouteHeaderNameError, RouteHeaderValueError,
-        RouteHostError, RouteRef, RouteRefError, RouteSelector, RouteSelectorError,
-        SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent,
-        SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
-        SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportError, SessionStatus, SessionTransitionError, WORKLOAD_KIND_MAX_LEN,
-        WorkloadKindError, WorkloadRef, WorkloadRefError, WorkloadTokenError,
+        AppGraph, ContainerRef, ContainerRefError, IMAGE_REF_MAX_LEN, ImageFacts, ImageRef,
+        ImageRefError, PodRef, PodRefError, ProbeFacts, ROUTE_HEADER_NAME_MAX_LEN,
+        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
+        RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError,
+        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, ServiceRef, ServiceRefError,
+        ServiceRouteRef, SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName,
+        SessionNameError, SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError,
+        SessionReport, SessionReportError, SessionStatus, SessionTransitionError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -2230,6 +2274,35 @@ mod tests {
                 false,
             ),
         ])
+        .with_image_facts([
+            ImageFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "worker",
+                )
+                .expect("container ref"),
+                ImageRef::new("registry.example.com/checkout/worker:v1").expect("image ref"),
+            ),
+            ImageFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+            ),
+            ImageFacts::new(
+                ContainerRef::new(
+                    WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                        .expect("workload ref"),
+                    "api",
+                )
+                .expect("container ref"),
+                ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+            ),
+        ])
     }
 
     #[test]
@@ -2244,6 +2317,7 @@ mod tests {
         assert!(graph.selecting_services().is_empty());
         assert!(graph.service_routes().is_empty());
         assert!(graph.probe_facts().is_empty());
+        assert!(graph.image_facts().is_empty());
     }
 
     #[test]
@@ -2412,6 +2486,21 @@ mod tests {
     }
 
     #[test]
+    fn creates_image_facts_from_valid_container_and_image() {
+        let container = ContainerRef::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            "api",
+        )
+        .expect("container ref");
+        let image = ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref");
+
+        let facts = ImageFacts::new(container.clone(), image.clone());
+
+        assert_eq!(facts.container(), &container);
+        assert_eq!(facts.image(), &image);
+    }
+
+    #[test]
     fn records_owned_pods_in_stable_order() {
         let graph = test_app_graph();
 
@@ -2485,6 +2574,35 @@ mod tests {
                     false,
                     true,
                     false,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn records_image_facts_in_stable_order() {
+        let graph = test_app_graph();
+
+        assert_eq!(
+            graph.image_facts(),
+            &[
+                ImageFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+                ),
+                ImageFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    ImageRef::new("registry.example.com/checkout/worker:v1").expect("image ref"),
                 ),
             ]
         );
@@ -2700,6 +2818,78 @@ mod tests {
                     false,
                     true,
                     false,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn deserializes_image_facts_in_stable_order() {
+        let value = json!({
+            "workload": {
+                "namespace": "checkout",
+                "kind": "Deployment",
+                "name": "checkout-api"
+            },
+            "image_facts": [
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "worker"
+                    },
+                    "image": "registry.example.com/checkout/worker:v1"
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "image": "registry.example.com/checkout/api:v2"
+                },
+                {
+                    "container": {
+                        "workload": {
+                            "namespace": "checkout",
+                            "kind": "Deployment",
+                            "name": "checkout-api"
+                        },
+                        "name": "api"
+                    },
+                    "image": "registry.example.com/checkout/api:v2"
+                }
+            ]
+        });
+
+        let graph: AppGraph = serde_json::from_value(value).expect("app graph should deserialize");
+
+        assert_eq!(
+            graph.image_facts(),
+            &[
+                ImageFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "api",
+                    )
+                    .expect("container ref"),
+                    ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+                ),
+                ImageFacts::new(
+                    ContainerRef::new(
+                        WorkloadRef::new("checkout", "Deployment", "checkout-api")
+                            .expect("workload ref"),
+                        "worker",
+                    )
+                    .expect("container ref"),
+                    ImageRef::new("registry.example.com/checkout/worker:v1").expect("image ref"),
                 ),
             ]
         );
