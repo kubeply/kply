@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 4306
+assertion_line: 4497
 expression: test_app_graph()
 ---
 {
@@ -266,6 +266,27 @@ expression: test_app_graph()
         }
       },
       "confidence": "low"
+    }
+  ],
+  "warnings": [
+    {
+      "kind": "ambiguous_service_selector",
+      "service": {
+        "namespace": "checkout",
+        "name": "checkout-api"
+      },
+      "candidate_workloads": [
+        {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-api"
+        },
+        {
+          "namespace": "checkout",
+          "kind": "Deployment",
+          "name": "checkout-worker"
+        }
+      ]
     }
   ]
 }
