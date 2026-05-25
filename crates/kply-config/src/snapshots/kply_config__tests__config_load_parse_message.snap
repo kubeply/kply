@@ -1,0 +1,5 @@
+---
+source: crates/kply-config/src/lib.rs
+expression: message
+---
+failed to parse config file `<config-path>`: unknown field `unexpected`, expected one of `version`, `apps`, `routing`, `checks`, `policies` at line 2 column 1

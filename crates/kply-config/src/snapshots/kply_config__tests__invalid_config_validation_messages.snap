@@ -1,0 +1,8 @@
+---
+source: crates/kply-config/src/lib.rs
+expression: messages
+---
+apps[0].name: field is required
+apps[0].namespace: field is required
+apps[0].service: field is required
+apps[0].default_image: field is required
