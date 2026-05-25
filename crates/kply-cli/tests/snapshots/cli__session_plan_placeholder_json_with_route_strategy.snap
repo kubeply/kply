@@ -1,14 +1,31 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 300
+assertion_line: 387
 expression: value
 ---
 {
-  "app": "checkout",
-  "command": "session plan",
-  "image": null,
-  "namespace": null,
-  "route_strategy": "header",
-  "status": "placeholder",
-  "ttl": null
+  "id": "checkout-plan",
+  "image": "ghcr.io/acme/checkout:next",
+  "name": "checkout-session",
+  "policy": {
+    "allowed_operations": [
+      "inspect",
+      "plan",
+      "prepare",
+      "route",
+      "verify",
+      "cleanup"
+    ]
+  },
+  "route_selector": {
+    "hostname": "checkout-plan.shop.kply.local",
+    "kind": "host"
+  },
+  "status": "planned",
+  "ttl": null,
+  "workload": {
+    "kind": "Deployment",
+    "name": "checkout-api",
+    "namespace": "shop"
+  }
 }

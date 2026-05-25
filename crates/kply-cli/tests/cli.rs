@@ -12,6 +12,25 @@ use kply_test::{
     write_fake_kubeconfig, write_temp_file,
 };
 
+const SESSION_PLAN_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+"#;
+
+fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_CONFIG);
+    let config_path = config_path.to_str().expect("config path should be UTF-8");
+
+    run(config_path)
+}
+
 #[test]
 fn prints_placeholder_text() {
     let output = kply_cmd().assert().success().get_output().stdout.clone();
@@ -130,13 +149,15 @@ fn prints_command_group_json_placeholders() {
 
 #[test]
 fn prints_session_plan_placeholder_text() {
-    let output = kply_cmd()
-        .args(["session", "plan", "checkout"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args(["--config", config_path, "session", "plan", "checkout"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text", output);
@@ -144,13 +165,22 @@ fn prints_session_plan_placeholder_text() {
 
 #[test]
 fn prints_session_plan_placeholder_json() {
-    let output = kply_cmd()
-        .args(["session", "plan", "checkout", "--json"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -159,19 +189,23 @@ fn prints_session_plan_placeholder_json() {
 
 #[test]
 fn prints_session_plan_placeholder_text_with_image() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text_with_image", output);
@@ -179,20 +213,24 @@ fn prints_session_plan_placeholder_text_with_image() {
 
 #[test]
 fn prints_session_plan_placeholder_json_with_image() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -201,13 +239,23 @@ fn prints_session_plan_placeholder_json_with_image() {
 
 #[test]
 fn prints_session_plan_placeholder_text_with_namespace() {
-    let output = kply_cmd()
-        .args(["session", "plan", "checkout", "--namespace", "staging"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--namespace",
+                "staging",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text_with_namespace", output);
@@ -215,20 +263,24 @@ fn prints_session_plan_placeholder_text_with_namespace() {
 
 #[test]
 fn prints_session_plan_placeholder_json_with_namespace() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--namespace",
-            "staging",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--namespace",
+                "staging",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -237,13 +289,23 @@ fn prints_session_plan_placeholder_json_with_namespace() {
 
 #[test]
 fn prints_session_plan_placeholder_text_with_ttl() {
-    let output = kply_cmd()
-        .args(["session", "plan", "checkout", "--ttl", "30m"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--ttl",
+                "30m",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text_with_ttl", output);
@@ -251,13 +313,24 @@ fn prints_session_plan_placeholder_text_with_ttl() {
 
 #[test]
 fn prints_session_plan_placeholder_json_with_ttl() {
-    let output = kply_cmd()
-        .args(["session", "plan", "checkout", "--ttl", "30m", "--json"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--ttl",
+                "30m",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -266,13 +339,23 @@ fn prints_session_plan_placeholder_json_with_ttl() {
 
 #[test]
 fn prints_session_plan_placeholder_text_with_route_strategy() {
-    let output = kply_cmd()
-        .args(["session", "plan", "checkout", "--route-strategy", "header"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--route-strategy",
+                "host",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text_with_route_strategy", output);
@@ -280,20 +363,24 @@ fn prints_session_plan_placeholder_text_with_route_strategy() {
 
 #[test]
 fn prints_session_plan_placeholder_json_with_route_strategy() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--route-strategy",
-            "header",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--route-strategy",
+                "host",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -302,21 +389,25 @@ fn prints_session_plan_placeholder_json_with_route_strategy() {
 
 #[test]
 fn prints_session_plan_placeholder_text_with_image_and_namespace() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--namespace",
-            "staging",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--namespace",
+                "staging",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!(
@@ -327,22 +418,26 @@ fn prints_session_plan_placeholder_text_with_image_and_namespace() {
 
 #[test]
 fn prints_session_plan_placeholder_json_with_image_and_namespace() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--namespace",
-            "staging",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--namespace",
+                "staging",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -354,25 +449,29 @@ fn prints_session_plan_placeholder_json_with_image_and_namespace() {
 
 #[test]
 fn prints_session_plan_placeholder_text_with_all_overrides() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--namespace",
-            "staging",
-            "--ttl",
-            "30m",
-            "--route-strategy",
-            "header",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--namespace",
+                "staging",
+                "--ttl",
+                "30m",
+                "--route-strategy",
+                "header",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text_with_all_overrides", output);
@@ -380,26 +479,30 @@ fn prints_session_plan_placeholder_text_with_all_overrides() {
 
 #[test]
 fn prints_session_plan_placeholder_json_with_all_overrides() {
-    let output = kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--namespace",
-            "staging",
-            "--ttl",
-            "30m",
-            "--route-strategy",
-            "header",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--namespace",
+                "staging",
+                "--ttl",
+                "30m",
+                "--route-strategy",
+                "header",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
@@ -408,43 +511,56 @@ fn prints_session_plan_placeholder_json_with_all_overrides() {
 
 #[test]
 fn suppresses_session_plan_placeholder_text_when_quiet() {
-    kply_cmd()
-        .args(["session", "plan", "checkout", "--quiet"])
-        .assert()
-        .success()
-        .stdout("");
+    with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--quiet",
+            ])
+            .assert()
+            .success()
+            .stdout("");
 
-    kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--quiet",
-        ])
-        .assert()
-        .success()
-        .stdout("");
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--quiet",
+            ])
+            .assert()
+            .success()
+            .stdout("");
 
-    kply_cmd()
-        .args([
-            "session",
-            "plan",
-            "checkout",
-            "--image",
-            "ghcr.io/kubeply/checkout:v2",
-            "--namespace",
-            "staging",
-            "--ttl",
-            "30m",
-            "--route-strategy",
-            "header",
-            "--quiet",
-        ])
-        .assert()
-        .success()
-        .stdout("");
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--image",
+                "ghcr.io/kubeply/checkout:v2",
+                "--namespace",
+                "staging",
+                "--ttl",
+                "30m",
+                "--route-strategy",
+                "header",
+                "--quiet",
+            ])
+            .assert()
+            .success()
+            .stdout("");
+    });
 }
 
 #[test]
@@ -1339,21 +1455,25 @@ fn covers_every_session_command() {
         "update session command tests when the session command surface changes"
     );
 
-    kply_cmd()
-        .args([
-            "session",
-            SessionCommand::Plan {
-                app: String::new(),
-                image: None,
-                namespace: None,
-                time_to_live: None,
-                route_strategy: None,
-            }
-            .name(),
-            "checkout",
-        ])
-        .assert()
-        .success();
+    with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                SessionCommand::Plan {
+                    app: String::new(),
+                    image: None,
+                    namespace: None,
+                    time_to_live: None,
+                    route_strategy: None,
+                }
+                .name(),
+                "checkout",
+            ])
+            .assert()
+            .success();
+    });
 }
 
 #[test]

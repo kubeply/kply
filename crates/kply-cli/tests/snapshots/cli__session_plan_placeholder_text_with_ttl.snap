@@ -1,8 +1,14 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 249
+assertion_line: 311
 expression: output
 ---
 kply session plan checkout
-TTL: 30m
-Session planning is defined but behavior is intentionally pending.
+id: checkout-plan
+name: checkout-session
+workload: shop/Deployment/checkout-api
+image: ghcr.io/acme/checkout:next
+route_selector: header:x-kply-session=checkout-plan
+policy_operations: 6
+status: planned
+ttl: 30m

@@ -5,10 +5,11 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand, SessionCommand};
 use kply_config::{
-    AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, load_config_path,
+    AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
 };
 use kply_core::{
-    AppGraph, ConfidenceLevel, GraphRelationship, RelationshipConfidence, ServiceRef, WorkloadRef,
+    AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, RelationshipConfidence, RouteSelector,
+    ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
@@ -17,6 +18,12 @@ use std::process::ExitCode;
 const EXIT_USAGE: i32 = 2;
 const EXIT_INTERNAL: i32 = 3;
 const EXIT_BLOCKING: i32 = 1;
+const SESSION_HEADER_NAME: &str = "x-kply-session";
+const SUPPORTED_ROUTE_STRATEGIES: [RouteStrategy; 3] = [
+    RouteStrategy::Header,
+    RouteStrategy::Host,
+    RouteStrategy::Preview,
+];
 
 fn main() -> ExitCode {
     match run() {
@@ -69,7 +76,7 @@ fn run() -> Result<ExitCode> {
                     route_strategy,
                 }),
         }) => {
-            return render_session_plan_placeholder(
+            return render_session_plan(
                 &cli,
                 app,
                 image.as_deref(),
@@ -128,8 +135,8 @@ fn run() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Render the provisional session plan command placeholder.
-fn render_session_plan_placeholder(
+/// Render a deterministic dry-run session plan.
+fn render_session_plan(
     cli: &Cli,
     app_name: &str,
     image: Option<&str>,
@@ -137,35 +144,200 @@ fn render_session_plan_placeholder(
     time_to_live: Option<&str>,
     route_strategy: Option<&str>,
 ) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+
+    let Some(app) = config
+        .apps()
+        .entries()
+        .iter()
+        .find(|app| app.name() == app_name)
+    else {
+        return render_app_not_found_error(app_name, cli.json);
+    };
+
+    let plan = match session_plan_from_config(app, image, namespace, time_to_live, route_strategy) {
+        Ok(plan) => plan,
+        Err(SessionPlanBuildError::Config(message)) => {
+            return render_session_plan_config_error(&message, cli.json);
+        }
+        Err(SessionPlanBuildError::Usage(message)) => {
+            return render_session_plan_error(&message, cli.json);
+        }
+    };
+
     if cli.json {
-        let value = serde_json::json!({
-            "command": "session plan",
-            "app": app_name,
-            "image": image,
-            "namespace": namespace,
-            "ttl": time_to_live,
-            "route_strategy": route_strategy,
-            "status": "placeholder"
-        });
-        println!("{}", serde_json::to_string_pretty(&value)?);
+        println!("{}", serde_json::to_string_pretty(&plan)?);
     } else if !cli.quiet {
         println!("kply session plan {app_name}");
-        if let Some(image) = image {
-            println!("Image: {image}");
+        println!("id: {}", plan.id());
+        println!("name: {}", plan.name());
+        println!("workload: {}", plan.workload());
+        println!("image: {}", plan.image());
+        println!(
+            "route_selector: {}",
+            plan.route_selector()
+                .map_or("<none>".to_owned(), ToString::to_string)
+        );
+        println!(
+            "policy_operations: {}",
+            plan.policy().allowed_operations().len()
+        );
+        println!("status: {}", plan.status());
+        if let Some(time_to_live) = plan.time_to_live() {
+            println!("ttl: {time_to_live}");
         }
-        if let Some(namespace) = namespace {
-            println!("Namespace: {namespace}");
-        }
-        if let Some(time_to_live) = time_to_live {
-            println!("TTL: {time_to_live}");
-        }
-        if let Some(route_strategy) = route_strategy {
-            println!("Route strategy: {route_strategy}");
-        }
-        println!("Session planning is defined but behavior is intentionally pending.");
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+enum SessionPlanBuildError {
+    Config(String),
+    Usage(String),
+}
+
+/// Build a session plan from static app configuration and CLI overrides.
+fn session_plan_from_config(
+    app: &AppConfig,
+    image: Option<&str>,
+    namespace: Option<&str>,
+    time_to_live: Option<&str>,
+    route_strategy: Option<&str>,
+) -> std::result::Result<SessionPlan, SessionPlanBuildError> {
+    let session_id = SessionId::new(session_token(app.name(), "plan")).map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid generated session id: {error}"))
+    })?;
+    let session_name = SessionName::new(session_token(app.name(), "session")).map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid generated session name: {error}"))
+    })?;
+    let namespace = namespace.unwrap_or_else(|| app.namespace());
+    let image = match image {
+        Some(image) => ImageRef::new(image).map_err(|error| {
+            SessionPlanBuildError::Usage(format!("invalid session plan image: {error}"))
+        })?,
+        None => {
+            let image = app.default_image().ok_or_else(|| {
+                SessionPlanBuildError::Usage(format!(
+                    "app `{}` has no image; pass --image",
+                    app.name()
+                ))
+            })?;
+            ImageRef::new(image).map_err(|error| {
+                SessionPlanBuildError::Config(format!("invalid configured image: {error}"))
+            })?
+        }
+    };
+
+    let workload =
+        WorkloadRef::new(namespace, app.workload_kind(), app.workload()).map_err(|error| {
+            let message = format!(
+                "invalid configured workload `{}/{}`: {error}",
+                app.workload_kind(),
+                app.workload()
+            );
+            if namespace == app.namespace() {
+                SessionPlanBuildError::Config(message)
+            } else {
+                SessionPlanBuildError::Usage(message)
+            }
+        })?;
+    let time_to_live = time_to_live
+        .map(TimeToLive::new)
+        .transpose()
+        .map_err(|error| SessionPlanBuildError::Usage(error.to_string()))?;
+    let route_selector = match route_strategy.unwrap_or_else(|| app.route_strategy().as_str()) {
+        "header" => Some(
+            RouteSelector::header(SESSION_HEADER_NAME, session_id.as_str()).map_err(|error| {
+                SessionPlanBuildError::Config(format!("invalid session route selector: {error}"))
+            })?,
+        ),
+        "host" => {
+            let hostname = format!("{}.{}.kply.local", session_id.as_str(), namespace);
+            Some(RouteSelector::host(hostname).map_err(|error| {
+                SessionPlanBuildError::Config(format!("invalid session route selector: {error}"))
+            })?)
+        }
+        // Preview routing is represented by future planned resources, not a request selector.
+        "preview" => None,
+        value => {
+            return Err(SessionPlanBuildError::Usage(format!(
+                "unsupported route strategy `{value}`; expected {}",
+                supported_route_strategies()
+            )));
+        }
+    };
+
+    let mut plan = SessionPlan::new(
+        session_id,
+        session_name,
+        workload,
+        image,
+        SessionPolicy::sandbox(),
+    );
+    if let Some(route_selector) = route_selector {
+        plan = plan.with_route_selector(route_selector);
+    }
+    if let Some(time_to_live) = time_to_live {
+        plan = plan.with_time_to_live(time_to_live);
+    }
+
+    Ok(plan)
+}
+
+fn supported_route_strategies() -> String {
+    SUPPORTED_ROUTE_STRATEGIES
+        .iter()
+        .map(RouteStrategy::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Derive a stable Kubernetes-compatible session token from an app name.
+fn session_token(app_name: &str, suffix: &str) -> String {
+    let mut token = String::with_capacity(app_name.len() + suffix.len() + 1);
+    let mut previous_was_separator = false;
+
+    for character in app_name.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            token.push(character);
+            previous_was_separator = false;
+        } else if !previous_was_separator && !token.is_empty() {
+            token.push('-');
+            previous_was_separator = true;
+        }
+    }
+
+    while token.ends_with('-') {
+        token.pop();
+    }
+
+    if token.is_empty() {
+        token.push_str("session");
+    }
+
+    let max_app_name_len = 63usize.saturating_sub(suffix.len() + 1);
+    if token.len() > max_app_name_len {
+        token.truncate(max_app_name_len);
+        while token.ends_with('-') {
+            token.pop();
+        }
+    }
+
+    if token.is_empty() {
+        token.push_str("session");
+    }
+
+    token.push('-');
+    token.push_str(suffix);
+
+    token
 }
 
 /// Render configured application targets.
@@ -379,6 +551,42 @@ fn render_app_not_found_error(app_name: &str, wants_json: bool) -> Result<ExitCo
     Ok(exit_code(EXIT_USAGE))
 }
 
+/// Render session plan construction errors.
+fn render_session_plan_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "session_plan",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: session plan\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render session plan config-to-domain conversion errors.
+fn render_session_plan_config_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "config",
+                "exit_code": EXIT_BLOCKING,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: config\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_BLOCKING))
+}
+
 /// Render read-only cluster facts resolved from kubeconfig.
 fn render_cluster_info(cli: &Cli) -> Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_current_thread().build()?;
@@ -559,4 +767,31 @@ fn print_verbose_trace(cli: &Cli) {
         "debug: command={command} json={} quiet={} no_color={} config={} no_config={}",
         cli.json, cli.quiet, cli.no_color, config, cli.no_config
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_token;
+
+    #[test]
+    fn preserves_session_token_suffix_for_long_app_names() {
+        let app_name = "checkout-api-with-a-very-long-stable-application-name-for-tests";
+
+        let plan_token = session_token(app_name, "plan");
+        let session_token = session_token(app_name, "session");
+
+        assert!(plan_token.ends_with("-plan"));
+        assert!(session_token.ends_with("-session"));
+        assert_ne!(plan_token, session_token);
+        assert!(plan_token.len() <= 63);
+        assert!(session_token.len() <= 63);
+    }
+
+    #[test]
+    fn normalizes_session_token_prefixes() {
+        assert_eq!(session_token("", "plan"), "session-plan");
+        assert_eq!(session_token("---", "plan"), "session-plan");
+        assert_eq!(session_token("MyApp", "plan"), "myapp-plan");
+        assert_eq!(session_token("my__app", "plan"), "my-app-plan");
+    }
 }
