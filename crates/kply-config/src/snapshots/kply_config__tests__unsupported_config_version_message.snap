@@ -1,0 +1,5 @@
+---
+source: crates/kply-config/src/lib.rs
+expression: errors.to_string()
+---
+version: unsupported config version 2; supported range is 1..=1

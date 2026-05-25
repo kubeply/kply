@@ -1097,6 +1097,54 @@ apps:
     }
 
     #[test]
+    fn snapshots_invalid_config_validation_messages() {
+        let config = load_config_path(kply_test::fixture_path(
+            "config/invalid-empty-app-fields/kply.yaml",
+        ))
+        .expect("invalid validation fixture should load");
+        let errors = config
+            .validate()
+            .expect_err("fixture should fail validation");
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        kply_test::insta::assert_snapshot!("invalid_config_validation_messages", messages);
+    }
+
+    #[test]
+    fn snapshots_unsupported_config_version_message() {
+        let config = load_config_path(kply_test::fixture_path(
+            "config/invalid-unsupported-version/kply.yaml",
+        ))
+        .expect("unsupported version fixture should load");
+        let errors = config
+            .validate()
+            .expect_err("fixture should fail validation");
+
+        kply_test::insta::assert_snapshot!(
+            "unsupported_config_version_message",
+            errors.to_string()
+        );
+    }
+
+    #[test]
+    fn snapshots_config_load_parse_message() {
+        let config_path =
+            kply_test::fixture_path("config/invalid-unknown-top-level-field/kply.yaml");
+        let config_path_text = config_path
+            .to_str()
+            .expect("fixture path should be valid UTF-8");
+        let error = load_config_path(&config_path).expect_err("fixture should fail to load");
+        let message = error.to_string().replace(config_path_text, "<config-path>");
+
+        kply_test::insta::assert_snapshot!("config_load_parse_message", message);
+    }
+
+    #[test]
     fn reports_config_load_read_errors() {
         let workspace = TempDir::new().expect("temporary workspace");
         let error = load_config_path(workspace.path().join("missing.yaml"))
