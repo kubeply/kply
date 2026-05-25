@@ -194,8 +194,12 @@ Resolved config JSON serializes the top-level model with `apps`, `checks`, and
 `policies` as arrays, `routing` as an object, `version` as a number, and route
 strategies as stable snake_case strings.
 
-`kply config show` renders the currently resolved config model. Until file
-loading is implemented, it shows the default empty config shape.
+`kply config show` renders the currently resolved config model. Like
+`validate`, it uses `resolved_config()` to load a file specified with
+`--config`, or the default empty config shape if not provided.
+
+`kply config validate` validates the currently resolved config model from a
+file specified with `--config`, or the default config shape if not provided.
 
 ## Current Workflow
 

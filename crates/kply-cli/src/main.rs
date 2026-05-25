@@ -4,12 +4,13 @@ use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use kply_cli::cli::{Cli, Command, ConfigCommand};
-use kply_config::KplyConfig;
+use kply_config::{ConfigLoadError, KplyConfig, load_config_path};
 use std::ffi::OsString;
 use std::process::ExitCode;
 
 const EXIT_USAGE: i32 = 2;
 const EXIT_INTERNAL: i32 = 3;
+const EXIT_BLOCKING: i32 = 1;
 
 fn main() -> ExitCode {
     match run() {
@@ -40,6 +41,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Config {
             command: Some(ConfigCommand::Show),
         }) => return render_config_show(&cli),
+        Some(Command::Config {
+            command: Some(ConfigCommand::Validate),
+        }) => return render_config_validate(&cli),
         Some(command) => {
             if cli.json {
                 let value = serde_json::json!({
@@ -129,7 +133,10 @@ fn render_json_usage_error(error: &clap::Error) -> Result<()> {
 
 /// Render the currently resolved configuration.
 fn render_config_show(cli: &Cli) -> Result<ExitCode> {
-    let config = KplyConfig::default();
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
 
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&config)?);
@@ -139,6 +146,76 @@ fn render_config_show(cli: &Cli) -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Validate the currently resolved configuration.
+fn render_config_validate(cli: &Cli) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    match config.validate() {
+        Ok(()) => {
+            if cli.json {
+                let value = serde_json::json!({
+                    "status": "valid",
+                    "errors": []
+                });
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            } else if !cli.quiet {
+                println!("kply config validate");
+                println!("Config is valid.");
+            }
+
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(errors) => {
+            if cli.json {
+                let value = serde_json::json!({
+                    "status": "invalid",
+                    "errors": errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>()
+                });
+                eprintln!("{}", serde_json::to_string_pretty(&value)?);
+            } else {
+                eprintln!("kply error: config validation\n\n{errors}");
+            }
+
+            Ok(exit_code(EXIT_BLOCKING))
+        }
+    }
+}
+
+/// Render config file load errors as user-facing config errors.
+fn render_config_load_error(error: &ConfigLoadError, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let message = error.to_string();
+        let value = serde_json::json!({
+            "error": {
+                "code": "config",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: config\n\n{error}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Resolve the configuration used by config commands.
+///
+/// If `--config` is provided, load that explicit file with [`load_config_path`].
+/// Otherwise, return the default in-memory config shape. Automatic config file
+/// discovery is intentionally not wired into CLI behavior yet.
+fn resolved_config(cli: &Cli) -> std::result::Result<KplyConfig, ConfigLoadError> {
+    if let Some(path) = &cli.config {
+        return load_config_path(path);
+    }
+
+    Ok(KplyConfig::default())
 }
 
 /// Convert documented small integer exit codes into process exit codes.
