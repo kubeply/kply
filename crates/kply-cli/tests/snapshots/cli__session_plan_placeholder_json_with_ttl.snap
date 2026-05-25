@@ -1,13 +1,13 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 235
+assertion_line: 264
 expression: value
 ---
 {
   "app": "checkout",
   "command": "session plan",
   "image": null,
-  "namespace": "staging",
+  "namespace": null,
   "status": "placeholder",
-  "ttl": null
+  "ttl": "30m"
 }

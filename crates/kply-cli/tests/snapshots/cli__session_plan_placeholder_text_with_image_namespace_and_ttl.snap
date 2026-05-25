@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 340
+expression: output
+---
+kply session plan checkout
+Image: ghcr.io/kubeply/checkout:v2
+Namespace: staging
+TTL: 30m
+Session planning is defined but behavior is intentionally pending.
