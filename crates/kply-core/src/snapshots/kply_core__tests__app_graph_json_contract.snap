@@ -27,5 +27,29 @@ expression: test_app_graph()
       "namespace": "checkout",
       "name": "checkout-api-private"
     }
+  ],
+  "service_routes": [
+    {
+      "service": {
+        "namespace": "checkout",
+        "name": "checkout-api"
+      },
+      "route": {
+        "namespace": "checkout",
+        "kind": "Ingress",
+        "name": "checkout"
+      }
+    },
+    {
+      "service": {
+        "namespace": "checkout",
+        "name": "checkout-api-private"
+      },
+      "route": {
+        "namespace": "checkout",
+        "kind": "HTTPRoute",
+        "name": "checkout-api-private"
+      }
+    }
   ]
 }
