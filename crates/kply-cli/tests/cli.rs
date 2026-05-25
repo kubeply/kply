@@ -162,12 +162,19 @@ fn covers_every_top_level_flag() {
 
     assert_eq!(
         flag_names,
-        ["help", "json", "no-color", "quiet", "verbose", "version"],
+        [
+            "config", "help", "json", "no-color", "quiet", "verbose", "version"
+        ],
         "update CLI flag tests when the top-level flag surface changes"
     );
 
     for flag_name in &flag_names {
-        kply_cmd().arg(format!("--{flag_name}")).assert().success();
+        let mut command = kply_cmd();
+        command.arg(format!("--{flag_name}"));
+        if flag_name == "config" {
+            command.arg("kply.yaml");
+        }
+        command.assert().success();
     }
 }
 
@@ -287,6 +294,41 @@ fn includes_no_color_in_verbose_trace() {
 
     let output = String::from_utf8(output).expect("stderr should be UTF-8");
     insta::assert_snapshot!("verbose_no_color_stderr", output);
+}
+
+#[test]
+fn accepts_explicit_config_path() {
+    kply_cmd()
+        .args(["--config", "kply.yaml"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn includes_explicit_config_path_in_verbose_trace() {
+    let output = kply_cmd()
+        .args(["--verbose", "--config", "kply.yaml"])
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("verbose_config_stderr", output);
+}
+
+#[test]
+fn rejects_config_without_path_as_usage_error() {
+    let output = assert_kply_exit_code(&["--config"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("missing_config_path_usage_error", stderr);
 }
 
 #[test]

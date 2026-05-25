@@ -1,0 +1,9 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: usage
+
+error: a value is required for '--config <PATH>' but none was supplied
+
+For more information, try '--help'.

@@ -138,8 +138,13 @@ fn print_verbose_trace(cli: &Cli) {
     }
 
     let command = cli.command.map_or("<none>", |command| command.name());
+    let config = cli
+        .config
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_owned());
     eprintln!(
-        "debug: command={command} json={} quiet={} no_color={}",
+        "debug: command={command} json={} quiet={} no_color={} config={config}",
         cli.json, cli.quiet, cli.no_color
     );
 }
