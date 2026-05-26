@@ -792,13 +792,165 @@ pub fn check_restart_counts(
     }
 }
 
+/// Input facts for evaluating one container resource request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResourceRequestInput {
+    pod: String,
+    container: String,
+    cpu_request: Option<String>,
+    memory_request: Option<String>,
+}
+
+impl ResourceRequestInput {
+    /// Create resource request input from one container spec.
+    pub fn new(
+        pod: impl Into<String>,
+        container: impl Into<String>,
+        cpu_request: Option<String>,
+        memory_request: Option<String>,
+    ) -> Self {
+        Self {
+            pod: pod.into(),
+            container: container.into(),
+            cpu_request,
+            memory_request,
+        }
+    }
+
+    /// Borrow the pod name.
+    pub fn pod(&self) -> &str {
+        &self.pod
+    }
+
+    /// Borrow the container name.
+    pub fn container(&self) -> &str {
+        &self.container
+    }
+
+    /// Borrow the observed CPU request.
+    pub fn cpu_request(&self) -> Option<&str> {
+        self.cpu_request.as_deref()
+    }
+
+    /// Borrow the observed memory request.
+    pub fn memory_request(&self) -> Option<&str> {
+        self.memory_request.as_deref()
+    }
+}
+
+/// Summary produced by the resource request sanity check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResourceRequestSanityCheckResult {
+    status: CheckResultStatus,
+    total_containers: usize,
+    complete_request_containers: usize,
+    missing_cpu_request_containers: usize,
+    missing_memory_request_containers: usize,
+    empty_request_containers: usize,
+}
+
+impl ResourceRequestSanityCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Return the number of containers considered by the check.
+    pub const fn total_containers(&self) -> usize {
+        self.total_containers
+    }
+
+    /// Return the number of containers with CPU and memory requests.
+    pub const fn complete_request_containers(&self) -> usize {
+        self.complete_request_containers
+    }
+
+    /// Return the number of containers without a CPU request.
+    pub const fn missing_cpu_request_containers(&self) -> usize {
+        self.missing_cpu_request_containers
+    }
+
+    /// Return the number of containers without a memory request.
+    pub const fn missing_memory_request_containers(&self) -> usize {
+        self.missing_memory_request_containers
+    }
+
+    /// Return the number of containers with blank request values.
+    pub const fn empty_request_containers(&self) -> usize {
+        self.empty_request_containers
+    }
+}
+
+/// Evaluate whether containers declare sane CPU and memory requests.
+pub fn check_resource_request_sanity(
+    containers: &[ResourceRequestInput],
+) -> ResourceRequestSanityCheckResult {
+    let total_containers = containers.len();
+    let complete_request_containers = containers
+        .iter()
+        .filter(|container| container_has_complete_requests(container))
+        .count();
+    let missing_cpu_request_containers = containers
+        .iter()
+        .filter(|container| container.cpu_request.is_none())
+        .count();
+    let missing_memory_request_containers = containers
+        .iter()
+        .filter(|container| container.memory_request.is_none())
+        .count();
+    let empty_request_containers = containers
+        .iter()
+        .filter(|container| container_has_empty_request(container))
+        .count();
+    let status = if total_containers == 0 {
+        CheckResultStatus::Skipped
+    } else if empty_request_containers > 0 {
+        CheckResultStatus::Failed
+    } else if missing_cpu_request_containers > 0 || missing_memory_request_containers > 0 {
+        CheckResultStatus::Warning
+    } else {
+        CheckResultStatus::Passed
+    };
+
+    ResourceRequestSanityCheckResult {
+        status,
+        total_containers,
+        complete_request_containers,
+        missing_cpu_request_containers,
+        missing_memory_request_containers,
+        empty_request_containers,
+    }
+}
+
+/// Return whether a container declares non-empty CPU and memory requests.
+fn container_has_complete_requests(container: &ResourceRequestInput) -> bool {
+    request_value_is_present(container.cpu_request())
+        && request_value_is_present(container.memory_request())
+}
+
+/// Return whether a container declares a blank request value.
+fn container_has_empty_request(container: &ResourceRequestInput) -> bool {
+    request_value_is_empty(container.cpu_request())
+        || request_value_is_empty(container.memory_request())
+}
+
+/// Return whether a request value is present and non-blank.
+fn request_value_is_present(request: Option<&str>) -> bool {
+    request.is_some_and(|value| !value.trim().is_empty())
+}
+
+/// Return whether a request value is present but blank.
+fn request_value_is_empty(request: Option<&str>) -> bool {
+    request.is_some_and(|value| value.trim().is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, RestartCountInput,
-        RolloutAvailabilityInput, ServiceEndpointInput, check_http_smoke, check_log_fatal_patterns,
-        check_pod_readiness, check_restart_counts, check_rollout_availability,
-        check_service_endpoints,
+        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, ResourceRequestInput,
+        RestartCountInput, RolloutAvailabilityInput, ServiceEndpointInput, check_http_smoke,
+        check_log_fatal_patterns, check_pod_readiness, check_resource_request_sanity,
+        check_restart_counts, check_rollout_availability, check_service_endpoints,
     };
     use kply_core::CheckResultStatus;
 
@@ -875,6 +1027,21 @@ mod tests {
     /// Builds a restart count input fixture.
     fn restart_count(pod: &str, container: &str, restart_count: Option<u32>) -> RestartCountInput {
         RestartCountInput::new(pod, container, restart_count)
+    }
+
+    /// Builds a resource request input fixture.
+    fn resource_request(
+        pod: &str,
+        container: &str,
+        cpu_request: Option<&str>,
+        memory_request: Option<&str>,
+    ) -> ResourceRequestInput {
+        ResourceRequestInput::new(
+            pod,
+            container,
+            cpu_request.map(ToOwned::to_owned),
+            memory_request.map(ToOwned::to_owned),
+        )
     }
 
     #[test]
@@ -1221,5 +1388,64 @@ mod tests {
         assert_eq!(result.status(), CheckResultStatus::Skipped);
         assert_eq!(result.total_containers(), 0);
         assert_eq!(result.max_restart_count(), None);
+    }
+
+    #[test]
+    /// Passes when every container declares CPU and memory requests.
+    fn passes_when_resource_requests_are_complete() {
+        let result = check_resource_request_sanity(&[
+            resource_request("checkout-a", "api", Some("250m"), Some("256Mi")),
+            resource_request("checkout-b", "worker", Some("100m"), Some("128Mi")),
+        ]);
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.total_containers(), 2);
+        assert_eq!(result.complete_request_containers(), 2);
+        assert_eq!(result.missing_cpu_request_containers(), 0);
+        assert_eq!(result.missing_memory_request_containers(), 0);
+        assert_eq!(result.empty_request_containers(), 0);
+    }
+
+    #[test]
+    /// Warns when any container is missing CPU or memory requests.
+    fn warns_when_resource_requests_are_missing() {
+        let result = check_resource_request_sanity(&[
+            resource_request("checkout-a", "api", None, Some("256Mi")),
+            resource_request("checkout-b", "worker", Some("100m"), None),
+        ]);
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.total_containers(), 2);
+        assert_eq!(result.complete_request_containers(), 0);
+        assert_eq!(result.missing_cpu_request_containers(), 1);
+        assert_eq!(result.missing_memory_request_containers(), 1);
+        assert_eq!(result.empty_request_containers(), 0);
+    }
+
+    #[test]
+    /// Fails when any container has a blank request value.
+    fn fails_when_resource_request_values_are_blank() {
+        let result = check_resource_request_sanity(&[
+            resource_request("checkout-a", "api", Some(" "), Some("256Mi")),
+            resource_request("checkout-b", "worker", Some("100m"), Some("")),
+        ]);
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.total_containers(), 2);
+        assert_eq!(result.complete_request_containers(), 0);
+        assert_eq!(result.missing_cpu_request_containers(), 0);
+        assert_eq!(result.missing_memory_request_containers(), 0);
+        assert_eq!(result.empty_request_containers(), 2);
+    }
+
+    #[test]
+    /// Skips when no containers are available for resource request evaluation.
+    fn skips_when_no_resource_request_inputs_are_available() {
+        let result = check_resource_request_sanity(&[]);
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.total_containers(), 0);
+        assert_eq!(result.complete_request_containers(), 0);
+        assert_eq!(result.empty_request_containers(), 0);
     }
 }
