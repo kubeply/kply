@@ -15,6 +15,9 @@ commands can stay scoped.
 The manifests are fixtures only. Demo install, reset, teardown, and live Kind
 workflow commands are not implemented yet.
 
+See [../../../docs/demo-kind.md](../../../docs/demo-kind.md) for the current
+manual Kind setup guide.
+
 ## Variants
 
 Backend variant manifests are mutually exclusive fixture inputs for future demo
