@@ -66,6 +66,82 @@ impl GatewayApiResourceStatus {
     }
 }
 
+/// Supported Gateway API route capabilities for a sandbox session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayRouteCapabilities {
+    /// Gateway API resources used to derive these capabilities.
+    pub resources: GatewayApiResourceDetection,
+    /// Overall capability status for temporary Gateway API routes.
+    pub status: GatewayRouteCapabilityStatus,
+    /// Whether temporary HTTPRoute objects can be planned.
+    pub supports_temporary_http_routes: bool,
+    /// Whether header-based sandbox routing can be planned.
+    pub supports_header_based_routing: bool,
+    /// Whether host-based preview routing can be planned.
+    pub supports_host_based_routing: bool,
+    /// Gateway resources with HTTP-compatible listeners in deterministic order.
+    pub http_compatible_gateway_names: Vec<String>,
+    /// Listener protocols observed on discovered Gateway resources.
+    pub listener_protocols: Vec<String>,
+    /// Limitations preventing or constraining route planning.
+    pub limitations: Vec<GatewayRouteCapabilityLimitation>,
+}
+
+/// Gateway route capability readiness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayRouteCapabilityStatus {
+    /// Route capabilities cannot currently be used.
+    Unsupported,
+    /// Some routing inputs are present, but capability is incomplete.
+    Partial,
+    /// Required inputs for temporary HTTPRoute planning are present.
+    Supported,
+}
+
+impl GatewayRouteCapabilityStatus {
+    /// Return the stable snake_case string form of this status.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::Partial => "partial",
+            Self::Supported => "supported",
+        }
+    }
+}
+
+/// Gateway route capability limitation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayRouteCapabilityLimitation {
+    /// No Gateway API resources could be discovered.
+    GatewayApiUnavailable,
+    /// Gateway API discovery is incomplete.
+    GatewayApiPartial,
+    /// No GatewayClass resources were found.
+    MissingGatewayClass,
+    /// No Gateway resources were found.
+    MissingGateway,
+    /// HTTPRoute API discovery did not succeed.
+    MissingHttpRouteApi,
+    /// No Gateway listener can accept HTTPRoute traffic.
+    NoHttpCompatibleListener,
+}
+
+impl GatewayRouteCapabilityLimitation {
+    /// Return the stable snake_case string form of this limitation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GatewayApiUnavailable => "gateway_api_unavailable",
+            Self::GatewayApiPartial => "gateway_api_partial",
+            Self::MissingGatewayClass => "missing_gateway_class",
+            Self::MissingGateway => "missing_gateway",
+            Self::MissingHttpRouteApi => "missing_http_route_api",
+            Self::NoHttpCompatibleListener => "no_http_compatible_listener",
+        }
+    }
+}
+
 impl GatewayApiResourceDetection {
     /// Return true when inventory can support temporary HTTPRoute planning.
     pub const fn supports_temporary_http_routes(&self) -> bool {
@@ -95,6 +171,36 @@ pub fn detect_gateway_api_resources(
     )
 }
 
+/// Model supported Gateway API route capabilities from discovery summaries.
+pub fn model_gateway_route_capabilities(
+    input: GatewayApiDiscoveryInput<'_>,
+) -> GatewayRouteCapabilities {
+    let gateways = input.gateways.unwrap_or_default();
+    let resources = detect_gateway_api_resources(input);
+    let http_compatible_gateway_names = http_compatible_gateway_names(gateways);
+    let listener_protocols = listener_protocols(gateways);
+    let supports_temporary_http_routes =
+        resources.supports_temporary_http_routes() && !http_compatible_gateway_names.is_empty();
+    let limitations = gateway_route_capability_limitations(
+        &resources,
+        supports_temporary_http_routes,
+        http_compatible_gateway_names.is_empty(),
+    );
+    let status = gateway_route_capability_status(&resources, supports_temporary_http_routes);
+
+    GatewayRouteCapabilities {
+        resources,
+        status,
+        supports_temporary_http_routes,
+        supports_header_based_routing: supports_temporary_http_routes,
+        supports_host_based_routing: supports_temporary_http_routes,
+        http_compatible_gateway_names,
+        listener_protocols,
+        limitations,
+    }
+}
+
+/// Build a deterministic Gateway API resource detection result.
 fn gateway_api_resource_detection(
     gateway_classes: &[GatewayClassSummary],
     gateways: &[GatewaySummary],
@@ -151,6 +257,7 @@ fn gateway_api_resource_detection(
     }
 }
 
+/// Determine the Gateway API resource inventory status.
 fn gateway_api_resource_status(
     gateway_class_count: usize,
     gateway_count: usize,
@@ -174,6 +281,96 @@ fn gateway_api_resource_status(
     GatewayApiResourceStatus::Partial
 }
 
+/// Determine the Gateway route capability status.
+fn gateway_route_capability_status(
+    resources: &GatewayApiResourceDetection,
+    supports_temporary_http_routes: bool,
+) -> GatewayRouteCapabilityStatus {
+    if supports_temporary_http_routes {
+        return GatewayRouteCapabilityStatus::Supported;
+    }
+
+    match resources.status {
+        GatewayApiResourceStatus::Unavailable => GatewayRouteCapabilityStatus::Unsupported,
+        GatewayApiResourceStatus::Partial | GatewayApiResourceStatus::Available => {
+            GatewayRouteCapabilityStatus::Partial
+        }
+    }
+}
+
+/// Build stable route capability limitation codes.
+fn gateway_route_capability_limitations(
+    resources: &GatewayApiResourceDetection,
+    supports_temporary_http_routes: bool,
+    has_no_http_compatible_gateways: bool,
+) -> Vec<GatewayRouteCapabilityLimitation> {
+    if supports_temporary_http_routes {
+        return Vec::new();
+    }
+
+    let mut limitations = Vec::new();
+    match resources.status {
+        GatewayApiResourceStatus::Unavailable => {
+            limitations.push(GatewayRouteCapabilityLimitation::GatewayApiUnavailable);
+        }
+        GatewayApiResourceStatus::Partial => {
+            limitations.push(GatewayRouteCapabilityLimitation::GatewayApiPartial);
+        }
+        GatewayApiResourceStatus::Available => {}
+    }
+
+    if resources.gateway_class_count == 0 {
+        limitations.push(GatewayRouteCapabilityLimitation::MissingGatewayClass);
+    }
+    if resources.gateway_count == 0 {
+        limitations.push(GatewayRouteCapabilityLimitation::MissingGateway);
+    }
+    if !resources.http_route_api_detected {
+        limitations.push(GatewayRouteCapabilityLimitation::MissingHttpRouteApi);
+    }
+    if resources.gateway_count > 0 && has_no_http_compatible_gateways {
+        limitations.push(GatewayRouteCapabilityLimitation::NoHttpCompatibleListener);
+    }
+
+    limitations
+}
+
+/// Return Gateway names with HTTP-compatible listeners.
+fn http_compatible_gateway_names(gateways: &[GatewaySummary]) -> Vec<String> {
+    gateways
+        .iter()
+        .filter(|gateway| {
+            gateway
+                .listeners
+                .iter()
+                .any(|listener| is_http_compatible_protocol(listener.protocol.as_deref()))
+        })
+        .map(|gateway| qualified_resource_name(&gateway.namespace, &gateway.name))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Return all discovered listener protocols in deterministic order.
+fn listener_protocols(gateways: &[GatewaySummary]) -> Vec<String> {
+    gateways
+        .iter()
+        .flat_map(|gateway| gateway.listeners.iter())
+        .filter_map(|listener| listener.protocol.as_deref())
+        .map(|protocol| protocol.to_ascii_uppercase())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Return true when a Gateway listener protocol can attach HTTPRoute traffic.
+fn is_http_compatible_protocol(protocol: Option<&str>) -> bool {
+    protocol.is_some_and(|protocol| {
+        protocol.eq_ignore_ascii_case("HTTP") || protocol.eq_ignore_ascii_case("HTTPS")
+    })
+}
+
+/// Return a stable namespace-qualified resource name.
 fn qualified_resource_name(namespace: &str, name: &str) -> String {
     if namespace.is_empty() {
         return name.to_owned();
@@ -186,7 +383,8 @@ fn qualified_resource_name(namespace: &str, name: &str) -> String {
 mod tests {
     use super::{
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
-        detect_gateway_api_resources,
+        GatewayRouteCapabilities, GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus,
+        detect_gateway_api_resources, model_gateway_route_capabilities,
     };
     use kply_k8s::{GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary};
 
@@ -302,6 +500,110 @@ mod tests {
         assert_eq!(detection.http_route_names, Vec::<String>::new());
     }
 
+    #[test]
+    /// Models unavailable Gateway API route capabilities.
+    fn models_unavailable_gateway_route_capabilities() {
+        let capabilities = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: None,
+            gateways: None,
+            http_routes: None,
+        });
+
+        assert_eq!(
+            capabilities,
+            GatewayRouteCapabilities {
+                resources: GatewayApiResourceDetection {
+                    status: GatewayApiResourceStatus::Unavailable,
+                    gateway_class_api_detected: false,
+                    gateway_api_detected: false,
+                    http_route_api_detected: false,
+                    gateway_class_count: 0,
+                    gateway_count: 0,
+                    http_route_count: 0,
+                    controller_names: Vec::new(),
+                    gateway_class_names: Vec::new(),
+                    gateway_names: Vec::new(),
+                    http_route_names: Vec::new(),
+                },
+                status: GatewayRouteCapabilityStatus::Unsupported,
+                supports_temporary_http_routes: false,
+                supports_header_based_routing: false,
+                supports_host_based_routing: false,
+                http_compatible_gateway_names: Vec::new(),
+                listener_protocols: Vec::new(),
+                limitations: vec![
+                    GatewayRouteCapabilityLimitation::GatewayApiUnavailable,
+                    GatewayRouteCapabilityLimitation::MissingGatewayClass,
+                    GatewayRouteCapabilityLimitation::MissingGateway,
+                    GatewayRouteCapabilityLimitation::MissingHttpRouteApi,
+                ],
+            }
+        );
+        assert_eq!(capabilities.status.as_str(), "unsupported");
+        assert_eq!(
+            capabilities.limitations[0].as_str(),
+            "gateway_api_unavailable"
+        );
+    }
+
+    #[test]
+    /// Models Gateway API route capabilities without HTTP listeners as partial.
+    fn models_partial_gateway_route_capabilities_without_http_listeners() {
+        let gateway_classes = vec![gateway_class("mesh", Some("example.com/controller"))];
+        let gateways = vec![gateway_with_protocol("shop", "mesh", "mesh", Some("TCP"))];
+        let http_routes: Vec<HttpRouteSummary> = Vec::new();
+
+        let capabilities = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: Some(&gateway_classes),
+            gateways: Some(&gateways),
+            http_routes: Some(&http_routes),
+        });
+
+        assert_eq!(capabilities.status, GatewayRouteCapabilityStatus::Partial);
+        assert!(!capabilities.supports_temporary_http_routes);
+        assert!(!capabilities.supports_header_based_routing);
+        assert!(!capabilities.supports_host_based_routing);
+        assert_eq!(capabilities.listener_protocols, ["TCP"]);
+        assert_eq!(
+            capabilities.http_compatible_gateway_names,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            capabilities.limitations,
+            [GatewayRouteCapabilityLimitation::NoHttpCompatibleListener]
+        );
+    }
+
+    #[test]
+    /// Models supported Gateway API route capabilities.
+    fn models_supported_gateway_route_capabilities() {
+        let gateway_classes = vec![gateway_class("istio", Some("istio.io/gateway-controller"))];
+        let gateways = vec![
+            gateway_with_protocol("shop", "public", "istio", Some("HTTP")),
+            gateway_with_protocol("shop", "secure", "istio", Some("HTTPS")),
+            gateway_with_protocol("shop", "tcp", "istio", Some("TCP")),
+        ];
+        let http_routes: Vec<HttpRouteSummary> = Vec::new();
+
+        let capabilities = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: Some(&gateway_classes),
+            gateways: Some(&gateways),
+            http_routes: Some(&http_routes),
+        });
+
+        assert_eq!(capabilities.status, GatewayRouteCapabilityStatus::Supported);
+        assert!(capabilities.supports_temporary_http_routes);
+        assert!(capabilities.supports_header_based_routing);
+        assert!(capabilities.supports_host_based_routing);
+        assert_eq!(capabilities.listener_protocols, ["HTTP", "HTTPS", "TCP"]);
+        assert_eq!(
+            capabilities.http_compatible_gateway_names,
+            ["shop/public", "shop/secure"]
+        );
+        assert_eq!(capabilities.limitations, Vec::new());
+    }
+
+    /// Build a GatewayClass summary fixture.
     fn gateway_class(name: &str, controller_name: Option<&str>) -> GatewayClassSummary {
         GatewayClassSummary {
             name: name.to_owned(),
@@ -310,7 +612,18 @@ mod tests {
         }
     }
 
+    /// Build an HTTP Gateway summary fixture.
     fn gateway(namespace: &str, name: &str, gateway_class_name: &str) -> GatewaySummary {
+        gateway_with_protocol(namespace, name, gateway_class_name, Some("HTTP"))
+    }
+
+    /// Build a Gateway summary fixture with one listener protocol.
+    fn gateway_with_protocol(
+        namespace: &str,
+        name: &str,
+        gateway_class_name: &str,
+        protocol: Option<&str>,
+    ) -> GatewaySummary {
         GatewaySummary {
             namespace: namespace.to_owned(),
             name: name.to_owned(),
@@ -319,7 +632,7 @@ mod tests {
                 name: Some("http".to_owned()),
                 hostname: None,
                 port: Some(80),
-                protocol: Some("HTTP".to_owned()),
+                protocol: protocol.map(ToOwned::to_owned),
             }],
         }
     }
