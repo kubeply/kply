@@ -7,6 +7,10 @@ install` can install the baseline fixture after the cluster exists. `kply demo
 reset` can restore the baseline fixture after variant testing. `kply demo
 teardown` removes the dedicated demo namespace.
 
+Every demo action is an explicit subcommand. Commands operate against the
+current Kubernetes context and keep their resources in the `kply-demo`
+namespace.
+
 ## Prerequisites
 
 - Docker or another Kind-compatible container runtime.

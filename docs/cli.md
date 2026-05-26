@@ -51,6 +51,10 @@ this document, tests, snapshots, and release notes in the same pull request.
 
 ## Demo Commands
 
+`kply demo` requires an explicit subcommand. Demo commands are intentionally
+scoped to the current Kubernetes context and the dedicated `kply-demo`
+namespace so the local walkthrough stays separate from non-demo workloads.
+
 `kply demo doctor` checks local prerequisites for the manual Kind demo without
 mutating a cluster.
 

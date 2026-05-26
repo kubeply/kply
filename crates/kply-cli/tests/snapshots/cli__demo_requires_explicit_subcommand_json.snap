@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "error": {
+    "code": "usage",
+    "details": "Manage the local Kply demo\n\nUsage: kply demo [OPTIONS] <COMMAND>\n\nCommands:\n  doctor    Check local prerequisites for the demo\n  install   Install the baseline local demo resources\n  reset     Reset the local demo resources to the baseline state\n  teardown  Tear down the local demo namespace\n\nOptions:\n      --json           Print placeholder output as JSON\n      --quiet          Suppress nonessential human-readable output\n      --verbose        Print local debugging details to stderr\n      --no-color       Disable ANSI color output\n      --config <PATH>  Specify an explicit configuration file path\n      --no-config      Disable configuration discovery and loading\n  -h, --help           Print help\n",
+    "exit_code": 2,
+    "message": "Manage the local Kply demo"
+  }
+}

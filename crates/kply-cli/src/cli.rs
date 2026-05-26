@@ -81,9 +81,9 @@ pub enum Command {
     },
     /// Manage the local Kply demo.
     Demo {
-        /// Optional demo command.
+        /// Required demo command.
         #[command(subcommand)]
-        command: Option<DemoCommand>,
+        command: DemoCommand,
     },
     /// Generate future shell completion scripts.
     Completion,
@@ -98,7 +98,6 @@ impl Command {
         Self::App { command: None },
         Self::Config { command: None },
         Self::Cluster { command: None },
-        Self::Demo { command: None },
         Self::Completion,
         Self::Report,
     ];
