@@ -246,6 +246,33 @@ fn prints_demo_doctor_text() {
 }
 
 #[test]
+fn requires_explicit_demo_subcommand() {
+    let output = assert_kply_exit_code(&["demo"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("demo_requires_explicit_subcommand", stderr);
+}
+
+#[test]
+fn requires_explicit_demo_subcommand_json() {
+    let output = assert_kply_exit_code(&["--json", "demo"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "JSON usage errors should not write stdout"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("demo_requires_explicit_subcommand_json", value);
+}
+
+#[test]
 fn prints_demo_doctor_json() {
     let workspace = temp_workspace();
     let output = kply_cmd()

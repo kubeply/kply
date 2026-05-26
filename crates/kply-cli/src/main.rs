@@ -102,16 +102,16 @@ fn run() -> Result<ExitCode> {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
         Some(Command::Demo {
-            command: Some(DemoCommand::Doctor),
+            command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
         Some(Command::Demo {
-            command: Some(DemoCommand::Install),
+            command: DemoCommand::Install,
         }) => return demo::install::render_demo_install(&cli),
         Some(Command::Demo {
-            command: Some(DemoCommand::Reset),
+            command: DemoCommand::Reset,
         }) => return demo::reset::render_demo_reset(&cli),
         Some(Command::Demo {
-            command: Some(DemoCommand::Teardown),
+            command: DemoCommand::Teardown,
         }) => return demo::teardown::render_demo_teardown(&cli),
         Some(command) => {
             if cli.json {
