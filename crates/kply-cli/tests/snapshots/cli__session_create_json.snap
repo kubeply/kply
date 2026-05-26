@@ -4,6 +4,7 @@ expression: value
 ---
 {
   "app": "checkout",
+  "apply": false,
   "mutation": "not_applied",
   "planned_resources": [
     {

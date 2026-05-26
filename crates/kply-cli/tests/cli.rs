@@ -1067,6 +1067,54 @@ fn prints_session_create_json() {
 }
 
 #[test]
+fn rejects_session_create_apply_until_supported() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "create",
+                "checkout",
+                "--apply",
+            ])
+            .assert()
+            .code(EXIT_BLOCKING)
+            .get_output()
+            .clone()
+    });
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_create_apply_not_implemented", stderr);
+}
+
+#[test]
+fn rejects_session_create_apply_until_supported_json() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "create",
+                "checkout",
+                "--apply",
+                "--json",
+            ])
+            .assert()
+            .code(EXIT_BLOCKING)
+            .get_output()
+            .clone()
+    });
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_create_apply_not_implemented_json", value);
+}
+
+#[test]
 fn prints_session_manifests_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -1230,6 +1278,7 @@ fn suppresses_session_plan_placeholder_text_when_quiet() {
                 "session",
                 SessionCommand::Create {
                     app: String::new(),
+                    apply: false,
                     image: None,
                     namespace: None,
                     time_to_live: None,

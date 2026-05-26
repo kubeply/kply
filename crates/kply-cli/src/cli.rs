@@ -124,6 +124,9 @@ pub enum SessionCommand {
     Create {
         /// Configured app name to create a session for.
         app: String,
+        /// Apply sandbox resources to the cluster instead of rendering a dry-run plan.
+        #[arg(long)]
+        apply: bool,
         /// Candidate image reference for the sandbox workload.
         #[arg(long, value_name = "IMAGE")]
         image: Option<String>,
