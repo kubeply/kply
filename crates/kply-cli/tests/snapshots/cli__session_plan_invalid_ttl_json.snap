@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 715
+expression: value
+---
+{
+  "error": {
+    "code": "session_plan",
+    "exit_code": 2,
+    "message": "invalid ttl unit `r`; expected s, m, h, or d"
+  }
+}
