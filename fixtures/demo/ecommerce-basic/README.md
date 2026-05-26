@@ -18,7 +18,8 @@ automated checks, and promotion are not implemented yet.
 See [../../../docs/demo-kind.md](../../../docs/demo-kind.md) for the current
 manual Kind setup guide and
 [../../../docs/demo-agent.md](../../../docs/demo-agent.md) for the coding agent
-workflow.
+workflow. The local scripted walkthrough lives at
+[../../../scripts/demo-walkthrough.sh](../../../scripts/demo-walkthrough.sh).
 
 ## Variants
 

@@ -14,6 +14,10 @@ namespace.
 For an agent-oriented workflow, see
 [Coding Agent Demo Guide](demo-agent.md).
 
+For a runnable end-to-end walkthrough, use
+[`scripts/demo-walkthrough.sh`](../scripts/demo-walkthrough.sh). The script
+simulates the sandbox creation step until `kply session create` is implemented.
+
 ## Prerequisites
 
 - Docker or another Kind-compatible container runtime.

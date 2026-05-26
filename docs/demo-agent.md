@@ -26,6 +26,15 @@ Do not allow the agent to change Kubernetes resources outside `kply-demo`.
 
 ## Prepare The Demo
 
+For a scripted local run, use:
+
+```bash
+scripts/demo-walkthrough.sh
+```
+
+The script simulates sandbox creation by applying the fixed backend variant
+until `kply session create` is implemented.
+
 Create the local cluster and install the baseline fixture:
 
 ```bash
