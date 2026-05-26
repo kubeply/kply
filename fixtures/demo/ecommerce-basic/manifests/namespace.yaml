@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kply-demo
+  labels:
+    app.kubernetes.io/name: kply-demo
+    app.kubernetes.io/part-of: kply-demo
