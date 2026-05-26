@@ -1,0 +1,15 @@
+---
+source: crates/kply-k8s/tests/offline_discovery.rs
+expression: sessions
+---
+[
+  {
+    "id": "checkout-plan",
+    "name": "checkout-plan",
+    "namespace": "shop",
+    "app": "checkout",
+    "status": "active",
+    "workload_kind": "Deployment",
+    "workload_name": "checkout-plan-workload"
+  }
+]
