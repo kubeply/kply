@@ -98,6 +98,45 @@ expression: value
       "cleanup"
     ]
   },
+  "required_permissions": [
+    {
+      "api_group": "",
+      "resource": "pods",
+      "verbs": [
+        "get",
+        "list",
+        "watch"
+      ]
+    },
+    {
+      "api_group": "",
+      "resource": "services",
+      "verbs": [
+        "create",
+        "delete",
+        "get"
+      ]
+    },
+    {
+      "api_group": "apps",
+      "resource": "deployments",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch"
+      ]
+    },
+    {
+      "api_group": "gateway.networking.k8s.io",
+      "resource": "httproutes",
+      "verbs": [
+        "create",
+        "delete",
+        "get"
+      ]
+    }
+  ],
   "route_selector": {
     "hostname": "checkout-plan.shop.kply.local",
     "kind": "host"

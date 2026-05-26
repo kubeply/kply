@@ -128,6 +128,9 @@ Current provisional pre-`1.0.0` session plan fields:
 - `planned_cleanup_steps`: list of cleanup operations Kply expects a future
   session to run when removing sandbox resources, deduplicated and serialized
   in execution order.
+- `required_permissions`: list of Kubernetes-style permissions Kply expects
+  the caller or future controller to need for the planned session, deduplicated
+  and serialized in deterministic order.
 - `route_selector`: always serialized as a nullable field; it is a test
   traffic selector object when configured and `null` otherwise.
 - `policy`: allowed operation policy.
@@ -161,6 +164,14 @@ Current provisional pre-`1.0.0` planned cleanup step fields:
 
 - `action`: stable planned cleanup action string.
 - `target`: resource target string the cleanup action will remove.
+
+Current provisional pre-`1.0.0` required permission fields:
+
+- `api_group`: Kubernetes API group string; the core API group is serialized as
+  an empty string.
+- `resource`: Kubernetes resource plural string.
+- `verbs`: deduplicated list of Kubernetes RBAC verbs required for that
+  resource, serialized in deterministic order.
 
 Current provisional pre-`1.0.0` route selector fields:
 
