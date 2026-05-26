@@ -539,11 +539,131 @@ fn smoke_target_is_empty(smoke: &HttpSmokeInput) -> bool {
         .is_none_or(str::is_empty)
 }
 
+/// Input facts for evaluating one log fatal-pattern check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LogFatalPatternInput {
+    source: String,
+    scanned_lines: usize,
+    fatal_patterns: Vec<String>,
+    matched_patterns: Vec<String>,
+    log_collection_error: Option<String>,
+}
+
+impl LogFatalPatternInput {
+    /// Create log fatal-pattern input from collected log scan facts.
+    pub fn new(
+        source: impl Into<String>,
+        scanned_lines: usize,
+        fatal_patterns: Vec<String>,
+        matched_patterns: Vec<String>,
+        log_collection_error: Option<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            scanned_lines,
+            fatal_patterns,
+            matched_patterns,
+            log_collection_error,
+        }
+    }
+
+    /// Borrow the log source name.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Return the number of scanned log lines.
+    pub const fn scanned_lines(&self) -> usize {
+        self.scanned_lines
+    }
+
+    /// Borrow the configured fatal patterns.
+    pub fn fatal_patterns(&self) -> &[String] {
+        &self.fatal_patterns
+    }
+
+    /// Borrow the matched fatal patterns.
+    pub fn matched_patterns(&self) -> &[String] {
+        &self.matched_patterns
+    }
+
+    /// Borrow the log collection error label.
+    pub fn log_collection_error(&self) -> Option<&str> {
+        self.log_collection_error.as_deref()
+    }
+}
+
+/// Summary produced by the log fatal-pattern check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LogFatalPatternCheckResult {
+    status: CheckResultStatus,
+    source: String,
+    scanned_lines: usize,
+    fatal_patterns: Vec<String>,
+    matched_patterns: Vec<String>,
+    log_collection_error: Option<String>,
+}
+
+impl LogFatalPatternCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow the evaluated log source name.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Return the number of scanned log lines.
+    pub const fn scanned_lines(&self) -> usize {
+        self.scanned_lines
+    }
+
+    /// Borrow the configured fatal patterns.
+    pub fn fatal_patterns(&self) -> &[String] {
+        &self.fatal_patterns
+    }
+
+    /// Borrow the matched fatal patterns.
+    pub fn matched_patterns(&self) -> &[String] {
+        &self.matched_patterns
+    }
+
+    /// Borrow the log collection error label.
+    pub fn log_collection_error(&self) -> Option<&str> {
+        self.log_collection_error.as_deref()
+    }
+}
+
+/// Evaluate whether collected logs contain fatal patterns.
+pub fn check_log_fatal_patterns(logs: &LogFatalPatternInput) -> LogFatalPatternCheckResult {
+    let status = if logs.fatal_patterns.is_empty() {
+        CheckResultStatus::Skipped
+    } else if logs.log_collection_error.is_some() {
+        CheckResultStatus::Warning
+    } else if !logs.matched_patterns.is_empty() {
+        CheckResultStatus::Failed
+    } else {
+        CheckResultStatus::Passed
+    };
+
+    LogFatalPatternCheckResult {
+        status,
+        source: logs.source.clone(),
+        scanned_lines: logs.scanned_lines,
+        fatal_patterns: logs.fatal_patterns.clone(),
+        matched_patterns: logs.matched_patterns.clone(),
+        log_collection_error: logs.log_collection_error.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpSmokeInput, PodReadinessInput, RolloutAvailabilityInput, ServiceEndpointInput,
-        check_http_smoke, check_pod_readiness, check_rollout_availability, check_service_endpoints,
+        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, RolloutAvailabilityInput,
+        ServiceEndpointInput, check_http_smoke, check_log_fatal_patterns, check_pod_readiness,
+        check_rollout_availability, check_service_endpoints,
     };
     use kply_core::CheckResultStatus;
 
@@ -598,6 +718,22 @@ mod tests {
             expected_status_code,
             observed_status_code,
             transport_error.map(ToOwned::to_owned),
+        )
+    }
+
+    /// Builds a log fatal-pattern input fixture.
+    fn log_fatal_patterns(
+        scanned_lines: usize,
+        fatal_patterns: &[&str],
+        matched_patterns: &[&str],
+        log_collection_error: Option<&str>,
+    ) -> LogFatalPatternInput {
+        LogFatalPatternInput::new(
+            "checkout-api",
+            scanned_lines,
+            fatal_patterns.iter().map(ToString::to_string).collect(),
+            matched_patterns.iter().map(ToString::to_string).collect(),
+            log_collection_error.map(ToOwned::to_owned),
         )
     }
 
@@ -823,5 +959,60 @@ mod tests {
 
         assert_eq!(result.status(), CheckResultStatus::Skipped);
         assert_eq!(result.target(), Some("  "));
+    }
+
+    #[test]
+    /// Passes when scanned logs contain no fatal patterns.
+    fn passes_when_logs_have_no_fatal_patterns() {
+        let result =
+            check_log_fatal_patterns(&log_fatal_patterns(120, &["panic", "fatal"], &[], None));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.source(), "checkout-api");
+        assert_eq!(result.scanned_lines(), 120);
+        assert_eq!(
+            result.fatal_patterns(),
+            &["panic".to_owned(), "fatal".to_owned()]
+        );
+        assert!(result.matched_patterns().is_empty());
+        assert_eq!(result.log_collection_error(), None);
+    }
+
+    #[test]
+    /// Fails when scanned logs contain at least one fatal pattern.
+    fn fails_when_logs_have_fatal_patterns() {
+        let result = check_log_fatal_patterns(&log_fatal_patterns(
+            42,
+            &["panic", "fatal"],
+            &["panic"],
+            None,
+        ));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.scanned_lines(), 42);
+        assert_eq!(result.matched_patterns(), &["panic".to_owned()]);
+    }
+
+    #[test]
+    /// Warns when log collection fails before patterns can be trusted.
+    fn warns_when_log_collection_fails() {
+        let result = check_log_fatal_patterns(&log_fatal_patterns(
+            0,
+            &["panic", "fatal"],
+            &[],
+            Some("permission_denied"),
+        ));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.log_collection_error(), Some("permission_denied"));
+    }
+
+    #[test]
+    /// Skips when no fatal patterns are configured.
+    fn skips_when_no_log_fatal_patterns_are_configured() {
+        let result = check_log_fatal_patterns(&log_fatal_patterns(12, &[], &[], None));
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert!(result.fatal_patterns().is_empty());
     }
 }
