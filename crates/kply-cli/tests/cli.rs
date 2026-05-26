@@ -2,6 +2,7 @@
 
 use clap::CommandFactory;
 use kply_cli::cli::AppCommand;
+use kply_cli::cli::CheckCommand;
 use kply_cli::cli::Cli;
 use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
@@ -1252,6 +1253,64 @@ fn rejects_session_status_without_kubeconfig_json() {
 }
 
 #[test]
+fn rejects_check_run_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["check", "run", "checkout-plan", "--namespace", "shop"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "check run errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!("check_run_missing_kubeconfig", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_check_run_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "check",
+            "run",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "check run JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("check_run_missing_kubeconfig_json", value);
+}
+
+#[test]
 fn rejects_session_cleanup_apply_without_kubeconfig() {
     let workspace = temp_workspace();
     let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
@@ -1473,6 +1532,35 @@ fn rejects_invalid_session_status_id_json() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
     insta::assert_json_snapshot!("session_status_invalid_id_json", value);
+}
+
+#[test]
+fn rejects_invalid_check_run_session_id() {
+    let output = kply_cmd()
+        .args(["check", "run", "Checkout_Plan"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("check_run_invalid_session_id", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_invalid_check_run_session_id_json() {
+    let output = kply_cmd()
+        .args(["check", "run", "Checkout_Plan", "--json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("check_run_invalid_session_id_json", value);
 }
 
 #[test]
@@ -2827,6 +2915,7 @@ fn covers_every_top_level_command() {
         command_names,
         [
             "app",
+            "check",
             "cluster",
             "completion",
             "config",
@@ -2843,6 +2932,38 @@ fn covers_every_top_level_command() {
     for command in Command::PLACEHOLDER_GROUPS {
         kply_cmd().arg(command.name()).assert().success();
     }
+}
+
+#[test]
+fn covers_every_check_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("check")
+        .expect("check command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["run"],
+        "update check command tests when the check command surface changes"
+    );
+
+    kply_cmd()
+        .args([
+            "check",
+            CheckCommand::Run {
+                session: String::new(),
+                namespace: Some(String::new()),
+            }
+            .name(),
+            "checkout-plan",
+            "--namespace",
+            "shop",
+        ])
+        .assert()
+        .code(EXIT_USAGE);
 }
 
 #[test]

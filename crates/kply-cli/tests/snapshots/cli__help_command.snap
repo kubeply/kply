@@ -1,5 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
+assertion_line: 214
 expression: output
 ---
 Top-level placeholder CLI options
@@ -12,6 +13,7 @@ Commands:
   app         Inspect configured application targets
   config      Manage Kply configuration
   cluster     Inspect Kubernetes cluster facts
+  check       Run verification checks for sandbox sessions
   demo        Manage the local Kply demo
   completion  Generate future shell completion scripts
   report      Read future session reports
