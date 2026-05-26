@@ -11,6 +11,9 @@ Every demo action is an explicit subcommand. Commands operate against the
 current Kubernetes context and keep their resources in the `kply-demo`
 namespace.
 
+For an agent-oriented workflow, see
+[Coding Agent Demo Guide](demo-agent.md).
+
 ## Prerequisites
 
 - Docker or another Kind-compatible container runtime.
