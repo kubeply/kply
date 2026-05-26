@@ -32,6 +32,23 @@ async fn creates_deployment_with_mocked_kubernetes_api() {
 }
 
 #[tokio::test]
+async fn gets_deployment_with_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_deployment_get_api(handle);
+
+    let summary = kply_k8s::get_deployment(client, "shop", "checkout-plan-workload")
+        .await
+        .expect("mocked Deployment get should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(summary.namespace, "shop");
+    assert_eq!(summary.name, "checkout-plan-workload");
+    assert_eq!(summary.replicas, Some(1));
+    assert_eq!(summary.images, ["ghcr.io/acme/checkout:next"]);
+}
+
+#[tokio::test]
 async fn creates_service_with_mocked_kubernetes_api() {
     let (client, handle) = mock_client();
     let server = spawn_mock_service_create_api(handle);
@@ -151,6 +168,32 @@ fn spawn_mock_deployment_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
                         .expect("sandbox Deployment response should serialize"),
                 ))
                 .expect("mock Deployment create response should build"),
+        );
+    })
+}
+
+fn spawn_mock_deployment_get_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment get request");
+
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    serde_json::to_vec(&sandbox_deployment())
+                        .expect("sandbox Deployment response should serialize"),
+                ))
+                .expect("mock Deployment get response should build"),
         );
     })
 }

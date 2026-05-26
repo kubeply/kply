@@ -20,11 +20,15 @@ use kply_core::{
     SessionPolicy, TimeToLive, UnsupportedFeatureWarning, WorkloadRef, sandbox_deployment_manifest,
     sandbox_route_placeholder_manifest, sandbox_service_manifest,
 };
-use kply_k8s::{DeploymentSummary, KubeconfigError, MutationError, ServiceSummary};
+use kply_k8s::{
+    DeploymentRolloutPhase, DeploymentSummary, KubeconfigError, MutationError, MutationErrorCode,
+    ServiceSummary,
+};
 use serde::Serialize;
 use std::ffi::OsString;
 use std::fmt;
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 const EXIT_USAGE: i32 = 2;
 const EXIT_INTERNAL: i32 = 3;
@@ -256,6 +260,9 @@ fn render_session_create(
                 runtime.block_on(create_session_deployment(namespace, deployment))
             },
             |namespace, service| runtime.block_on(create_session_service(namespace, service)),
+            |namespace, name| {
+                runtime.block_on(wait_for_session_deployment_readiness(namespace, name))
+            },
         ) {
             Ok(applied) => applied,
             Err(SessionCreateApplyError::Manifest(error)) => {
@@ -287,6 +294,7 @@ fn render_session_create(
                 "apply": true,
                 "created_resources": applied.created_resources,
                 "pending_resources": applied.pending_resources,
+                "readiness": applied.readiness,
             });
             println!("{}", serde_json::to_string_pretty(&value)?);
         } else if !cli.quiet {
@@ -309,6 +317,13 @@ fn render_session_create(
                     resource.kind, resource.namespace, resource.name
                 );
             }
+            println!(
+                "readiness: {} {}/{} phase={}",
+                applied.readiness.resource.kind,
+                applied.readiness.resource.namespace,
+                applied.readiness.resource.name,
+                applied.readiness.phase.as_str()
+            );
         }
 
         return Ok(ExitCode::SUCCESS);
@@ -344,6 +359,14 @@ fn render_session_create(
 struct SessionCreateApplyResult {
     created_resources: Vec<SessionManifestSummary>,
     pending_resources: Vec<SessionManifestSummary>,
+    readiness: SessionReadinessSummary,
+}
+
+/// Readiness status observed before `session create --apply` succeeds.
+#[derive(Debug, Serialize)]
+struct SessionReadinessSummary {
+    resource: SessionManifestSummary,
+    phase: DeploymentRolloutPhase,
 }
 
 /// Error raised while applying session resources to Kubernetes.
@@ -372,6 +395,10 @@ fn apply_session_resources(
         &Deployment,
     ) -> std::result::Result<DeploymentSummary, MutationError>,
     create_service: impl FnOnce(&str, &Service) -> std::result::Result<ServiceSummary, MutationError>,
+    wait_deployment_ready: impl FnOnce(
+        &str,
+        &str,
+    ) -> std::result::Result<DeploymentSummary, MutationError>,
 ) -> std::result::Result<SessionCreateApplyResult, SessionCreateApplyError> {
     let deployment =
         session_deployment_manifest(plan).map_err(SessionCreateApplyError::Manifest)?;
@@ -416,17 +443,34 @@ fn apply_session_resources(
             pending_resources: pending_after_deployment,
         }
     })?;
+    let created_service_resource = SessionManifestSummary {
+        kind: "Service".to_owned(),
+        namespace: created_service.namespace,
+        name: created_service.name,
+    };
+    let ready_deployment = wait_deployment_ready(
+        &created_deployment_resource.namespace,
+        &created_deployment_resource.name,
+    )
+    .map_err(|error| SessionCreateApplyError::PartialMutation {
+        error,
+        created_resources: vec![
+            created_deployment_resource.clone(),
+            created_service_resource.clone(),
+        ],
+        pending_resources: pending_resources.clone(),
+    })?;
 
     Ok(SessionCreateApplyResult {
         created_resources: vec![
-            created_deployment_resource,
-            SessionManifestSummary {
-                kind: "Service".to_owned(),
-                namespace: created_service.namespace,
-                name: created_service.name,
-            },
+            created_deployment_resource.clone(),
+            created_service_resource,
         ],
         pending_resources,
+        readiness: SessionReadinessSummary {
+            resource: created_deployment_resource,
+            phase: ready_deployment.rollout.phase,
+        },
     })
 }
 
@@ -452,6 +496,44 @@ async fn create_session_service(
     kply_k8s::create_service(client, namespace, service)
         .await
         .map_err(|error| MutationError::from_kubernetes_api_error("create sandbox Service", &error))
+}
+
+/// Wait until the generated sandbox Deployment reaches a complete rollout.
+async fn wait_for_session_deployment_readiness(
+    namespace: &str,
+    name: &str,
+) -> std::result::Result<DeploymentSummary, MutationError> {
+    const READINESS_TIMEOUT: Duration = Duration::from_secs(30);
+    const READINESS_INTERVAL: Duration = Duration::from_secs(1);
+
+    let client = kply_k8s::load_kube_client().await?;
+    let deadline = Instant::now() + READINESS_TIMEOUT;
+
+    loop {
+        let observed = kply_k8s::get_deployment(client.clone(), namespace, name)
+            .await
+            .map_err(|error| {
+                MutationError::from_kubernetes_api_error(
+                    "read sandbox Deployment readiness",
+                    &error,
+                )
+            })?;
+        if observed.rollout.phase == DeploymentRolloutPhase::Complete {
+            return Ok(observed);
+        }
+        if Instant::now() >= deadline {
+            return Err(MutationError {
+                code: MutationErrorCode::KubernetesApi,
+                message: format!(
+                    "sandbox Deployment {namespace}/{name} did not become ready within {}s; current phase is {}",
+                    READINESS_TIMEOUT.as_secs(),
+                    observed.rollout.phase.as_str()
+                ),
+            });
+        }
+
+        tokio::time::sleep(READINESS_INTERVAL).await;
+    }
 }
 
 /// Render a deterministic dry-run list of generated sandbox manifests.
@@ -1882,6 +1964,33 @@ mod tests {
                     ports: Vec::new(),
                 })
             },
+            |namespace, name| {
+                assert_eq!(namespace, "shop");
+                assert_eq!(name, "checkout-plan-workload");
+
+                Ok(DeploymentSummary {
+                    namespace: namespace.to_owned(),
+                    name: name.to_owned(),
+                    replicas: Some(1),
+                    available_replicas: Some(1),
+                    ready_replicas: Some(1),
+                    updated_replicas: Some(1),
+                    images: vec!["ghcr.io/acme/checkout:next".to_owned()],
+                    probes: Vec::new(),
+                    resources: Vec::new(),
+                    rollout: DeploymentRolloutSummary {
+                        phase: DeploymentRolloutPhase::Complete,
+                        generation: Some(1),
+                        observed_generation: Some(1),
+                        desired_replicas: Some(1),
+                        ready_replicas: Some(1),
+                        available_replicas: Some(1),
+                        updated_replicas: Some(1),
+                        unavailable_replicas: None,
+                        conditions: Vec::new(),
+                    },
+                })
+            },
         )
         .expect("session resource apply should succeed");
 
@@ -1899,6 +2008,9 @@ mod tests {
                 .iter()
                 .any(|resource| resource.kind == "ConfigMap")
         );
+        assert_eq!(applied.readiness.resource.kind, "Deployment");
+        assert_eq!(applied.readiness.resource.name, "checkout-plan-workload");
+        assert_eq!(applied.readiness.phase, DeploymentRolloutPhase::Complete);
     }
 
     #[test]
@@ -1946,6 +2058,7 @@ mod tests {
                     message: "create sandbox Service failed".to_owned(),
                 })
             },
+            |_namespace, _name| panic!("readiness must not run after Service creation fails"),
         )
         .expect_err("service failure after Deployment create should be partial");
 
@@ -1972,6 +2085,87 @@ mod tests {
                 .iter()
                 .any(|resource| resource.kind == "ConfigMap")
         );
+    }
+
+    #[test]
+    fn reports_partial_apply_when_readiness_wait_fails() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("ghcr.io/acme/checkout:next".to_owned()),
+            RouteStrategy::Header,
+        );
+        let plan = session_plan_from_config(&app, None, None, None, None)
+            .unwrap_or_else(|_| panic!("session plan should be created"));
+
+        let error = apply_session_resources(
+            &plan,
+            |namespace, _deployment| {
+                Ok(DeploymentSummary {
+                    namespace: namespace.to_owned(),
+                    name: "checkout-plan-workload".to_owned(),
+                    replicas: Some(1),
+                    available_replicas: None,
+                    ready_replicas: None,
+                    updated_replicas: None,
+                    images: Vec::new(),
+                    probes: Vec::new(),
+                    resources: Vec::new(),
+                    rollout: DeploymentRolloutSummary {
+                        phase: DeploymentRolloutPhase::Unknown,
+                        generation: None,
+                        observed_generation: None,
+                        desired_replicas: Some(1),
+                        ready_replicas: None,
+                        available_replicas: None,
+                        updated_replicas: None,
+                        unavailable_replicas: None,
+                        conditions: Vec::new(),
+                    },
+                })
+            },
+            |namespace, _service| {
+                Ok(ServiceSummary {
+                    namespace: namespace.to_owned(),
+                    name: "checkout-plan-service".to_owned(),
+                    service_type: Some("ClusterIP".to_owned()),
+                    selector: Vec::new(),
+                    ports: Vec::new(),
+                })
+            },
+            |_namespace, _name| {
+                Err(MutationError {
+                    code: MutationErrorCode::KubernetesApi,
+                    message: "sandbox Deployment did not become ready".to_owned(),
+                })
+            },
+        )
+        .expect_err("readiness failure after resources create should be partial");
+
+        let SessionCreateApplyError::PartialMutation {
+            created_resources,
+            pending_resources,
+            ..
+        } = error
+        else {
+            panic!("expected a partial mutation error");
+        };
+
+        assert_eq!(created_resources.len(), 2);
+        assert!(
+            created_resources
+                .iter()
+                .any(|resource| resource.kind == "Deployment")
+        );
+        assert!(
+            created_resources
+                .iter()
+                .any(|resource| resource.kind == "Service")
+        );
+        assert_eq!(pending_resources.len(), 1);
+        assert_eq!(pending_resources[0].kind, "ConfigMap");
     }
 
     #[test]
