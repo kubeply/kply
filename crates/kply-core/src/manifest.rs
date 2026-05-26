@@ -755,6 +755,50 @@ mod tests {
     }
 
     #[test]
+    fn deduplicates_identical_sandbox_manifest_resource_collisions() {
+        let plan = test_labeled_session_plan()
+            .with_planned_resources([
+                KubernetesResourceRef::new("checkout", "Deployment", "session-123-workload")
+                    .expect("planned workload"),
+                KubernetesResourceRef::new("checkout", "Deployment", "session-123-workload")
+                    .expect("duplicate planned workload"),
+                KubernetesResourceRef::new("checkout", "Service", "session-123-service")
+                    .expect("planned service"),
+                KubernetesResourceRef::new("checkout", "Service", "session-123-service")
+                    .expect("duplicate planned service"),
+                KubernetesResourceRef::new("checkout", "HTTPRoute", "session-123-route")
+                    .expect("planned route"),
+                KubernetesResourceRef::new("checkout", "HTTPRoute", "session-123-route")
+                    .expect("duplicate planned route"),
+            ])
+            .with_route_selector(
+                RouteSelector::header("x-kply-session", "session-123").expect("route selector"),
+            );
+
+        assert_eq!(plan.planned_resources().len(), 3);
+        assert_eq!(
+            generated_sandbox_manifest_names(&plan),
+            vec![
+                (
+                    "Deployment".to_owned(),
+                    "checkout".to_owned(),
+                    "session-123-workload".to_owned(),
+                ),
+                (
+                    "Service".to_owned(),
+                    "checkout".to_owned(),
+                    "session-123-service".to_owned(),
+                ),
+                (
+                    "ConfigMap".to_owned(),
+                    "checkout".to_owned(),
+                    "session-123-route".to_owned(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn generates_sandbox_route_placeholder_manifest_for_hostname_selector() {
         let plan = test_labeled_session_plan()
             .with_planned_resources([
