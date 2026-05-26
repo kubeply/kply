@@ -98,6 +98,9 @@ fn run() -> Result<ExitCode> {
             command: Some(SessionCommand::Status { session, namespace }),
         }) => return render_session_status(&cli, session, namespace.as_deref()),
         Some(Command::Session {
+            command: Some(SessionCommand::Cleanup { session }),
+        }) => return render_session_cleanup(&cli, session),
+        Some(Command::Session {
             command:
                 Some(SessionCommand::Create {
                     app,
@@ -448,6 +451,31 @@ fn render_session_status(cli: &Cli, session: &str, namespace: Option<&str>) -> R
             "workload: {}/{}",
             session.workload_kind, session.workload_name
         );
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render a non-mutating sandbox session cleanup plan.
+fn render_session_cleanup(cli: &Cli, session: &str) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_session_cleanup_error(&error.to_string(), cli.json),
+    };
+
+    if cli.json {
+        let value = serde_json::json!({
+            "session_id": session_id.as_str(),
+            "status": "planned",
+            "mutation": "not_applied",
+            "cleanup": "not_implemented",
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else if !cli.quiet {
+        println!("kply session cleanup {}", session_id.as_str());
+        println!("status: planned");
+        println!("mutation: not_applied");
+        println!("cleanup: not_implemented");
     }
 
     Ok(ExitCode::SUCCESS)
@@ -1841,6 +1869,24 @@ fn render_session_status_error(message: &str, wants_json: bool) -> Result<ExitCo
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: session status\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render session cleanup input errors.
+fn render_session_cleanup_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "session_cleanup",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: session cleanup\n\n{message}");
     }
 
     Ok(exit_code(EXIT_USAGE))

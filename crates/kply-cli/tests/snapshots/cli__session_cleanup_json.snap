@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 1309
+expression: value
+---
+{
+  "cleanup": "not_implemented",
+  "mutation": "not_applied",
+  "session_id": "checkout-plan",
+  "status": "planned"
+}
