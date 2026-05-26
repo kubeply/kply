@@ -1,0 +1,18 @@
+---
+source: crates/kply-cli/src/main.rs
+assertion_line: 2750
+expression: render_check_run_text_report(&report)
+---
+kply check run checkout-plan
+namespace: shop
+status: failed
+summary: passed=1 failed=1 warning=0 skipped=0
+checks: 2
+  check: session_state
+    target: shop/Deployment/checkout-plan-workload
+    status: passed
+    evidence: expected_status=active observed_status=active
+  check: smoke_http
+    target: http://checkout-plan.shop.svc.cluster.local/healthz
+    status: failed
+    evidence: expected_status_code=200 status_code=503
