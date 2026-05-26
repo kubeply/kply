@@ -5,13 +5,20 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt;
 
+const REQUIRED_OWNERSHIP_LABELS: [&str; 4] = [
+    "kply.dev/app",
+    "kply.dev/managed-by",
+    "kply.dev/session-id",
+    "kply.dev/session-name",
+];
+
 /// Generate a sandbox Kubernetes Deployment manifest from a dry-run session plan.
 pub fn sandbox_deployment_manifest(
     plan: &SessionPlan,
 ) -> Result<SandboxDeploymentManifest, SandboxManifestError> {
     let deployment = unique_planned_resource(plan, "Deployment")?;
     let labels = metadata_entries_to_map(plan.planned_labels());
-    ensure_selector_labels(&labels)?;
+    ensure_ownership_labels(&labels)?;
     let annotations = metadata_entries_to_map(plan.planned_annotations());
 
     Ok(SandboxDeploymentManifest {
@@ -58,7 +65,7 @@ pub fn sandbox_service_manifest_with_port(
 ) -> Result<SandboxServiceManifest, SandboxManifestError> {
     let service = unique_planned_resource(plan, "Service")?;
     let labels = metadata_entries_to_map(plan.planned_labels());
-    ensure_selector_labels(&labels)?;
+    ensure_ownership_labels(&labels)?;
     let annotations = metadata_entries_to_map(plan.planned_annotations());
 
     Ok(SandboxServiceManifest {
@@ -220,6 +227,8 @@ pub enum SandboxManifestError {
     MultipleServiceResources,
     /// The session plan did not include labels for generated selectors.
     MissingSelectorLabels,
+    /// The session plan did not include a required ownership label.
+    MissingOwnershipLabel { key: &'static str },
     /// The requested resource kind is not supported for sandbox manifests.
     UnsupportedResourceKind { kind: String },
     /// The service port name was not a valid Kubernetes DNS label.
@@ -245,6 +254,12 @@ impl fmt::Display for SandboxManifestError {
             }
             Self::MissingSelectorLabels => {
                 formatter.write_str("session plan does not include selector labels")
+            }
+            Self::MissingOwnershipLabel { key } => {
+                write!(
+                    formatter,
+                    "session plan does not include ownership label `{key}`"
+                )
             }
             Self::UnsupportedResourceKind { kind } => {
                 write!(
@@ -291,9 +306,15 @@ fn unique_planned_resource<'a>(
     Ok(resource)
 }
 
-fn ensure_selector_labels(labels: &BTreeMap<String, String>) -> Result<(), SandboxManifestError> {
+fn ensure_ownership_labels(labels: &BTreeMap<String, String>) -> Result<(), SandboxManifestError> {
     if labels.is_empty() {
         return Err(SandboxManifestError::MissingSelectorLabels);
+    }
+
+    for key in REQUIRED_OWNERSHIP_LABELS {
+        if !labels.contains_key(key) {
+            return Err(SandboxManifestError::MissingOwnershipLabel { key });
+        }
     }
 
     Ok(())
@@ -367,6 +388,7 @@ mod tests {
                 MetadataEntry::new_label("kply.dev/app", "checkout").expect("label"),
                 MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label"),
                 MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
+                MetadataEntry::new_label("kply.dev/session-name", "checkout-test").expect("label"),
             ])
             .expect("planned labels")
             .with_planned_annotations([
@@ -459,6 +481,66 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "session plan does not include selector labels"
+        );
+    }
+
+    #[test]
+    fn rejects_sandbox_deployment_manifest_without_ownership_labels() {
+        let plan = test_session_plan()
+            .with_planned_resources([KubernetesResourceRef::new(
+                "checkout",
+                "Deployment",
+                "session-123-workload",
+            )
+            .expect("planned deployment")])
+            .with_planned_labels([
+                MetadataEntry::new_label("kply.dev/app", "checkout").expect("label"),
+                MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label"),
+                MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
+            ])
+            .expect("planned labels");
+
+        let error = sandbox_deployment_manifest(&plan).expect_err("ownership should be required");
+
+        assert_eq!(
+            error,
+            SandboxManifestError::MissingOwnershipLabel {
+                key: "kply.dev/session-name"
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "session plan does not include ownership label `kply.dev/session-name`"
+        );
+    }
+
+    #[test]
+    fn rejects_sandbox_service_manifest_without_ownership_labels() {
+        let plan = test_session_plan()
+            .with_planned_resources([KubernetesResourceRef::new(
+                "checkout",
+                "Service",
+                "session-123-service",
+            )
+            .expect("planned service")])
+            .with_planned_labels([
+                MetadataEntry::new_label("kply.dev/app", "checkout").expect("label"),
+                MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label"),
+                MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
+            ])
+            .expect("planned labels");
+
+        let error = sandbox_service_manifest(&plan).expect_err("ownership should be required");
+
+        assert_eq!(
+            error,
+            SandboxManifestError::MissingOwnershipLabel {
+                key: "kply.dev/session-name"
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "session plan does not include ownership label `kply.dev/session-name`"
         );
     }
 
