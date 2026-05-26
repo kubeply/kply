@@ -12,7 +12,7 @@ use kply_test::{
     EXIT_BLOCKING, EXIT_USAGE, assert_kply_exit_code, kply_cmd, normalize_output, temp_workspace,
     write_fake_kubeconfig, write_temp_file,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SESSION_PLAN_CONFIG: &str = r#"
 version: 1
@@ -79,6 +79,23 @@ fn fake_demo_path(workspace: &Path) -> String {
         set_fake_executable_permissions(&path);
     }
     bin_dir.to_string_lossy().into_owned()
+}
+
+fn fake_kubectl_path(workspace: &Path, exit_code: i32) -> (String, PathBuf) {
+    let bin_dir = workspace.join("bin");
+    let log_path = workspace.join("kubectl.log");
+    std::fs::create_dir_all(&bin_dir).expect("fake PATH bin directory should be created");
+    let path = bin_dir.join("kubectl");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nfirst=1\nfor arg in \"$@\"; do\n  if [ \"$first\" -eq 1 ]; then first=0; else printf '\\t' >> \"$KPLY_FAKE_KUBECTL_LOG\"; fi\n  printf '%s' \"$arg\" >> \"$KPLY_FAKE_KUBECTL_LOG\"\ndone\nprintf '\\n' >> \"$KPLY_FAKE_KUBECTL_LOG\"\necho fake kubectl >&2\nexit {exit_code}\n"
+        ),
+    )
+    .expect("fake kubectl should be written");
+    set_fake_executable_permissions(&path);
+
+    (bin_dir.to_string_lossy().into_owned(), log_path)
 }
 
 #[cfg(unix)]
@@ -265,6 +282,115 @@ fn reports_demo_doctor_missing_tools() {
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
     insta::assert_snapshot!("demo_doctor_missing_tools", normalize_output(&stdout));
+}
+
+#[test]
+fn prints_demo_install_text() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 0);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "install"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("demo_install_text", normalize_output(&output));
+
+    let log = std::fs::read_to_string(log_path).expect("fake kubectl log should be readable");
+    insta::assert_snapshot!("demo_install_kubectl_sequence", normalize_output(&log));
+}
+
+#[test]
+fn prints_demo_install_json() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 0);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "install", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("demo_install_json", value);
+}
+
+#[test]
+fn reports_demo_install_kubectl_failure() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 7);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "install"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("demo_install_kubectl_failure", normalize_output(&output));
+}
+
+#[test]
+fn reports_demo_install_kubectl_failure_json() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 7);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "install", "--json"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    let output = normalize_output(&output);
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("demo_install_kubectl_failure_json", value);
+}
+
+#[test]
+fn reports_demo_install_missing_kubectl() {
+    let output = kply_cmd()
+        .env("PATH", "")
+        .args(["demo", "install"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("demo_install_missing_kubectl", normalize_output(&output));
+}
+
+#[test]
+fn reports_demo_install_missing_kubectl_json() {
+    let output = kply_cmd()
+        .env("PATH", "")
+        .args(["demo", "install", "--json"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("demo_install_missing_kubectl_json", value);
 }
 
 #[test]
@@ -1787,7 +1913,7 @@ fn covers_every_demo_command() {
 
     assert_eq!(
         command_names,
-        ["doctor"],
+        ["doctor", "install"],
         "update demo command tests when the demo command surface changes"
     );
 
@@ -1795,6 +1921,15 @@ fn covers_every_demo_command() {
     kply_cmd()
         .env("PATH", fake_demo_path(workspace.path()))
         .args(["demo", DemoCommand::Doctor.name()])
+        .assert()
+        .success();
+
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 0);
+    kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", log_path)
+        .args(["demo", DemoCommand::Install.name()])
         .assert()
         .success();
 }

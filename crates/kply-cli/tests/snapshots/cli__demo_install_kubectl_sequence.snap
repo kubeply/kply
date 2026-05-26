@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 305
+expression: normalize_output(&log)
+---
+apply	-f	<absolute-path>
+apply	-f	<absolute-path>
+apply	-f	<absolute-path>
+apply	-f	<absolute-path>
+-n	kply-demo	rollout	status	--timeout	5m	deployment/catalog-api
+-n	kply-demo	rollout	status	--timeout	5m	deployment/storefront-web
+-n	kply-demo	rollout	status	--timeout	5m	deployment/checkout-api
