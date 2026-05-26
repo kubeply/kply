@@ -5,6 +5,7 @@ mod demo;
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
+use k8s_openapi::api::apps::v1::Deployment;
 use kply_cli::cli::{
     AppCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand, SessionCommand,
 };
@@ -18,7 +19,7 @@ use kply_core::{
     SessionPolicy, TimeToLive, UnsupportedFeatureWarning, WorkloadRef, sandbox_deployment_manifest,
     sandbox_route_placeholder_manifest, sandbox_service_manifest,
 };
-use kply_k8s::KubeconfigError;
+use kply_k8s::{DeploymentSummary, KubeconfigError, MutationError};
 use serde::Serialize;
 use std::ffi::OsString;
 use std::fmt;
@@ -245,7 +246,55 @@ fn render_session_create(
     };
 
     if apply {
-        return render_session_create_apply_error(cli.json);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let applied = match apply_session_deployment(&plan, |namespace, deployment| {
+            runtime.block_on(create_session_deployment(namespace, deployment))
+        }) {
+            Ok(applied) => applied,
+            Err(SessionCreateApplyError::Manifest(error)) => {
+                return render_session_manifest_error(&error, cli.json);
+            }
+            Err(SessionCreateApplyError::Mutation(error)) => {
+                return render_session_create_apply_error(&error, cli.json);
+            }
+        };
+
+        if cli.json {
+            let value = serde_json::json!({
+                "app": app_name,
+                "session_id": plan.id(),
+                "status": "partially_applied",
+                "mutation": "applied",
+                "apply": true,
+                "created_resources": applied.created_resources,
+                "pending_resources": applied.pending_resources,
+            });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else if !cli.quiet {
+            println!("kply session create {app_name}");
+            println!("session_id: {}", plan.id());
+            println!("status: partially_applied");
+            println!("mutation: applied");
+            println!("apply: true");
+            println!("created_resources: {}", applied.created_resources.len());
+            for resource in &applied.created_resources {
+                println!(
+                    "  created: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
+            println!("pending_resources: {}", applied.pending_resources.len());
+            for resource in &applied.pending_resources {
+                println!(
+                    "  pending: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
+        }
+
+        return Ok(ExitCode::SUCCESS);
     }
 
     if cli.json {
@@ -271,6 +320,72 @@ fn render_session_create(
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Result of applying the first session resource to Kubernetes.
+#[derive(Debug, Serialize)]
+struct SessionCreateApplyResult {
+    created_resources: Vec<SessionManifestSummary>,
+    pending_resources: Vec<SessionManifestSummary>,
+}
+
+/// Error raised while applying the first session resource to Kubernetes.
+#[derive(Debug)]
+enum SessionCreateApplyError {
+    /// Generated session manifests could not be converted for apply.
+    Manifest(SessionManifestBuildError),
+    /// Kubernetes rejected or could not execute the mutation.
+    Mutation(MutationError),
+}
+
+/// Apply the generated sandbox Deployment through an injectable boundary.
+fn apply_session_deployment(
+    plan: &SessionPlan,
+    create_deployment: impl FnOnce(
+        &str,
+        &Deployment,
+    ) -> std::result::Result<DeploymentSummary, MutationError>,
+) -> std::result::Result<SessionCreateApplyResult, SessionCreateApplyError> {
+    let deployment =
+        session_deployment_manifest(plan).map_err(SessionCreateApplyError::Manifest)?;
+    let manifests = session_manifest_summaries(plan).map_err(SessionCreateApplyError::Manifest)?;
+    let Some(deployment_manifest) = manifests
+        .iter()
+        .find(|manifest| manifest.kind == "Deployment")
+    else {
+        return Err(SessionCreateApplyError::Manifest(
+            SessionManifestBuildError::Summary("deployment manifest missing from session"),
+        ));
+    };
+    let deployment_namespace = deployment_manifest.namespace.clone();
+    let pending_resources = manifests
+        .into_iter()
+        .filter(|manifest| manifest.kind != "Deployment")
+        .collect::<Vec<_>>();
+    let created_deployment = create_deployment(&deployment_namespace, &deployment)
+        .map_err(SessionCreateApplyError::Mutation)?;
+
+    Ok(SessionCreateApplyResult {
+        created_resources: vec![SessionManifestSummary {
+            kind: "Deployment".to_owned(),
+            namespace: created_deployment.namespace,
+            name: created_deployment.name,
+        }],
+        pending_resources,
+    })
+}
+
+/// Create the generated sandbox Deployment through the Kubernetes adapter.
+async fn create_session_deployment(
+    namespace: &str,
+    deployment: &Deployment,
+) -> std::result::Result<DeploymentSummary, MutationError> {
+    let client = kply_k8s::load_kube_client().await?;
+    kply_k8s::create_deployment(client, namespace, deployment)
+        .await
+        .map_err(|error| {
+            MutationError::from_kubernetes_api_error("create sandbox Deployment", &error)
+        })
 }
 
 /// Render a deterministic dry-run list of generated sandbox manifests.
@@ -512,6 +627,15 @@ fn session_manifest_values(
     }
 
     Ok(manifests)
+}
+
+/// Build the typed Kubernetes Deployment object used by `session create --apply`.
+fn session_deployment_manifest(
+    plan: &SessionPlan,
+) -> std::result::Result<Deployment, SessionManifestBuildError> {
+    let manifest = sandbox_deployment_manifest(plan)?;
+    let value = serde_json::to_value(manifest).map_err(SessionManifestBuildError::Serialize)?;
+    serde_json::from_value(value).map_err(SessionManifestBuildError::Serialize)
 }
 
 /// Pair generated manifest identities with full Kubernetes object bodies.
@@ -1305,23 +1429,22 @@ fn render_session_plan_config_error(message: &str, wants_json: bool) -> Result<E
     Ok(exit_code(EXIT_BLOCKING))
 }
 
-/// Render session create apply errors while cluster mutation is pending.
-fn render_session_create_apply_error(wants_json: bool) -> Result<ExitCode> {
-    let message = "session create --apply is not implemented yet";
+/// Render session create apply errors while mutating Kubernetes resources.
+fn render_session_create_apply_error(error: &MutationError, wants_json: bool) -> Result<ExitCode> {
     if wants_json {
         let value = serde_json::json!({
             "error": {
-                "code": "session_create",
-                "exit_code": EXIT_BLOCKING,
-                "message": message
+                "code": error.code.as_str(),
+                "exit_code": EXIT_USAGE,
+                "message": error.message
             }
         });
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
-        eprintln!("kply error: session create\n\n{message}");
+        eprintln!("kply error: {}\n\n{}", error.code.as_str(), error.message);
     }
 
-    Ok(exit_code(EXIT_BLOCKING))
+    Ok(exit_code(EXIT_USAGE))
 }
 
 /// Render session manifest generation errors.
@@ -1530,13 +1653,15 @@ fn print_verbose_trace(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::{
-        planned_resource_token, planned_session_annotations, planned_session_checks,
-        planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        planned_session_risk_notes, required_session_permissions, session_token,
-        unsupported_session_feature_warnings, workload_permission_resource,
+        apply_session_deployment, planned_resource_token, planned_session_annotations,
+        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
+        planned_session_resources, planned_session_risk_notes, required_session_permissions,
+        session_plan_from_config, session_token, unsupported_session_feature_warnings,
+        workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{ImageRef, WorkloadRef};
+    use kply_k8s::{DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary};
 
     #[test]
     fn preserves_session_token_suffix_for_long_app_names() {
@@ -1574,6 +1699,65 @@ mod tests {
         assert_eq!(session_token("---", "plan"), "session-plan");
         assert_eq!(session_token("MyApp", "plan"), "myapp-plan");
         assert_eq!(session_token("my__app", "plan"), "my-app-plan");
+    }
+
+    #[test]
+    fn applies_session_deployment_through_injected_boundary() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("ghcr.io/acme/checkout:next".to_owned()),
+            RouteStrategy::Header,
+        );
+        let plan = session_plan_from_config(&app, None, None, None, None)
+            .unwrap_or_else(|_| panic!("session plan should be created"));
+
+        let applied = apply_session_deployment(&plan, |namespace, deployment| {
+            assert_eq!(namespace, "shop");
+            assert_eq!(
+                deployment.metadata.name.as_deref(),
+                Some("checkout-plan-workload")
+            );
+            assert_eq!(deployment.metadata.namespace.as_deref(), Some("shop"));
+
+            Ok(DeploymentSummary {
+                namespace: namespace.to_owned(),
+                name: "checkout-plan-workload".to_owned(),
+                replicas: Some(1),
+                available_replicas: None,
+                ready_replicas: None,
+                updated_replicas: None,
+                images: vec!["ghcr.io/acme/checkout:next".to_owned()],
+                probes: Vec::new(),
+                resources: Vec::new(),
+                rollout: DeploymentRolloutSummary {
+                    phase: DeploymentRolloutPhase::Unknown,
+                    generation: None,
+                    observed_generation: None,
+                    desired_replicas: Some(1),
+                    ready_replicas: None,
+                    available_replicas: None,
+                    updated_replicas: None,
+                    unavailable_replicas: None,
+                    conditions: Vec::new(),
+                },
+            })
+        })
+        .expect("session Deployment apply should succeed");
+
+        assert_eq!(applied.created_resources.len(), 1);
+        assert_eq!(applied.created_resources[0].kind, "Deployment");
+        assert_eq!(applied.created_resources[0].namespace, "shop");
+        assert_eq!(applied.created_resources[0].name, "checkout-plan-workload");
+        assert_eq!(applied.pending_resources.len(), 2);
+        assert!(
+            applied
+                .pending_resources
+                .iter()
+                .any(|resource| resource.kind == "Service")
+        );
     }
 
     #[test]
