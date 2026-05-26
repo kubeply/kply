@@ -1,5 +1,6 @@
 //! Smoke tests for local demo Kubernetes manifests.
 
+use kply_config::KplyConfig;
 use kply_test::fixture_path;
 use serde::Deserialize;
 use serde_norway::Value;
@@ -7,6 +8,7 @@ use std::collections::BTreeMap;
 
 const DEMO_NAMESPACE: &str = "kply-demo";
 const PART_OF_LABEL: &str = "app.kubernetes.io/part-of";
+const DEMO_CONFIG: &str = "demo/ecommerce-basic/kply.yaml";
 
 /// Demo manifest fixture paths covered by the smoke tests.
 const DEMO_MANIFESTS: [&str; 6] = [
@@ -76,6 +78,28 @@ fn demo_resources_stay_in_the_dedicated_namespace() {
                 resource.identity()
             );
         }
+    }
+}
+
+/// Ensure the demo app config points only at the isolated demo namespace.
+#[test]
+fn demo_config_apps_stay_in_the_dedicated_namespace() {
+    let path = fixture_path(DEMO_CONFIG);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("reading {} failed: {error}", path.display()));
+    let config: KplyConfig = serde_norway::from_str(&source)
+        .unwrap_or_else(|error| panic!("parsing {} failed: {error}", path.display()));
+
+    let apps = config.apps().entries();
+    assert!(!apps.is_empty(), "demo config should define demo apps");
+
+    for app in apps {
+        assert_eq!(
+            app.namespace(),
+            DEMO_NAMESPACE,
+            "{} app config must stay inside the dedicated demo namespace",
+            app.name()
+        );
     }
 }
 
