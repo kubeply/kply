@@ -120,6 +120,11 @@ impl Command {
 /// Sandbox session commands.
 #[derive(Clone, Debug, Subcommand)]
 pub enum SessionCommand {
+    /// Plan cleanup of one sandbox session.
+    Cleanup {
+        /// Session id to clean up.
+        session: String,
+    },
     /// List sandbox sessions recorded in cluster metadata.
     List {
         /// Namespace to inspect for Kply sandbox sessions.
@@ -197,6 +202,7 @@ impl SessionCommand {
     /// Return the stable command name used in CLI output.
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::Cleanup { .. } => "cleanup",
             Self::List { .. } => "list",
             Self::Status { .. } => "status",
             Self::Create { .. } => "create",

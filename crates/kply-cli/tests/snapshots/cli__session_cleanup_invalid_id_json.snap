@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 1338
+expression: value
+---
+{
+  "error": {
+    "code": "session_cleanup",
+    "exit_code": 2,
+    "message": "session id must start and end with a lowercase ASCII letter or digit"
+  }
+}

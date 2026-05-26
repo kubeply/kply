@@ -1281,6 +1281,64 @@ fn rejects_invalid_session_status_id_json() {
 }
 
 #[test]
+fn prints_session_cleanup_text() {
+    let output = kply_cmd()
+        .args(["session", "cleanup", "checkout-plan"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_cleanup_text", output);
+}
+
+#[test]
+fn prints_session_cleanup_json() {
+    let output = kply_cmd()
+        .args(["session", "cleanup", "checkout-plan", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("session_cleanup_json", value);
+}
+
+#[test]
+fn rejects_invalid_session_cleanup_id() {
+    let output = kply_cmd()
+        .args(["session", "cleanup", "Checkout_Plan"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_cleanup_invalid_id", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_invalid_session_cleanup_id_json() {
+    let output = kply_cmd()
+        .args(["session", "cleanup", "Checkout_Plan", "--json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_cleanup_invalid_id_json", value);
+}
+
+#[test]
 fn prints_session_manifests_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -2546,9 +2604,21 @@ fn covers_every_session_command() {
 
     assert_eq!(
         command_names,
-        ["create", "list", "manifests", "plan", "status"],
+        ["cleanup", "create", "list", "manifests", "plan", "status"],
         "update session command tests when the session command surface changes"
     );
+
+    kply_cmd()
+        .args([
+            "session",
+            SessionCommand::Cleanup {
+                session: String::new(),
+            }
+            .name(),
+            "checkout-plan",
+        ])
+        .assert()
+        .success();
 
     with_session_plan_config(|config_path| {
         kply_cmd()
