@@ -1034,6 +1034,68 @@ mod tests {
     }
 
     #[test]
+    /// Rejects non-Gateway parent resources.
+    fn rejects_non_gateway_parent_resources() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Service", "not-a-gateway");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::ParentKind {
+                kind: "Service".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected Gateway parent resource, found Service"
+        );
+    }
+
+    #[test]
+    /// Rejects non-Service backend resources.
+    fn rejects_non_service_backend_resources() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Gateway", "public");
+        let service = resource("shop", "Deployment", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::BackendKind {
+                kind: "Deployment".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected Service backend resource, found Deployment"
+        );
+    }
+
+    #[test]
     /// Rejects cross-namespace Service backends.
     fn rejects_cross_namespace_backend_services() {
         let route = resource("shop", "HTTPRoute", "checkout-kply");
