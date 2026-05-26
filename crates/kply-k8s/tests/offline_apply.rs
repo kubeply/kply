@@ -127,6 +127,24 @@ async fn deletes_session_resources_with_label_selectors_from_mocked_kubernetes_a
 }
 
 #[tokio::test]
+async fn lists_session_cleanup_resources_without_deleting_them() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_session_cleanup_dry_run_api(handle);
+
+    let resources = kply_k8s::list_session_cleanup_resources(client, "shop", "checkout-plan")
+        .await
+        .expect("mocked session cleanup dry-run should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(resources.len(), 2);
+    assert_eq!(resources[0].kind, "Service");
+    assert_eq!(resources[0].name, "checkout-plan-service");
+    assert_eq!(resources[1].kind, "Deployment");
+    assert_eq!(resources[1].name, "checkout-plan-workload");
+}
+
+#[tokio::test]
 async fn treats_session_cleanup_delete_not_found_as_already_deleted() {
     let (client, handle) = mock_client();
     let server = spawn_mock_session_cleanup_not_found_api(handle);
@@ -470,6 +488,49 @@ fn spawn_mock_session_cleanup_api(handle: MockKubeHandle) -> JoinHandle<()> {
                     "session cleanup Deployment response should serialize",
                 )))
                 .expect("mock Deployment delete response should build"),
+        );
+    })
+}
+
+fn spawn_mock_session_cleanup_dry_run_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/shop/services");
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_service_list_fixture())
+                        .expect("session cleanup Service list response should serialize"),
+                ))
+                .expect("mock Service list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_deployment_list_fixture())
+                        .expect("session cleanup Deployment list response should serialize"),
+                ))
+                .expect("mock Deployment list response should build"),
         );
     })
 }
