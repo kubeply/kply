@@ -1,0 +1,32 @@
+---
+source: crates/kply-core/src/manifest.rs
+expression: value
+---
+{
+  "apiVersion": "v1",
+  "data": {
+    "kply.dev/header-name": "x-kply-session",
+    "kply.dev/header-value": "session-123",
+    "kply.dev/placeholder-kind": "HTTPRoute",
+    "kply.dev/route-resource": "checkout/HTTPRoute/session-123-route",
+    "kply.dev/selector-kind": "header",
+    "kply.dev/service-resource": "checkout/Service/session-123-service"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "annotations": {
+      "kply.dev/image": "registry.example.com/checkout/api:v2",
+      "kply.dev/route-strategy": "header",
+      "kply.dev/workload": "checkout/Deployment/checkout-api"
+    },
+    "labels": {
+      "app.kubernetes.io/component": "api",
+      "kply.dev/app": "checkout",
+      "kply.dev/managed-by": "kply",
+      "kply.dev/session-id": "session-123",
+      "kply.dev/session-name": "checkout-test"
+    },
+    "name": "session-123-route",
+    "namespace": "checkout"
+  }
+}
