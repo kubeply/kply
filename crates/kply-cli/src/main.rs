@@ -87,6 +87,7 @@ fn run() -> Result<ExitCode> {
             command:
                 Some(SessionCommand::Create {
                     app,
+                    apply,
                     image,
                     namespace,
                     time_to_live,
@@ -96,6 +97,7 @@ fn run() -> Result<ExitCode> {
             return render_session_create(
                 &cli,
                 app,
+                *apply,
                 image.as_deref(),
                 namespace.as_deref(),
                 time_to_live.as_deref(),
@@ -208,6 +210,7 @@ fn run() -> Result<ExitCode> {
 fn render_session_create(
     cli: &Cli,
     app_name: &str,
+    apply: bool,
     image: Option<&str>,
     namespace: Option<&str>,
     time_to_live: Option<&str>,
@@ -241,12 +244,17 @@ fn render_session_create(
         }
     };
 
+    if apply {
+        return render_session_create_apply_error(cli.json);
+    }
+
     if cli.json {
         let value = serde_json::json!({
             "app": app_name,
             "session_id": plan.id(),
             "status": "planned",
             "mutation": "not_applied",
+            "apply": false,
             "planned_resources": plan.planned_resources(),
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -255,6 +263,7 @@ fn render_session_create(
         println!("session_id: {}", plan.id());
         println!("status: planned");
         println!("mutation: not_applied");
+        println!("apply: false");
         println!("planned_resources: {}", plan.planned_resources().len());
         for resource in plan.planned_resources() {
             println!("  resource: {resource}");
@@ -1291,6 +1300,25 @@ fn render_session_plan_config_error(message: &str, wants_json: bool) -> Result<E
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: config\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_BLOCKING))
+}
+
+/// Render session create apply errors while cluster mutation is pending.
+fn render_session_create_apply_error(wants_json: bool) -> Result<ExitCode> {
+    let message = "session create --apply is not implemented yet";
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "session_create",
+                "exit_code": EXIT_BLOCKING,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: session create\n\n{message}");
     }
 
     Ok(exit_code(EXIT_BLOCKING))

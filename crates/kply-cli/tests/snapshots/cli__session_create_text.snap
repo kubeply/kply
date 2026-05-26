@@ -6,6 +6,7 @@ kply session create checkout
 session_id: checkout-plan
 status: planned
 mutation: not_applied
+apply: false
 planned_resources: 3
   resource: shop/Deployment/checkout-plan-workload
   resource: shop/HTTPRoute/checkout-plan-route
