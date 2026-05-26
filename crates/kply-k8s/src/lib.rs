@@ -649,6 +649,21 @@ pub async fn create_deployment(
     Ok(deployment_summary(&created))
 }
 
+/// Create one Service in a namespace and return its observed summary.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API create request fails.
+pub async fn create_service(
+    client: Client,
+    namespace: &str,
+    service: &Service,
+) -> Result<ServiceSummary, kube::Error> {
+    let services: Api<Service> = Api::namespaced(client, namespace);
+    let created = services.create(&PostParams::default(), service).await?;
+    Ok(service_summary(&created))
+}
+
 /// Return a discovered Deployment summary matching a requested workload.
 ///
 /// # Errors
