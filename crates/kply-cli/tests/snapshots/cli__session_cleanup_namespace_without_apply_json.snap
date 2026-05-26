@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 1474
+expression: value
+---
+{
+  "error": {
+    "code": "session_cleanup",
+    "exit_code": 2,
+    "message": "--namespace requires --apply"
+  }
+}

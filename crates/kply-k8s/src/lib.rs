@@ -11,7 +11,7 @@ use kply_core::WorkloadRef;
 pub use kube::config::KubeconfigError;
 use kube::{
     Api, Client, Config, ResourceExt,
-    api::{ListParams, Patch, PatchParams, PostParams},
+    api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
     config::{KubeConfigOptions, Kubeconfig},
     core::{ApiResource, DynamicObject, GroupVersionKind},
 };
@@ -249,11 +249,61 @@ impl fmt::Display for MutationError {
 
 impl Error for MutationError {}
 
+/// Error raised while deleting session resources.
+#[derive(Debug)]
+pub struct CleanupError {
+    /// Kubernetes API error raised by the failed cleanup operation.
+    source: kube::Error,
+    /// Resources whose delete requests were accepted before the failure.
+    pub deletion_accepted_resources: Vec<ResourceDeletionSummary>,
+    /// Resources not yet deleted because the failure stopped cleanup.
+    pub pending_resources: Vec<ResourceDeletionSummary>,
+}
+
+impl CleanupError {
+    /// Return the Kubernetes error that stopped cleanup.
+    pub const fn source(&self) -> &kube::Error {
+        &self.source
+    }
+}
+
+impl fmt::Display for CleanupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.source)
+    }
+}
+
+impl Error for CleanupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Summary of one Kubernetes resource selected for deletion.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ResourceDeletionSummary {
+    /// Kubernetes resource kind selected for deletion.
+    pub kind: String,
+    /// Kubernetes namespace containing the selected resource.
+    pub namespace: String,
+    /// Kubernetes resource name selected for deletion.
+    pub name: String,
+}
+
 /// Read-only Kubernetes cluster facts resolved from kubeconfig.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ClusterInfo {
     /// Kubernetes API server URL selected by kubeconfig resolution.
     pub cluster_url: String,
+    /// Default namespace selected by the active kubeconfig context.
+    pub default_namespace: String,
+}
+
+/// Kubernetes mutation client plus facts from the same kubeconfig resolution.
+#[derive(Clone)]
+pub struct LoadedMutationClient {
+    /// Kubernetes client built from the resolved kubeconfig.
+    pub client: Client,
     /// Default namespace selected by the active kubeconfig context.
     pub default_namespace: String,
 }
@@ -722,9 +772,7 @@ pub async fn get_session(
     session_id: &str,
 ) -> Result<Option<SessionSummary>, kube::Error> {
     let deployments: Api<Deployment> = Api::namespaced(client, namespace);
-    let selector = format!(
-        "{KPLY_MANAGED_BY_LABEL}={KPLY_MANAGED_BY_VALUE},{KPLY_SESSION_ID_LABEL}={session_id}"
-    );
+    let selector = session_label_selector(session_id);
     let mut sessions = deployments
         .list(&ListParams::default().labels(&selector))
         .await?
@@ -735,6 +783,105 @@ pub async fn get_session(
     Ok(sessions
         .into_iter()
         .find(|session| session.id == session_id))
+}
+
+/// Delete Kply sandbox resources for one session in one namespace.
+///
+/// # Errors
+///
+/// Returns [`CleanupError`] when any Kubernetes list or delete request fails.
+pub async fn delete_session_resources(
+    client: Client,
+    namespace: &str,
+    session_id: &str,
+) -> Result<Vec<ResourceDeletionSummary>, CleanupError> {
+    let selector = session_label_selector(session_id);
+    let list_params = ListParams::default().labels(&selector);
+    let delete_params = DeleteParams::background();
+    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+
+    let mut selected_services = services
+        .list(&list_params)
+        .await
+        .map_err(|error| CleanupError {
+            source: error,
+            deletion_accepted_resources: Vec::new(),
+            pending_resources: Vec::new(),
+        })?
+        .iter()
+        .map(|service| ResourceDeletionSummary {
+            kind: "Service".to_owned(),
+            namespace: service.namespace().unwrap_or_else(|| namespace.to_owned()),
+            name: service.name_any(),
+        })
+        .collect::<Vec<_>>();
+    selected_services.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut selected_deployments = deployments
+        .list(&list_params)
+        .await
+        .map_err(|error| CleanupError {
+            source: error,
+            deletion_accepted_resources: Vec::new(),
+            pending_resources: selected_services.clone(),
+        })?
+        .iter()
+        .map(|deployment| ResourceDeletionSummary {
+            kind: "Deployment".to_owned(),
+            namespace: deployment
+                .namespace()
+                .unwrap_or_else(|| namespace.to_owned()),
+            name: deployment.name_any(),
+        })
+        .collect::<Vec<_>>();
+    selected_deployments.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut deleted_resources =
+        Vec::with_capacity(selected_services.len() + selected_deployments.len());
+    for (index, service) in selected_services.iter().cloned().enumerate() {
+        if let Err(error) = services.delete(&service.name, &delete_params).await {
+            if is_kubernetes_not_found(&error) {
+                deleted_resources.push(service);
+                continue;
+            }
+            let mut pending_resources = vec![service];
+            pending_resources.extend(selected_services[index + 1..].iter().cloned());
+            pending_resources.extend(selected_deployments.iter().cloned());
+
+            return Err(CleanupError {
+                source: error,
+                deletion_accepted_resources: deleted_resources,
+                pending_resources,
+            });
+        }
+
+        deleted_resources.push(service);
+    }
+    for (index, deployment) in selected_deployments.iter().cloned().enumerate() {
+        if let Err(error) = deployments.delete(&deployment.name, &delete_params).await {
+            if is_kubernetes_not_found(&error) {
+                deleted_resources.push(deployment);
+                continue;
+            }
+            let mut pending_resources = vec![deployment];
+            pending_resources.extend(selected_deployments[index + 1..].iter().cloned());
+
+            return Err(CleanupError {
+                source: error,
+                deletion_accepted_resources: deleted_resources,
+                pending_resources,
+            });
+        }
+
+        deleted_resources.push(deployment);
+    }
+
+    Ok(deleted_resources)
+}
+
+fn is_kubernetes_not_found(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(api_error) if api_error.code == 404)
 }
 
 /// Create one Deployment in a namespace and return its observed summary.
@@ -1042,6 +1189,10 @@ pub fn session_summary_from_deployment(deployment: &Deployment) -> Option<Sessio
         workload_kind: "Deployment".to_owned(),
         workload_name: deployment.name_any(),
     })
+}
+
+fn session_label_selector(session_id: &str) -> String {
+    format!("{KPLY_MANAGED_BY_LABEL}={KPLY_MANAGED_BY_VALUE},{KPLY_SESSION_ID_LABEL}={session_id}")
 }
 
 /// Convert a Kubernetes [`Deployment`] into basic rollout status.
@@ -1561,6 +1712,25 @@ pub async fn load_kube_client() -> Result<Client, MutationError> {
         .await
         .map_err(|error| MutationError::from_kubeconfig_error(&error))?;
     Client::try_from(config).map_err(|error| MutationError::from_kubernetes_client_error(&error))
+}
+
+/// Load a Kubernetes mutation client and default namespace from one kubeconfig.
+///
+/// # Errors
+///
+/// Returns [`MutationError`] when kubeconfig resolution or client construction
+/// fails.
+pub async fn load_mutation_client() -> Result<LoadedMutationClient, MutationError> {
+    let config = load_kube_config()
+        .await
+        .map_err(|error| MutationError::from_kubeconfig_error(&error))?;
+    let default_namespace = config.default_namespace.clone();
+    let client = Client::try_from(config)
+        .map_err(|error| MutationError::from_kubernetes_client_error(&error))?;
+    Ok(LoadedMutationClient {
+        client,
+        default_namespace,
+    })
 }
 
 /// Load a Kubernetes client for read-only discovery operations.

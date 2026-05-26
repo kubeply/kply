@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 1449
+expression: normalize_output(&stderr)
+---
+kply error: session cleanup
+
+--namespace requires --apply

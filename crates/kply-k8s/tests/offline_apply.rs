@@ -8,7 +8,7 @@ use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use kube::client::Body;
-use serde_json::json;
+use serde_json::{json, to_vec};
 use tokio::task::JoinHandle;
 use tower_test::mock::{self, Handle};
 
@@ -104,6 +104,66 @@ async fn patches_service_annotations_with_mocked_kubernetes_api() {
 
     assert_eq!(summary.namespace, "shop");
     assert_eq!(summary.name, "checkout-plan-service");
+}
+
+#[tokio::test]
+async fn deletes_session_resources_with_label_selectors_from_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_session_cleanup_api(handle);
+
+    let deleted_resources = kply_k8s::delete_session_resources(client, "shop", "checkout-plan")
+        .await
+        .expect("mocked session cleanup should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(deleted_resources.len(), 2);
+    assert_eq!(deleted_resources[0].kind, "Service");
+    assert_eq!(deleted_resources[0].namespace, "shop");
+    assert_eq!(deleted_resources[0].name, "checkout-plan-service");
+    assert_eq!(deleted_resources[1].kind, "Deployment");
+    assert_eq!(deleted_resources[1].namespace, "shop");
+    assert_eq!(deleted_resources[1].name, "checkout-plan-workload");
+}
+
+#[tokio::test]
+async fn treats_session_cleanup_delete_not_found_as_already_deleted() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_session_cleanup_not_found_api(handle);
+
+    let deleted_resources = kply_k8s::delete_session_resources(client, "shop", "checkout-plan")
+        .await
+        .expect("mocked session cleanup should treat NotFound as already deleted");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(deleted_resources.len(), 2);
+    assert_eq!(deleted_resources[0].kind, "Service");
+    assert_eq!(deleted_resources[0].name, "checkout-plan-service");
+    assert_eq!(deleted_resources[1].kind, "Deployment");
+    assert_eq!(deleted_resources[1].name, "checkout-plan-workload");
+}
+
+#[tokio::test]
+async fn preserves_partial_session_cleanup_progress_on_later_delete_failure() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_partial_session_cleanup_failure_api(handle);
+
+    let error = kply_k8s::delete_session_resources(client, "shop", "checkout-plan")
+        .await
+        .expect_err("mocked partial cleanup should fail");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(error.deletion_accepted_resources.len(), 1);
+    assert_eq!(error.deletion_accepted_resources[0].kind, "Service");
+    assert_eq!(
+        error.deletion_accepted_resources[0].name,
+        "checkout-plan-service"
+    );
+    assert_eq!(error.pending_resources.len(), 1);
+    assert_eq!(error.pending_resources[0].kind, "Deployment");
+    assert_eq!(error.pending_resources[0].name, "checkout-plan-workload");
 }
 
 fn mock_client() -> (Client, MockKubeHandle) {
@@ -207,7 +267,7 @@ fn spawn_mock_deployment_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
             Response::builder()
                 .status(201)
                 .body(Body::from(
-                    serde_json::to_vec(&sandbox_deployment())
+                    to_vec(&sandbox_deployment())
                         .expect("sandbox Deployment response should serialize"),
                 ))
                 .expect("mock Deployment create response should build"),
@@ -233,7 +293,7 @@ fn spawn_mock_deployment_get_api(handle: MockKubeHandle) -> JoinHandle<()> {
             Response::builder()
                 .status(200)
                 .body(Body::from(
-                    serde_json::to_vec(&sandbox_deployment())
+                    to_vec(&sandbox_deployment())
                         .expect("sandbox Deployment response should serialize"),
                 ))
                 .expect("mock Deployment get response should build"),
@@ -265,7 +325,7 @@ fn spawn_mock_deployment_annotation_patch_api(handle: MockKubeHandle) -> JoinHan
             Response::builder()
                 .status(200)
                 .body(Body::from(
-                    serde_json::to_vec(&sandbox_deployment())
+                    to_vec(&sandbox_deployment())
                         .expect("sandbox Deployment response should serialize"),
                 ))
                 .expect("mock Deployment patch response should build"),
@@ -294,8 +354,7 @@ fn spawn_mock_service_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
             Response::builder()
                 .status(201)
                 .body(Body::from(
-                    serde_json::to_vec(&sandbox_service())
-                        .expect("sandbox Service response should serialize"),
+                    to_vec(&sandbox_service()).expect("sandbox Service response should serialize"),
                 ))
                 .expect("mock Service create response should build"),
         );
@@ -326,12 +385,337 @@ fn spawn_mock_service_annotation_patch_api(handle: MockKubeHandle) -> JoinHandle
             Response::builder()
                 .status(200)
                 .body(Body::from(
-                    serde_json::to_vec(&sandbox_service())
-                        .expect("sandbox Service response should serialize"),
+                    to_vec(&sandbox_service()).expect("sandbox Service response should serialize"),
                 ))
                 .expect("mock Service patch response should build"),
         );
     })
+}
+
+fn spawn_mock_session_cleanup_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/shop/services");
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_service_list_fixture())
+                        .expect("session cleanup Service list response should serialize"),
+                ))
+                .expect("mock Service list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_deployment_list_fixture())
+                        .expect("session cleanup Deployment list response should serialize"),
+                ))
+                .expect("mock Deployment list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service delete request");
+        assert_eq!(request.method(), Method::DELETE);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/shop/services/checkout-plan-service"
+        );
+        assert_session_cleanup_background_delete(request).await;
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_service())
+                        .expect("session cleanup Service response should serialize"),
+                ))
+                .expect("mock Service delete response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment delete request");
+        assert_eq!(request.method(), Method::DELETE);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        assert_session_cleanup_background_delete(request).await;
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(to_vec(&session_cleanup_deployment()).expect(
+                    "session cleanup Deployment response should serialize",
+                )))
+                .expect("mock Deployment delete response should build"),
+        );
+    })
+}
+
+fn spawn_mock_session_cleanup_not_found_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/shop/services");
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_service_list_fixture())
+                        .expect("session cleanup Service list response should serialize"),
+                ))
+                .expect("mock Service list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_deployment_list_fixture())
+                        .expect("session cleanup Deployment list response should serialize"),
+                ))
+                .expect("mock Deployment list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service delete request");
+        assert_eq!(request.method(), Method::DELETE);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/shop/services/checkout-plan-service"
+        );
+        assert_session_cleanup_background_delete(request).await;
+        send.send_response(
+            Response::builder()
+                .status(404)
+                .body(Body::from(
+                    to_vec(&json!({
+                        "apiVersion": "v1",
+                        "kind": "Status",
+                        "status": "Failure",
+                        "reason": "NotFound",
+                        "message": "services \"checkout-plan-service\" not found",
+                        "code": 404
+                    }))
+                    .expect("mock Status response should serialize"),
+                ))
+                .expect("mock Service delete NotFound response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment delete request");
+        assert_eq!(request.method(), Method::DELETE);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        assert_session_cleanup_background_delete(request).await;
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(to_vec(&session_cleanup_deployment()).expect(
+                    "session cleanup Deployment response should serialize",
+                )))
+                .expect("mock Deployment delete response should build"),
+        );
+    })
+}
+
+fn spawn_mock_partial_session_cleanup_failure_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/shop/services");
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_service_list_fixture())
+                        .expect("session cleanup Service list response should serialize"),
+                ))
+                .expect("mock Service list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment list request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        assert_session_cleanup_label_selector(&request);
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_deployment_list_fixture())
+                        .expect("session cleanup Deployment list response should serialize"),
+                ))
+                .expect("mock Deployment list response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service delete request");
+        assert_eq!(request.method(), Method::DELETE);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/shop/services/checkout-plan-service"
+        );
+        assert_session_cleanup_background_delete(request).await;
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&session_cleanup_service())
+                        .expect("session cleanup Service response should serialize"),
+                ))
+                .expect("mock Service delete response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment delete request");
+        assert_eq!(request.method(), Method::DELETE);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        assert_session_cleanup_background_delete(request).await;
+        send.send_response(
+            Response::builder()
+                .status(500)
+                .body(Body::from(
+                    to_vec(&json!({
+                        "apiVersion": "v1",
+                        "kind": "Status",
+                        "status": "Failure",
+                        "reason": "InternalError",
+                        "message": "mock delete failed",
+                        "code": 500
+                    }))
+                    .expect("mock Status response should serialize"),
+                ))
+                .expect("mock Deployment delete failure response should build"),
+        );
+    })
+}
+
+fn assert_session_cleanup_label_selector(request: &Request<Body>) {
+    let query = request
+        .uri()
+        .query()
+        .expect("session cleanup list should include a label selector");
+    assert!(
+        query.contains("kply.dev%2Fmanaged-by%3Dkply"),
+        "session cleanup should filter by Kply ownership"
+    );
+    assert!(
+        query.contains("kply.dev%2Fsession-id%3Dcheckout-plan"),
+        "session cleanup should filter by session id"
+    );
+}
+
+async fn assert_session_cleanup_background_delete(request: Request<Body>) {
+    let query = request.uri().query().unwrap_or_default().to_owned();
+    let body = request
+        .into_body()
+        .collect_bytes()
+        .await
+        .expect("session cleanup delete request body should be collectable");
+    let body = String::from_utf8(body.to_vec())
+        .expect("session cleanup delete request body should be UTF-8");
+    assert!(
+        query.contains("propagationPolicy=Background")
+            || body.contains(r#""propagationPolicy":"Background""#),
+        "session cleanup deletes should use background propagation"
+    );
+}
+
+fn session_cleanup_service_list_fixture() -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "ServiceList",
+        "items": [session_cleanup_service()]
+    })
+}
+
+fn session_cleanup_deployment_list_fixture() -> serde_json::Value {
+    json!({
+        "apiVersion": "apps/v1",
+        "kind": "DeploymentList",
+        "items": [session_cleanup_deployment()]
+    })
+}
+
+fn session_cleanup_service() -> Service {
+    let mut service = sandbox_service();
+    service.metadata.labels = Some(BTreeMap::from([
+        ("kply.dev/managed-by".to_owned(), "kply".to_owned()),
+        ("kply.dev/session-id".to_owned(), "checkout-plan".to_owned()),
+    ]));
+    service
+}
+
+fn session_cleanup_deployment() -> Deployment {
+    let mut deployment = sandbox_deployment();
+    deployment.metadata.labels = Some(BTreeMap::from([
+        ("kply.dev/managed-by".to_owned(), "kply".to_owned()),
+        ("kply.dev/session-id".to_owned(), "checkout-plan".to_owned()),
+    ]));
+    deployment
 }
 
 fn assert_deployment_request_body(body: &[u8]) {
