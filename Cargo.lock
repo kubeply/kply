@@ -663,6 +663,7 @@ dependencies = [
  "kply-core",
  "kply-k8s",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

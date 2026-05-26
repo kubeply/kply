@@ -1,9 +1,19 @@
 //! Routing adapters for agent and test traffic isolation.
 
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
+use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
 use kply_k8s::{GatewayClassSummary, GatewaySummary, HttpRouteSummary};
 use serde::Serialize;
+
+const GATEWAY_API_VERSION: &str = "gateway.networking.k8s.io/v1";
+const HTTP_ROUTE_KIND: &str = "HTTPRoute";
+const GATEWAY_KIND: &str = "Gateway";
+const SERVICE_KIND: &str = "Service";
 
 /// Successful or missing Gateway API discovery lists.
 #[derive(Clone, Copy, Debug)]
@@ -128,6 +138,139 @@ pub enum GatewayRouteCapabilityLimitation {
     NoHttpCompatibleListener,
 }
 
+/// Input for generating a temporary Gateway API HTTPRoute manifest.
+#[derive(Clone, Copy, Debug)]
+pub struct GatewayHttpRouteManifestInput<'a> {
+    /// Planned HTTPRoute resource to create for the sandbox session.
+    pub route: &'a KubernetesResourceRef,
+    /// Gateway parent that should receive the temporary route attachment.
+    pub parent_gateway: &'a KubernetesResourceRef,
+    /// Service backend that should receive matching sandbox traffic.
+    pub backend_service: &'a KubernetesResourceRef,
+    /// Backend Service port used by the temporary route.
+    pub backend_port: u16,
+    /// Request selector that isolates sandbox traffic from normal users.
+    pub selector: &'a RouteSelector,
+    /// Metadata labels to attach to the temporary HTTPRoute.
+    pub labels: &'a [MetadataEntry],
+    /// Metadata annotations to attach to the temporary HTTPRoute.
+    pub annotations: &'a [MetadataEntry],
+}
+
+/// Temporary Gateway API HTTPRoute manifest for a sandbox session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayHttpRouteManifest {
+    /// Gateway API version for the HTTPRoute resource.
+    pub api_version: &'static str,
+    /// Kubernetes resource kind for this manifest.
+    pub kind: &'static str,
+    /// Kubernetes metadata for the generated HTTPRoute.
+    pub metadata: GatewayHttpRouteMetadata,
+    /// Gateway API HTTPRoute specification.
+    pub spec: GatewayHttpRouteSpec,
+}
+
+/// Kubernetes metadata for a temporary Gateway API HTTPRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayHttpRouteMetadata {
+    /// Namespace that contains the temporary HTTPRoute.
+    pub namespace: String,
+    /// Name of the temporary HTTPRoute.
+    pub name: String,
+    /// Labels attached to the temporary HTTPRoute.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// Annotations attached to the temporary HTTPRoute.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub annotations: BTreeMap<String, String>,
+}
+
+/// Gateway API HTTPRoute spec for a sandbox session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayHttpRouteSpec {
+    /// Parent Gateway references that should attach this route.
+    pub parent_refs: Vec<GatewayHttpRouteParentRef>,
+    /// Hostnames matched by this route when host preview routing is used.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hostnames: Vec<String>,
+    /// Routing rules that forward matching traffic to the sandbox backend.
+    pub rules: Vec<GatewayHttpRouteRule>,
+}
+
+/// Gateway API parent reference for a temporary HTTPRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayHttpRouteParentRef {
+    /// Referenced parent kind.
+    pub kind: &'static str,
+    /// Referenced parent Gateway name.
+    pub name: String,
+    /// Referenced parent Gateway namespace when it differs from the route.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
+/// Gateway API HTTPRoute rule for sandbox traffic.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayHttpRouteRule {
+    /// Request matches that should select sandbox traffic.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub matches: Vec<GatewayHttpRouteMatch>,
+    /// Service backends receiving the matched traffic.
+    pub backend_refs: Vec<GatewayHttpRouteBackendRef>,
+}
+
+/// Gateway API HTTPRoute match for sandbox traffic.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayHttpRouteMatch {
+    /// Header matchers for header-isolated sandbox traffic.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<GatewayHttpRouteHeaderMatch>,
+}
+
+/// Gateway API HTTPRoute header matcher.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayHttpRouteHeaderMatch {
+    /// Gateway API header match type.
+    #[serde(rename = "type")]
+    pub match_type: &'static str,
+    /// HTTP header name to match.
+    pub name: String,
+    /// HTTP header value to match exactly.
+    pub value: String,
+}
+
+/// Gateway API HTTPRoute backend reference.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayHttpRouteBackendRef {
+    /// Referenced backend kind.
+    pub kind: &'static str,
+    /// Referenced backend Service name.
+    pub name: String,
+    /// Referenced backend Service port.
+    pub port: u16,
+}
+
+/// Error returned while generating a temporary Gateway API HTTPRoute manifest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GatewayHttpRouteManifestError {
+    /// The planned route resource is not an HTTPRoute.
+    RouteKind { kind: String },
+    /// The parent resource is not a Gateway.
+    ParentKind { kind: String },
+    /// The backend resource is not a Service.
+    BackendKind { kind: String },
+    /// The backend Service requires unsupported cross-namespace routing.
+    BackendNamespace {
+        route_namespace: String,
+        backend_namespace: String,
+    },
+}
+
 impl GatewayRouteCapabilityLimitation {
     /// Return the stable snake_case string form of this limitation.
     pub const fn as_str(self) -> &'static str {
@@ -148,6 +291,31 @@ impl GatewayApiResourceDetection {
         matches!(self.status, GatewayApiResourceStatus::Available)
     }
 }
+
+impl fmt::Display for GatewayHttpRouteManifestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RouteKind { kind } => {
+                write!(formatter, "expected HTTPRoute route resource, found {kind}")
+            }
+            Self::ParentKind { kind } => {
+                write!(formatter, "expected Gateway parent resource, found {kind}")
+            }
+            Self::BackendKind { kind } => {
+                write!(formatter, "expected Service backend resource, found {kind}")
+            }
+            Self::BackendNamespace {
+                route_namespace,
+                backend_namespace,
+            } => write!(
+                formatter,
+                "HTTPRoute backend service must be in route namespace {route_namespace}, found {backend_namespace}"
+            ),
+        }
+    }
+}
+
+impl Error for GatewayHttpRouteManifestError {}
 
 /// Detect Gateway API routing inventory from Kubernetes discovery summaries.
 pub fn detect_gateway_api_resources(
@@ -198,6 +366,109 @@ pub fn model_gateway_route_capabilities(
         listener_protocols,
         limitations,
     }
+}
+
+/// Generate a temporary Gateway API HTTPRoute manifest for sandbox traffic.
+pub fn generate_gateway_http_route_manifest(
+    input: GatewayHttpRouteManifestInput<'_>,
+) -> Result<GatewayHttpRouteManifest, GatewayHttpRouteManifestError> {
+    validate_gateway_http_route_manifest_input(input)?;
+
+    Ok(GatewayHttpRouteManifest {
+        api_version: GATEWAY_API_VERSION,
+        kind: HTTP_ROUTE_KIND,
+        metadata: GatewayHttpRouteMetadata {
+            namespace: input.route.namespace().to_owned(),
+            name: input.route.name().to_owned(),
+            labels: metadata_entries_to_map(input.labels),
+            annotations: metadata_entries_to_map(input.annotations),
+        },
+        spec: GatewayHttpRouteSpec {
+            parent_refs: vec![GatewayHttpRouteParentRef {
+                kind: GATEWAY_KIND,
+                name: input.parent_gateway.name().to_owned(),
+                namespace: parent_gateway_namespace(input.route, input.parent_gateway),
+            }],
+            hostnames: selector_hostnames(input.selector),
+            rules: vec![GatewayHttpRouteRule {
+                matches: selector_matches(input.selector),
+                backend_refs: vec![GatewayHttpRouteBackendRef {
+                    kind: SERVICE_KIND,
+                    name: input.backend_service.name().to_owned(),
+                    port: input.backend_port,
+                }],
+            }],
+        },
+    })
+}
+
+/// Validate the typed inputs used to generate a Gateway API HTTPRoute.
+fn validate_gateway_http_route_manifest_input(
+    input: GatewayHttpRouteManifestInput<'_>,
+) -> Result<(), GatewayHttpRouteManifestError> {
+    if input.route.kind() != HTTP_ROUTE_KIND {
+        return Err(GatewayHttpRouteManifestError::RouteKind {
+            kind: input.route.kind().to_owned(),
+        });
+    }
+    if input.parent_gateway.kind() != GATEWAY_KIND {
+        return Err(GatewayHttpRouteManifestError::ParentKind {
+            kind: input.parent_gateway.kind().to_owned(),
+        });
+    }
+    if input.backend_service.kind() != SERVICE_KIND {
+        return Err(GatewayHttpRouteManifestError::BackendKind {
+            kind: input.backend_service.kind().to_owned(),
+        });
+    }
+    if input.route.namespace() != input.backend_service.namespace() {
+        return Err(GatewayHttpRouteManifestError::BackendNamespace {
+            route_namespace: input.route.namespace().to_owned(),
+            backend_namespace: input.backend_service.namespace().to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Convert metadata entries into deterministic Kubernetes metadata maps.
+fn metadata_entries_to_map(entries: &[MetadataEntry]) -> BTreeMap<String, String> {
+    entries
+        .iter()
+        .map(|entry| (entry.key().to_owned(), entry.value().to_owned()))
+        .collect()
+}
+
+/// Return the parent namespace only when the Gateway is cross-namespace.
+fn parent_gateway_namespace(
+    route: &KubernetesResourceRef,
+    parent_gateway: &KubernetesResourceRef,
+) -> Option<String> {
+    (route.namespace() != parent_gateway.namespace()).then(|| parent_gateway.namespace().to_owned())
+}
+
+/// Return hostnames selected by a route selector.
+fn selector_hostnames(selector: &RouteSelector) -> Vec<String> {
+    selector
+        .hostname()
+        .map(|hostname| vec![hostname.to_owned()])
+        .unwrap_or_default()
+}
+
+/// Return HTTPRoute matches selected by a route selector.
+fn selector_matches(selector: &RouteSelector) -> Vec<GatewayHttpRouteMatch> {
+    selector
+        .header_parts()
+        .map(|(name, value)| {
+            vec![GatewayHttpRouteMatch {
+                headers: vec![GatewayHttpRouteHeaderMatch {
+                    match_type: "Exact",
+                    name: name.to_owned(),
+                    value: value.to_owned(),
+                }],
+            }]
+        })
+        .unwrap_or_default()
 }
 
 /// Build a deterministic Gateway API resource detection result.
@@ -383,10 +654,14 @@ fn qualified_resource_name(namespace: &str, name: &str) -> String {
 mod tests {
     use super::{
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
-        GatewayRouteCapabilities, GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus,
-        detect_gateway_api_resources, model_gateway_route_capabilities,
+        GatewayHttpRouteManifestError, GatewayHttpRouteManifestInput, GatewayRouteCapabilities,
+        GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus,
+        detect_gateway_api_resources, generate_gateway_http_route_manifest,
+        model_gateway_route_capabilities,
     };
+    use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
     use kply_k8s::{GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary};
+    use serde_json::json;
 
     #[test]
     /// Detects missing Gateway API inventory as unavailable.
@@ -603,6 +878,251 @@ mod tests {
         assert_eq!(capabilities.limitations, Vec::new());
     }
 
+    #[test]
+    /// Generates a header-isolated temporary HTTPRoute manifest.
+    fn generates_header_based_gateway_http_route_manifest() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Gateway", "public");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+        let labels = vec![MetadataEntry::new_label("kply.dev/session-id", "session-123").unwrap()];
+        let annotations =
+            vec![MetadataEntry::new("kply.dev/route-strategy", "gateway-api").unwrap()];
+
+        let manifest = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &labels,
+            annotations: &annotations,
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(manifest).unwrap(),
+            json!({
+                "apiVersion": "gateway.networking.k8s.io/v1",
+                "kind": "HTTPRoute",
+                "metadata": {
+                    "namespace": "shop",
+                    "name": "checkout-kply",
+                    "labels": {
+                        "kply.dev/session-id": "session-123"
+                    },
+                    "annotations": {
+                        "kply.dev/route-strategy": "gateway-api"
+                    }
+                },
+                "spec": {
+                    "parentRefs": [
+                        {
+                            "kind": "Gateway",
+                            "name": "public"
+                        }
+                    ],
+                    "rules": [
+                        {
+                            "matches": [
+                                {
+                                    "headers": [
+                                        {
+                                            "type": "Exact",
+                                            "name": "x-kply-session",
+                                            "value": "session-123"
+                                        }
+                                    ]
+                                }
+                            ],
+                            "backendRefs": [
+                                {
+                                    "kind": "Service",
+                                    "name": "checkout-sandbox",
+                                    "port": 8080
+                                }
+                            ]
+                        }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[test]
+    /// Generates a host-isolated temporary HTTPRoute manifest.
+    fn generates_host_based_gateway_http_route_manifest() {
+        let route = resource("shop", "HTTPRoute", "checkout-preview");
+        let gateway = resource("platform", "Gateway", "edge");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+
+        let manifest = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 80,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(manifest).unwrap(),
+            json!({
+                "apiVersion": "gateway.networking.k8s.io/v1",
+                "kind": "HTTPRoute",
+                "metadata": {
+                    "namespace": "shop",
+                    "name": "checkout-preview"
+                },
+                "spec": {
+                    "parentRefs": [
+                        {
+                            "kind": "Gateway",
+                            "name": "edge",
+                            "namespace": "platform"
+                        }
+                    ],
+                    "hostnames": ["checkout-preview.example.com"],
+                    "rules": [
+                        {
+                            "backendRefs": [
+                                {
+                                    "kind": "Service",
+                                    "name": "checkout-sandbox",
+                                    "port": 80
+                                }
+                            ]
+                        }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[test]
+    /// Rejects non-HTTPRoute route resources.
+    fn rejects_non_http_route_manifest_resources() {
+        let route = resource("shop", "ConfigMap", "checkout-kply");
+        let gateway = resource("shop", "Gateway", "public");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::RouteKind {
+                kind: "ConfigMap".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected HTTPRoute route resource, found ConfigMap"
+        );
+    }
+
+    #[test]
+    /// Rejects non-Gateway parent resources.
+    fn rejects_non_gateway_parent_resources() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Service", "not-a-gateway");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::ParentKind {
+                kind: "Service".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected Gateway parent resource, found Service"
+        );
+    }
+
+    #[test]
+    /// Rejects non-Service backend resources.
+    fn rejects_non_service_backend_resources() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Gateway", "public");
+        let service = resource("shop", "Deployment", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::BackendKind {
+                kind: "Deployment".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected Service backend resource, found Deployment"
+        );
+    }
+
+    #[test]
+    /// Rejects cross-namespace Service backends.
+    fn rejects_cross_namespace_backend_services() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Gateway", "public");
+        let service = resource("payments", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &[],
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::BackendNamespace {
+                route_namespace: "shop".to_owned(),
+                backend_namespace: "payments".to_owned()
+            }
+        );
+    }
+
     /// Build a GatewayClass summary fixture.
     fn gateway_class(name: &str, controller_name: Option<&str>) -> GatewayClassSummary {
         GatewayClassSummary {
@@ -635,5 +1155,10 @@ mod tests {
                 protocol: protocol.map(ToOwned::to_owned),
             }],
         }
+    }
+
+    /// Build a Kubernetes resource fixture.
+    fn resource(namespace: &str, kind: &str, name: &str) -> KubernetesResourceRef {
+        KubernetesResourceRef::new(namespace, kind, name).unwrap()
     }
 }
