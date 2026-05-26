@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: checkout-api
   namespace: kply-demo
+  annotations:
+    kply.dev/security-scan-exemption: "demo-fixture: hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186 is a trusted non-production test utility."
   labels:
     app.kubernetes.io/name: checkout-api
     app.kubernetes.io/component: backend
@@ -17,12 +19,15 @@ spec:
       app.kubernetes.io/version: broken
   template:
     metadata:
+      annotations:
+        kply.dev/security-scan-exemption: "demo-fixture: hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186 is a trusted non-production test utility."
       labels:
         app.kubernetes.io/name: checkout-api
         app.kubernetes.io/component: backend
         app.kubernetes.io/part-of: kply-demo
         app.kubernetes.io/version: broken
     spec:
+      automountServiceAccountToken: false
       securityContext:
         fsGroup: 65532
         runAsGroup: 65532
@@ -32,13 +37,28 @@ spec:
           type: RuntimeDefault
       containers:
         - name: checkout
-          image: hashicorp/http-echo:1.0
+          image: hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186
+          imagePullPolicy: IfNotPresent
           args:
             - -listen=:8080
             - -text={"status":"error","service":"checkout-api","catalog":"unreachable"}
           ports:
             - name: http
               containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
           resources:
             requests:
               cpu: 10m
