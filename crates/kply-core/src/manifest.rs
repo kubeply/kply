@@ -11,6 +11,11 @@ const REQUIRED_OWNERSHIP_LABELS: [&str; 4] = [
     "kply.dev/session-id",
     "kply.dev/session-name",
 ];
+const REQUIRED_AUDIT_ANNOTATIONS: [&str; 3] = [
+    "kply.dev/image",
+    "kply.dev/route-strategy",
+    "kply.dev/workload",
+];
 
 /// Generate a sandbox Kubernetes Deployment manifest from a dry-run session plan.
 pub fn sandbox_deployment_manifest(
@@ -20,6 +25,7 @@ pub fn sandbox_deployment_manifest(
     let labels = metadata_entries_to_map(plan.planned_labels());
     ensure_ownership_labels(&labels)?;
     let annotations = metadata_entries_to_map(plan.planned_annotations());
+    ensure_audit_annotations(&annotations)?;
 
     Ok(SandboxDeploymentManifest {
         api_version: "apps/v1",
@@ -67,6 +73,7 @@ pub fn sandbox_service_manifest_with_port(
     let labels = metadata_entries_to_map(plan.planned_labels());
     ensure_ownership_labels(&labels)?;
     let annotations = metadata_entries_to_map(plan.planned_annotations());
+    ensure_audit_annotations(&annotations)?;
 
     Ok(SandboxServiceManifest {
         api_version: "v1",
@@ -229,6 +236,8 @@ pub enum SandboxManifestError {
     MissingSelectorLabels,
     /// The session plan did not include a required ownership label.
     MissingOwnershipLabel { key: &'static str },
+    /// The session plan did not include a required audit annotation.
+    MissingAuditAnnotation { key: &'static str },
     /// The requested resource kind is not supported for sandbox manifests.
     UnsupportedResourceKind { kind: String },
     /// The service port name was not a valid Kubernetes DNS label.
@@ -259,6 +268,12 @@ impl fmt::Display for SandboxManifestError {
                 write!(
                     formatter,
                     "session plan does not include ownership label `{key}`"
+                )
+            }
+            Self::MissingAuditAnnotation { key } => {
+                write!(
+                    formatter,
+                    "session plan does not include audit annotation `{key}`"
                 )
             }
             Self::UnsupportedResourceKind { kind } => {
@@ -320,6 +335,18 @@ fn ensure_ownership_labels(labels: &BTreeMap<String, String>) -> Result<(), Sand
     Ok(())
 }
 
+fn ensure_audit_annotations(
+    annotations: &BTreeMap<String, String>,
+) -> Result<(), SandboxManifestError> {
+    for key in REQUIRED_AUDIT_ANNOTATIONS {
+        if !annotations.contains_key(key) {
+            return Err(SandboxManifestError::MissingAuditAnnotation { key });
+        }
+    }
+
+    Ok(())
+}
+
 fn metadata_entries_to_map(metadata: &[MetadataEntry]) -> BTreeMap<String, String> {
     metadata
         .iter()
@@ -358,8 +385,8 @@ fn is_lowercase_ascii_alphanumeric(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        SandboxManifestError, SandboxServicePortConfig, sandbox_deployment_manifest,
-        sandbox_service_manifest, sandbox_service_manifest_with_port,
+        REQUIRED_AUDIT_ANNOTATIONS, SandboxManifestError, SandboxServicePortConfig,
+        sandbox_deployment_manifest, sandbox_service_manifest, sandbox_service_manifest_with_port,
     };
     use crate::{
         ImageRef, KubernetesResourceRef, MetadataEntry, SessionId, SessionName, SessionPlan,
@@ -394,9 +421,31 @@ mod tests {
             .with_planned_annotations([
                 MetadataEntry::new("kply.dev/image", "registry.example.com/checkout/api:v2")
                     .expect("annotation"),
+                MetadataEntry::new("kply.dev/route-strategy", "header").expect("annotation"),
                 MetadataEntry::new("kply.dev/workload", "checkout/Deployment/checkout-api")
                     .expect("annotation"),
             ])
+    }
+
+    fn test_ownership_labels() -> Vec<MetadataEntry> {
+        vec![
+            MetadataEntry::new_label("kply.dev/app", "checkout").expect("label"),
+            MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label"),
+            MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
+            MetadataEntry::new_label("kply.dev/session-name", "checkout-test").expect("label"),
+        ]
+    }
+
+    fn test_audit_annotations_except(missing_key: &str) -> Vec<MetadataEntry> {
+        let mut annotations = vec![
+            MetadataEntry::new("kply.dev/image", "registry.example.com/checkout/api:v2")
+                .expect("annotation"),
+            MetadataEntry::new("kply.dev/route-strategy", "header").expect("annotation"),
+            MetadataEntry::new("kply.dev/workload", "checkout/Deployment/checkout-api")
+                .expect("annotation"),
+        ];
+        annotations.retain(|entry| entry.key() != missing_key);
+        annotations
     }
 
     #[test]
@@ -542,6 +591,62 @@ mod tests {
             error.to_string(),
             "session plan does not include ownership label `kply.dev/session-name`"
         );
+    }
+
+    #[test]
+    fn rejects_sandbox_deployment_manifest_without_audit_annotations() {
+        for missing_key in REQUIRED_AUDIT_ANNOTATIONS {
+            let plan = test_session_plan()
+                .with_planned_resources([KubernetesResourceRef::new(
+                    "checkout",
+                    "Deployment",
+                    "session-123-workload",
+                )
+                .expect("planned deployment")])
+                .with_planned_labels(test_ownership_labels())
+                .expect("planned labels")
+                .with_planned_annotations(test_audit_annotations_except(missing_key));
+
+            let error = sandbox_deployment_manifest(&plan)
+                .expect_err("audit annotations should be required");
+
+            assert_eq!(
+                error,
+                SandboxManifestError::MissingAuditAnnotation { key: missing_key }
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("session plan does not include audit annotation `{missing_key}`")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_sandbox_service_manifest_without_audit_annotations() {
+        for missing_key in REQUIRED_AUDIT_ANNOTATIONS {
+            let plan = test_session_plan()
+                .with_planned_resources([KubernetesResourceRef::new(
+                    "checkout",
+                    "Service",
+                    "session-123-service",
+                )
+                .expect("planned service")])
+                .with_planned_labels(test_ownership_labels())
+                .expect("planned labels")
+                .with_planned_annotations(test_audit_annotations_except(missing_key));
+
+            let error =
+                sandbox_service_manifest(&plan).expect_err("audit annotations should be required");
+
+            assert_eq!(
+                error,
+                SandboxManifestError::MissingAuditAnnotation { key: missing_key }
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("session plan does not include audit annotation `{missing_key}`")
+            );
+        }
     }
 
     #[test]

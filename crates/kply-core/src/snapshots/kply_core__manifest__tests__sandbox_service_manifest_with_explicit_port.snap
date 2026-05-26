@@ -8,6 +8,7 @@ expression: value
   "metadata": {
     "annotations": {
       "kply.dev/image": "registry.example.com/checkout/api:v2",
+      "kply.dev/route-strategy": "header",
       "kply.dev/workload": "checkout/Deployment/checkout-api"
     },
     "labels": {
