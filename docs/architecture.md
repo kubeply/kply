@@ -125,6 +125,9 @@ Current provisional pre-`1.0.0` session plan fields:
 - `planned_checks`: list of verification checks Kply expects a future session
   to run against sandbox resources, deduplicated and serialized in
   deterministic order.
+- `planned_cleanup_steps`: list of cleanup operations Kply expects a future
+  session to run when removing sandbox resources, deduplicated and serialized
+  in execution order.
 - `route_selector`: always serialized as a nullable field; it is a test
   traffic selector object when configured and `null` otherwise.
 - `policy`: allowed operation policy.
@@ -153,6 +156,11 @@ Current provisional pre-`1.0.0` planned check fields:
 
 - `name`: stable planned check name string.
 - `target`: resource, image, or route target string the check will verify.
+
+Current provisional pre-`1.0.0` planned cleanup step fields:
+
+- `action`: stable planned cleanup action string.
+- `target`: resource target string the cleanup action will remove.
 
 Current provisional pre-`1.0.0` route selector fields:
 

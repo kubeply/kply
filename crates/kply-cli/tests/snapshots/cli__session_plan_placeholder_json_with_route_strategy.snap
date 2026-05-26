@@ -39,6 +39,20 @@ expression: value
       "target": "shop/Deployment/checkout-api"
     }
   ],
+  "planned_cleanup_steps": [
+    {
+      "action": "delete_route",
+      "target": "shop/HTTPRoute/checkout-plan-route"
+    },
+    {
+      "action": "delete_service",
+      "target": "shop/Service/checkout-plan-service"
+    },
+    {
+      "action": "delete_workload",
+      "target": "shop/Deployment/checkout-plan-workload"
+    }
+  ],
   "planned_labels": [
     {
       "key": "kply.dev/app",

@@ -26,6 +26,10 @@ planned_checks: 4
   check: route_ready -> host
   check: service_endpoints -> shop/checkout-plan-service
   check: workload_ready -> shop/Deployment/checkout-api
+planned_cleanup_steps: 3
+  cleanup: delete_route -> shop/HTTPRoute/checkout-plan-route
+  cleanup: delete_service -> shop/Service/checkout-plan-service
+  cleanup: delete_workload -> shop/Deployment/checkout-plan-workload
 route_selector: host:checkout-plan.shop.kply.local
 policy_operations: 6
 status: planned

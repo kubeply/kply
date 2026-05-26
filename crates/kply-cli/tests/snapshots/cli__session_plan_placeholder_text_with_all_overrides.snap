@@ -26,6 +26,10 @@ planned_checks: 4
   check: route_ready -> header
   check: service_endpoints -> staging/checkout-plan-service
   check: workload_ready -> staging/Deployment/checkout-api
+planned_cleanup_steps: 3
+  cleanup: delete_route -> staging/HTTPRoute/checkout-plan-route
+  cleanup: delete_service -> staging/Service/checkout-plan-service
+  cleanup: delete_workload -> staging/Deployment/checkout-plan-workload
 route_selector: header:x-kply-session=checkout-plan
 policy_operations: 6
 status: planned
