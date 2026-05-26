@@ -516,6 +516,33 @@ fn prints_session_plan_placeholder_text_with_warnings_and_risks() {
 }
 
 #[test]
+fn prints_session_plan_placeholder_json_with_warnings_and_risks() {
+    let output = with_session_plan_risk_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout-db",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!(
+        "session_plan_placeholder_json_with_warnings_and_risks",
+        value
+    );
+}
+
+#[test]
 fn prints_session_plan_placeholder_json_with_all_overrides() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
