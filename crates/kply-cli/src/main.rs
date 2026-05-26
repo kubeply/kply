@@ -737,7 +737,7 @@ fn apply_session_resources(
         &str,
         &str,
     ) -> std::result::Result<DeploymentSummary, MutationError>,
-    record_state: impl FnOnce(
+    mut record_state: impl FnMut(
         Vec<SessionManifestSummary>,
         SessionStatus,
     ) -> std::result::Result<
@@ -794,6 +794,18 @@ fn apply_session_resources(
         namespace: created_service.namespace,
         name: created_service.name,
     };
+    let created_resources = vec![
+        created_deployment_resource.clone(),
+        created_service_resource.clone(),
+    ];
+    let preparing_resources = record_state(created_resources.clone(), SessionStatus::Preparing)
+        .map_err(|error| SessionCreateApplyError::PartialMutation {
+            error: error.error,
+            created_resources: created_resources.clone(),
+            pending_resources: pending_resources.clone(),
+            recorded_resources: error.recorded_resources,
+        })?;
+
     let ready_deployment = wait_deployment_ready(
         &created_deployment_resource.namespace,
         &created_deployment_resource.name,
@@ -805,20 +817,22 @@ fn apply_session_resources(
             created_service_resource.clone(),
         ],
         pending_resources: pending_resources.clone(),
-        recorded_resources: Vec::new(),
+        recorded_resources: preparing_resources.clone(),
     })?;
 
-    let created_resources = vec![
-        created_deployment_resource.clone(),
-        created_service_resource.clone(),
-    ];
     let state_resources =
         record_state(created_resources.clone(), SessionStatus::Active).map_err(|error| {
+            let recorded_resources = if error.recorded_resources.is_empty() {
+                preparing_resources.clone()
+            } else {
+                error.recorded_resources
+            };
+
             SessionCreateApplyError::PartialMutation {
                 error: error.error,
                 created_resources: created_resources.clone(),
                 pending_resources: pending_resources.clone(),
-                recorded_resources: error.recorded_resources,
+                recorded_resources,
             }
         })?;
 
@@ -2471,6 +2485,7 @@ mod tests {
         );
         let plan = session_plan_from_config(&app, None, None, None, None)
             .unwrap_or_else(|_| panic!("session plan should be created"));
+        let mut recorded_statuses = Vec::new();
 
         let applied = apply_session_resources(
             &plan,
@@ -2549,7 +2564,7 @@ mod tests {
                 })
             },
             |resources, status| {
-                assert_eq!(status, SessionStatus::Active);
+                recorded_statuses.push(status);
                 assert_eq!(resources.len(), 2);
                 assert_eq!(resources[0].kind, "Deployment");
                 assert_eq!(resources[1].kind, "Service");
@@ -2578,6 +2593,10 @@ mod tests {
         assert_eq!(applied.readiness.phase, DeploymentRolloutPhase::Complete);
         assert_eq!(applied.state.status, SessionStatus::Active);
         assert_eq!(applied.state.resources.len(), 2);
+        assert_eq!(
+            recorded_statuses,
+            [SessionStatus::Preparing, SessionStatus::Active]
+        );
     }
 
     #[test]
@@ -2709,13 +2728,17 @@ mod tests {
                     message: "sandbox Deployment did not become ready".to_owned(),
                 })
             },
-            |_resources, _status| panic!("state must not record after readiness fails"),
+            |resources, status| {
+                assert_eq!(status, SessionStatus::Preparing);
+                Ok(resources)
+            },
         )
         .expect_err("readiness failure after resources create should be partial");
 
         let SessionCreateApplyError::PartialMutation {
             created_resources,
             pending_resources,
+            recorded_resources,
             ..
         } = error
         else {
@@ -2735,6 +2758,17 @@ mod tests {
         );
         assert_eq!(pending_resources.len(), 1);
         assert_eq!(pending_resources[0].kind, "ConfigMap");
+        assert_eq!(recorded_resources.len(), 2);
+        assert!(
+            recorded_resources
+                .iter()
+                .any(|resource| resource.kind == "Deployment")
+        );
+        assert!(
+            recorded_resources
+                .iter()
+                .any(|resource| resource.kind == "Service")
+        );
     }
 
     #[test]
@@ -2809,15 +2843,19 @@ mod tests {
                     },
                 })
             },
-            |_resources, status| {
-                assert_eq!(status, SessionStatus::Active);
-                Err(SessionStateRecordError {
-                    error: MutationError {
-                        code: MutationErrorCode::KubernetesApi,
-                        message: "record session state failed".to_owned(),
-                    },
-                    recorded_resources: Vec::new(),
-                })
+            |resources, status| {
+                if status == SessionStatus::Preparing {
+                    Ok(resources)
+                } else {
+                    assert_eq!(status, SessionStatus::Active);
+                    Err(SessionStateRecordError {
+                        error: MutationError {
+                            code: MutationErrorCode::KubernetesApi,
+                            message: "record session state failed".to_owned(),
+                        },
+                        recorded_resources: Vec::new(),
+                    })
+                }
             },
         )
         .expect_err("state recording failure after resources create should be partial");
@@ -2825,6 +2863,7 @@ mod tests {
         let SessionCreateApplyError::PartialMutation {
             created_resources,
             pending_resources,
+            recorded_resources,
             ..
         } = error
         else {
@@ -2844,6 +2883,7 @@ mod tests {
         );
         assert_eq!(pending_resources.len(), 1);
         assert_eq!(pending_resources[0].kind, "ConfigMap");
+        assert_eq!(recorded_resources.len(), 2);
     }
 
     #[test]
@@ -2918,14 +2958,18 @@ mod tests {
                     },
                 })
             },
-            |resources, _status| {
-                Err(SessionStateRecordError {
-                    error: MutationError {
-                        code: MutationErrorCode::KubernetesApi,
-                        message: "record Service state failed".to_owned(),
-                    },
-                    recorded_resources: vec![resources[0].clone()],
-                })
+            |resources, status| {
+                if status == SessionStatus::Preparing {
+                    Ok(resources)
+                } else {
+                    Err(SessionStateRecordError {
+                        error: MutationError {
+                            code: MutationErrorCode::KubernetesApi,
+                            message: "record Service state failed".to_owned(),
+                        },
+                        recorded_resources: vec![resources[0].clone()],
+                    })
+                }
             },
         )
         .expect_err("partial state recording should be auditable");
