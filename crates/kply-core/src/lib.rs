@@ -3,11 +3,11 @@
 mod manifest;
 
 pub use manifest::{
-    SandboxContainer, SandboxDeploymentManifest, SandboxDeploymentSpec, SandboxLabelSelector,
-    SandboxManifestError, SandboxObjectMetadata, SandboxPodSpec, SandboxPodTemplate,
-    SandboxPodTemplateMetadata, SandboxServiceManifest, SandboxServicePort,
-    SandboxServicePortConfig, SandboxServiceSpec, sandbox_deployment_manifest,
-    sandbox_service_manifest, sandbox_service_manifest_with_port,
+    SandboxCleanupSelector, SandboxContainer, SandboxDeploymentManifest, SandboxDeploymentSpec,
+    SandboxLabelSelector, SandboxManifestError, SandboxObjectMetadata, SandboxPodSpec,
+    SandboxPodTemplate, SandboxPodTemplateMetadata, SandboxServiceManifest, SandboxServicePort,
+    SandboxServicePortConfig, SandboxServiceSpec, sandbox_cleanup_selector,
+    sandbox_deployment_manifest, sandbox_service_manifest, sandbox_service_manifest_with_port,
 };
 
 use serde::de::Error as DeserializeError;

@@ -1,0 +1,10 @@
+---
+source: crates/kply-core/src/manifest.rs
+expression: value
+---
+{
+  "matchLabels": {
+    "kply.dev/managed-by": "kply",
+    "kply.dev/session-id": "session-123"
+  }
+}
