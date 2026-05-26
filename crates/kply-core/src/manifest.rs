@@ -11,6 +11,12 @@ const REQUIRED_OWNERSHIP_LABELS: [&str; 4] = [
     "kply.dev/session-id",
     "kply.dev/session-name",
 ];
+
+/// Ownership labels used to generate cleanup selectors for session resources.
+///
+/// This deliberate subset of [`REQUIRED_OWNERSHIP_LABELS`] ties cleanup to Kply
+/// and the session id without depending on app or human-readable session names.
+const CLEANUP_SELECTOR_LABELS: [&str; 2] = ["kply.dev/managed-by", "kply.dev/session-id"];
 const REQUIRED_AUDIT_ANNOTATIONS: [&str; 3] = [
     "kply.dev/image",
     "kply.dev/route-strategy",
@@ -79,6 +85,21 @@ pub fn sandbox_service_manifest(
     sandbox_service_manifest_with_port(plan, SandboxServicePortConfig::http_default())
 }
 
+/// Generate a cleanup selector from a [`SessionPlan`] for sandbox resources.
+///
+/// Returns a [`SandboxCleanupSelector`] containing only the ownership labels
+/// needed to target resources owned by the session.
+pub fn sandbox_cleanup_selector(
+    plan: &SessionPlan,
+) -> Result<SandboxCleanupSelector, SandboxManifestError> {
+    let planned_labels = metadata_entries_to_map(plan.planned_labels());
+    ensure_ownership_labels(&planned_labels)?;
+
+    Ok(SandboxCleanupSelector {
+        match_labels: cleanup_labels(&planned_labels),
+    })
+}
+
 /// Generate a sandbox Kubernetes Service manifest with explicit port settings.
 pub fn sandbox_service_manifest_with_port(
     plan: &SessionPlan,
@@ -130,6 +151,13 @@ pub struct SandboxServiceManifest {
     kind: &'static str,
     metadata: SandboxObjectMetadata,
     spec: SandboxServiceSpec,
+}
+
+/// Kubernetes label selector used to clean up sandbox session resources.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SandboxCleanupSelector {
+    #[serde(rename = "matchLabels")]
+    match_labels: BTreeMap<String, String>,
 }
 
 /// Kubernetes object metadata for generated sandbox manifests.
@@ -381,6 +409,18 @@ fn should_preserve_label(key: &str) -> bool {
     REQUIRED_OWNERSHIP_LABELS.contains(&key) || SAFE_APP_LABELS.contains(&key)
 }
 
+/// Return only the ownership labels needed for cleanup selectors.
+///
+/// This filters to the minimal label set required to delete session-owned
+/// resources without depending on unrelated ownership metadata.
+fn cleanup_labels(planned_labels: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    planned_labels
+        .iter()
+        .filter(|(key, _)| CLEANUP_SELECTOR_LABELS.contains(&key.as_str()))
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect()
+}
+
 /// Return only Kply audit annotations for generated sandbox manifests.
 ///
 /// Production annotations often control ingress, sidecars, policy, or external
@@ -446,7 +486,8 @@ fn is_lowercase_ascii_alphanumeric(character: char) -> bool {
 mod tests {
     use super::{
         REQUIRED_AUDIT_ANNOTATIONS, SandboxManifestError, SandboxServicePortConfig,
-        sandbox_deployment_manifest, sandbox_service_manifest, sandbox_service_manifest_with_port,
+        sandbox_cleanup_selector, sandbox_deployment_manifest, sandbox_service_manifest,
+        sandbox_service_manifest_with_port,
     };
     use crate::{
         ImageRef, KubernetesResourceRef, MetadataEntry, SessionId, SessionName, SessionPlan,
@@ -548,6 +589,15 @@ mod tests {
     }
 
     #[test]
+    fn generates_sandbox_cleanup_selector() {
+        let plan = test_labeled_session_plan();
+        let selector = sandbox_cleanup_selector(&plan).expect("cleanup selector");
+        let value = serde_json::to_value(selector).expect("selector should serialize");
+
+        insta::assert_json_snapshot!("sandbox_cleanup_selector", value);
+    }
+
+    #[test]
     fn preserves_safe_app_labels_in_sandbox_deployment_manifest() {
         let plan = test_labeled_session_plan();
         let manifest = sandbox_deployment_manifest(&plan).expect("deployment manifest");
@@ -646,6 +696,30 @@ mod tests {
         let value = serde_json::to_value(manifest).expect("manifest should serialize");
 
         assert_eq!(value["metadata"]["annotations"]["kply.dev/ttl"], "30m");
+    }
+
+    #[test]
+    fn rejects_sandbox_cleanup_selector_without_ownership_labels() {
+        let plan = test_session_plan()
+            .with_planned_labels([
+                MetadataEntry::new_label("kply.dev/app", "checkout").expect("label"),
+                MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
+                MetadataEntry::new_label("kply.dev/session-name", "checkout-test").expect("label"),
+            ])
+            .expect("planned labels");
+
+        let error = sandbox_cleanup_selector(&plan).expect_err("ownership should be required");
+
+        assert_eq!(
+            error,
+            SandboxManifestError::MissingOwnershipLabel {
+                key: "kply.dev/managed-by"
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "session plan does not include ownership label `kply.dev/managed-by`"
+        );
     }
 
     #[test]
