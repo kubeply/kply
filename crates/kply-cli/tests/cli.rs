@@ -34,6 +34,16 @@ apps:
     route_strategy: preview
 "#;
 
+const SESSION_PLAN_NO_IMAGE_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    route_strategy: header
+"#;
+
 fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
     let workspace = temp_workspace();
     let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_CONFIG);
@@ -45,6 +55,14 @@ fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
 fn with_session_plan_risk_config<T>(run: impl FnOnce(&str) -> T) -> T {
     let workspace = temp_workspace();
     let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_RISK_CONFIG);
+    let config_path = config_path.to_str().expect("config path should be UTF-8");
+
+    run(config_path)
+}
+
+fn with_session_plan_no_image_config<T>(run: impl FnOnce(&str) -> T) -> T {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_NO_IMAGE_CONFIG);
     let config_path = config_path.to_str().expect("config path should be UTF-8");
 
     run(config_path)
@@ -626,6 +644,75 @@ fn suppresses_session_plan_placeholder_text_when_quiet() {
             .success()
             .stdout("");
     });
+}
+
+#[test]
+fn rejects_session_plan_missing_image() {
+    let output = with_session_plan_no_image_config(|config_path| {
+        assert_kply_exit_code(
+            &["--config", config_path, "session", "plan", "checkout"],
+            EXIT_USAGE,
+        )
+    });
+
+    assert!(
+        output.stdout.is_empty(),
+        "missing image errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_plan_missing_image", stderr);
+}
+
+#[test]
+fn rejects_session_plan_missing_app_json() {
+    let output = with_session_plan_config(|config_path| {
+        assert_kply_exit_code(
+            &[
+                "--json",
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "missing",
+            ],
+            EXIT_USAGE,
+        )
+    });
+
+    assert!(
+        output.stdout.is_empty(),
+        "missing app errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_plan_missing_app_json", value);
+}
+
+#[test]
+fn rejects_session_plan_invalid_ttl_json() {
+    let output = with_session_plan_config(|config_path| {
+        assert_kply_exit_code(
+            &[
+                "--json",
+                "--config",
+                config_path,
+                "session",
+                "plan",
+                "checkout",
+                "--ttl",
+                "forever",
+            ],
+            EXIT_USAGE,
+        )
+    });
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid ttl errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_plan_invalid_ttl_json", value);
 }
 
 #[test]
