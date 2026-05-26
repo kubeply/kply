@@ -1,5 +1,13 @@
 //! Core domain model for future Kply session primitives.
 
+mod manifest;
+
+pub use manifest::{
+    SandboxContainer, SandboxDeploymentManifest, SandboxDeploymentSpec, SandboxLabelSelector,
+    SandboxManifestError, SandboxObjectMetadata, SandboxPodSpec, SandboxPodTemplate,
+    SandboxPodTemplateMetadata, sandbox_deployment_manifest,
+};
+
 use serde::de::Error as DeserializeError;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

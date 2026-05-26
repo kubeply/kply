@@ -1,0 +1,52 @@
+---
+source: crates/kply-core/src/manifest.rs
+expression: value
+---
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "annotations": {
+      "kply.dev/image": "registry.example.com/checkout/api:v2",
+      "kply.dev/workload": "checkout/Deployment/checkout-api"
+    },
+    "labels": {
+      "kply.dev/app": "checkout",
+      "kply.dev/managed-by": "kply",
+      "kply.dev/session-id": "session-123"
+    },
+    "name": "session-123-workload",
+    "namespace": "checkout"
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "kply.dev/app": "checkout",
+        "kply.dev/managed-by": "kply",
+        "kply.dev/session-id": "session-123"
+      }
+    },
+    "template": {
+      "metadata": {
+        "annotations": {
+          "kply.dev/image": "registry.example.com/checkout/api:v2",
+          "kply.dev/workload": "checkout/Deployment/checkout-api"
+        },
+        "labels": {
+          "kply.dev/app": "checkout",
+          "kply.dev/managed-by": "kply",
+          "kply.dev/session-id": "session-123"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "registry.example.com/checkout/api:v2",
+            "name": "checkout-test"
+          }
+        ]
+      }
+    }
+  }
+}
