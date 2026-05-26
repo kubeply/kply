@@ -70,3 +70,7 @@ After applying manifests, the command waits for the `catalog-api`,
 `storefront-web`, and `checkout-api` deployments in the `kply-demo` namespace
 to become available. Kubectl failures exit with code `1` because they are
 blocking demo readiness results.
+
+`kply demo reset` re-applies the same baseline ecommerce fixture and waits for
+the same demo deployments. Use it to return the local demo to the known-good
+baseline after switching backend variants.

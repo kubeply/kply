@@ -16,14 +16,19 @@ const KUBECTL_ROLLOUT_TIMEOUT: &str = "5m";
 
 /// Install the local demo baseline resources into the current Kubernetes context.
 pub(crate) fn render_demo_install(cli: &Cli) -> Result<ExitCode> {
-    let result = install_demo();
+    render_demo_baseline(cli, DemoBaselineCommand::Install)
+}
+
+/// Apply the baseline demo resources for install-like demo commands.
+pub(crate) fn render_demo_baseline(cli: &Cli, command: DemoBaselineCommand) -> Result<ExitCode> {
+    let result = apply_demo_baseline(command);
 
     match result {
         Ok(report) => {
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else if !cli.quiet {
-                println!("kply demo install");
+                println!("kply {}", report.command);
                 println!("status: {}", report.status);
                 println!("namespace: {}", report.namespace);
                 println!("applied_manifests: {}", report.applied_manifests.len());
@@ -38,8 +43,30 @@ pub(crate) fn render_demo_install(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Err(error) => {
-            render_install_error(cli, &error)?;
+            render_baseline_error(cli, command, &error)?;
             Ok(ExitCode::from(EXIT_BLOCKING))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum DemoBaselineCommand {
+    Install,
+    Reset,
+}
+
+impl DemoBaselineCommand {
+    fn command_name(self) -> &'static str {
+        match self {
+            Self::Install => "demo install",
+            Self::Reset => "demo reset",
+        }
+    }
+
+    fn status(self) -> &'static str {
+        match self {
+            Self::Install => "installed",
+            Self::Reset => "reset",
         }
     }
 }
@@ -61,7 +88,9 @@ struct DemoInstallError {
     stderr: String,
 }
 
-fn install_demo() -> std::result::Result<DemoInstallReport, DemoInstallError> {
+fn apply_demo_baseline(
+    command: DemoBaselineCommand,
+) -> std::result::Result<DemoInstallReport, DemoInstallError> {
     if find_command_in_path(KUBECTL_COMMAND).is_none() {
         return Err(DemoInstallError {
             code: "missing_kubectl",
@@ -90,8 +119,8 @@ fn install_demo() -> std::result::Result<DemoInstallReport, DemoInstallError> {
     }
 
     Ok(DemoInstallReport {
-        command: "demo install",
-        status: "installed",
+        command: command.command_name(),
+        status: command.status(),
         namespace: DEMO_NAMESPACE,
         applied_manifests: DEMO_BASELINE_MANIFEST_PATHS.to_vec(),
         ready_deployments: DEMO_ROLLOUT_DEPLOYMENTS.to_vec(),
@@ -133,7 +162,11 @@ fn command_preview(args: &[&str]) -> Vec<String> {
         .collect()
 }
 
-fn render_install_error(cli: &Cli, error: &DemoInstallError) -> Result<()> {
+fn render_baseline_error(
+    cli: &Cli,
+    command: DemoBaselineCommand,
+    error: &DemoInstallError,
+) -> Result<()> {
     if cli.json {
         let value = serde_json::json!({
             "error": {
@@ -146,7 +179,11 @@ fn render_install_error(cli: &Cli, error: &DemoInstallError) -> Result<()> {
         });
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
-        eprintln!("kply error: demo install\n\n{}", error.message);
+        eprintln!(
+            "kply error: {}\n\n{}",
+            command.command_name(),
+            error.message
+        );
         if !error.command.is_empty() {
             eprintln!("command: {}", error.command.join(" "));
         }

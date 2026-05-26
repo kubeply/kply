@@ -4,7 +4,8 @@ This guide sets up the ecommerce demo fixture in a local Kind cluster.
 
 Use `kply demo doctor` to validate local prerequisites first. `kply demo
 install` can install the baseline fixture after the cluster exists. `kply demo
-reset` and `kply demo teardown` are not implemented yet.
+reset` can restore the baseline fixture after variant testing. `kply demo
+teardown` is not implemented yet.
 
 ## Prerequisites
 
@@ -98,6 +99,12 @@ kubectl -n kply-demo rollout status --timeout=5m deployment/checkout-api
 
 The broken variant returns an error-shaped checkout response. The fixed variant
 returns a healthy response that includes a reachable catalog status.
+
+Return to the baseline fixture with Kply:
+
+```bash
+cargo run --locked --bin kply -- demo reset
+```
 
 ## Inspect With Kply
 
