@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply session manifests cart
+session_id: cart-plan
+manifests: 3
+  manifest: Deployment shop/cart-plan-workload
+  manifest: Service shop/cart-plan-service
+  manifest: ConfigMap shop/cart-plan-route

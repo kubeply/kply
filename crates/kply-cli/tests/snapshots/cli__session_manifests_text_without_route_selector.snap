@@ -1,0 +1,9 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply session manifests checkout
+session_id: checkout-plan
+manifests: 2
+  manifest: Deployment shop/checkout-plan-workload
+  manifest: Service shop/checkout-plan-service

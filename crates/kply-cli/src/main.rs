@@ -14,11 +14,14 @@ use kply_config::{
 use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
     PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RiskNote,
-    RouteSelector, ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive,
-    UnsupportedFeatureWarning, WorkloadRef,
+    RouteSelector, SandboxManifestError, ServiceRef, SessionId, SessionName, SessionPlan,
+    SessionPolicy, TimeToLive, UnsupportedFeatureWarning, WorkloadRef, sandbox_deployment_manifest,
+    sandbox_route_placeholder_manifest, sandbox_service_manifest,
 };
 use kply_k8s::KubeconfigError;
+use serde::Serialize;
 use std::ffi::OsString;
+use std::fmt;
 use std::process::ExitCode;
 
 const EXIT_USAGE: i32 = 2;
@@ -32,6 +35,7 @@ const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
     "database_reference_requires_manual_review";
+const SANDBOX_WORKLOAD_KIND: &str = "Deployment";
 const SUPPORTED_ROUTE_STRATEGIES: [RouteStrategy; 3] = [
     RouteStrategy::Header,
     RouteStrategy::Host,
@@ -98,6 +102,25 @@ fn run() -> Result<ExitCode> {
                 route_strategy.as_deref(),
             );
         }
+        Some(Command::Session {
+            command:
+                Some(SessionCommand::Manifests {
+                    app,
+                    image,
+                    namespace,
+                    time_to_live,
+                    route_strategy,
+                }),
+        }) => {
+            return render_session_manifests(
+                &cli,
+                app,
+                image.as_deref(),
+                namespace.as_deref(),
+                time_to_live.as_deref(),
+                route_strategy.as_deref(),
+            );
+        }
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
@@ -155,6 +178,70 @@ fn run() -> Result<ExitCode> {
     } else if !cli.quiet {
         println!("kply {}", env!("CARGO_PKG_VERSION"));
         println!("Placeholder CLI. Roadmap and commands are intentionally pending.");
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render a deterministic dry-run list of generated sandbox manifests.
+fn render_session_manifests(
+    cli: &Cli,
+    app_name: &str,
+    image: Option<&str>,
+    namespace: Option<&str>,
+    time_to_live: Option<&str>,
+    route_strategy: Option<&str>,
+) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+
+    let Some(app) = config
+        .apps()
+        .entries()
+        .iter()
+        .find(|app| app.name() == app_name)
+    else {
+        return render_app_not_found_error(app_name, cli.json);
+    };
+
+    let plan = match session_plan_from_config(app, image, namespace, time_to_live, route_strategy) {
+        Ok(plan) => plan,
+        Err(SessionPlanBuildError::Config(message)) => {
+            return render_session_plan_config_error(&message, cli.json);
+        }
+        Err(SessionPlanBuildError::Usage(message)) => {
+            return render_session_plan_error(&message, cli.json);
+        }
+    };
+    let manifests = match session_manifest_summaries(&plan) {
+        Ok(manifests) => manifests,
+        Err(error) => return render_session_manifest_error(&error, cli.json),
+    };
+
+    if cli.json {
+        let value = serde_json::json!({
+            "app": app_name,
+            "session_id": plan.id(),
+            "status": "generated",
+            "manifests": manifests
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else if !cli.quiet {
+        println!("kply session manifests {app_name}");
+        println!("session_id: {}", plan.id());
+        println!("manifests: {}", manifests.len());
+        for manifest in manifests {
+            println!(
+                "  manifest: {} {}/{}",
+                manifest.kind, manifest.namespace, manifest.name
+            );
+        }
     }
 
     Ok(ExitCode::SUCCESS)
@@ -264,9 +351,84 @@ fn render_session_plan(
     Ok(ExitCode::SUCCESS)
 }
 
+/// Stable manifest identifier rendered by `kply session manifests`.
+#[derive(Debug, Serialize)]
+struct SessionManifestSummary {
+    kind: String,
+    namespace: String,
+    name: String,
+}
+
+/// Error produced while building a session plan from config and CLI input.
 enum SessionPlanBuildError {
+    /// Configuration-derived data could not be converted into the core model.
     Config(String),
+    /// User-provided CLI input was invalid for session planning.
     Usage(String),
+}
+
+/// Build stable manifest summaries from generated session resources.
+fn session_manifest_summaries(
+    plan: &SessionPlan,
+) -> std::result::Result<Vec<SessionManifestSummary>, SessionManifestBuildError> {
+    let _deployment = sandbox_deployment_manifest(plan)?;
+    let _service = sandbox_service_manifest(plan)?;
+    let mut manifests = vec![
+        planned_manifest_summary(plan, SANDBOX_WORKLOAD_KIND, "Deployment")?,
+        planned_manifest_summary(plan, "Service", "Service")?,
+    ];
+
+    if plan.route_selector().is_some() {
+        let _route = sandbox_route_placeholder_manifest(plan)?;
+        manifests.push(planned_manifest_summary(plan, "HTTPRoute", "ConfigMap")?);
+    }
+
+    Ok(manifests)
+}
+
+/// Error produced while deriving the session manifest output summary.
+#[derive(Debug)]
+enum SessionManifestBuildError {
+    /// Core manifest generation rejected the session plan.
+    Manifest(SandboxManifestError),
+    /// CLI summary extraction could not find an expected planned resource.
+    Summary(&'static str),
+}
+
+impl fmt::Display for SessionManifestBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Manifest(error) => write!(formatter, "{error}"),
+            Self::Summary(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<SandboxManifestError> for SessionManifestBuildError {
+    fn from(error: SandboxManifestError) -> Self {
+        Self::Manifest(error)
+    }
+}
+
+/// Return the generated manifest identity for one planned resource kind.
+fn planned_manifest_summary(
+    plan: &SessionPlan,
+    planned_kind: &str,
+    manifest_kind: &str,
+) -> std::result::Result<SessionManifestSummary, SessionManifestBuildError> {
+    let resource = plan
+        .planned_resources()
+        .iter()
+        .find(|resource| resource.kind() == planned_kind)
+        .ok_or(SessionManifestBuildError::Summary(
+            "planned manifest resource missing",
+        ))?;
+
+    Ok(SessionManifestSummary {
+        kind: manifest_kind.to_owned(),
+        namespace: resource.namespace().to_owned(),
+        name: resource.name().to_owned(),
+    })
 }
 
 /// Build a session plan from static app configuration and CLI overrides.
@@ -342,7 +504,7 @@ fn session_plan_from_config(
     };
     let planned_resources = planned_session_resources(
         namespace,
-        app.workload_kind(),
+        SANDBOX_WORKLOAD_KIND,
         session_id.as_str(),
     )
     .map_err(|error| {
@@ -369,14 +531,14 @@ fn session_plan_from_config(
         SessionPlanBuildError::Config(format!("invalid planned check metadata: {error}"))
     })?;
     let planned_cleanup_steps =
-        planned_session_cleanup_steps(namespace, app.workload_kind(), session_id.as_str())
+        planned_session_cleanup_steps(namespace, SANDBOX_WORKLOAD_KIND, session_id.as_str())
             .map_err(|error| {
                 SessionPlanBuildError::Config(format!(
                     "invalid planned cleanup step metadata: {error}"
                 ))
             })?;
     let required_permissions =
-        required_session_permissions(app.workload_kind()).map_err(|error| {
+        required_session_permissions(SANDBOX_WORKLOAD_KIND).map_err(|error| {
             SessionPlanBuildError::Config(format!("invalid required permission metadata: {error}"))
         })?;
     let unsupported_feature_warnings = unsupported_session_feature_warnings(route_strategy)
@@ -971,6 +1133,27 @@ fn render_session_plan_config_error(message: &str, wants_json: bool) -> Result<E
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: config\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_BLOCKING))
+}
+
+/// Render session manifest generation errors.
+fn render_session_manifest_error(
+    error: &SessionManifestBuildError,
+    wants_json: bool,
+) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "session_manifests",
+                "exit_code": EXIT_BLOCKING,
+                "message": error.to_string()
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: session manifests\n\n{error}");
     }
 
     Ok(exit_code(EXIT_BLOCKING))
