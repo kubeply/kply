@@ -1276,6 +1276,8 @@ mod tests {
         check_rollout_availability, check_service_endpoints, check_timeout,
     };
     use kply_core::{CheckResultStatus, ProbeKind};
+    use serde::Serialize;
+    use std::path::{Path, PathBuf};
 
     /// Builds a pod readiness input fixture.
     fn pod(name: &str, phase: Option<&str>, ready: Option<bool>) -> PodReadinessInput {
@@ -1392,6 +1394,105 @@ mod tests {
         completed: bool,
     ) -> CheckTimeoutInput {
         CheckTimeoutInput::new(check_name, timeout_millis, elapsed_millis, completed)
+    }
+
+    /// Return the repository fixture root.
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("kply-checks should live under crates/")
+            .join("fixtures")
+    }
+
+    /// Assert a check result matches the named JSON fixture.
+    fn assert_check_result_fixture(name: &str, result: &impl Serialize) {
+        let fixture_path = fixture_root()
+            .join("reports")
+            .join("check-results")
+            .join(format!("{name}.json"));
+        let fixture = std::fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
+            panic!(
+                "fixture {} should be readable: {error}",
+                fixture_path.display()
+            )
+        });
+        let expected: serde_json::Value =
+            serde_json::from_str(&fixture).expect("fixture should be valid JSON");
+        let actual = serde_json::to_value(result).expect("check result should serialize");
+
+        assert_eq!(actual, expected, "check result fixture {name} drifted");
+    }
+
+    #[test]
+    /// Verifies the reusable check result fixture suite.
+    fn matches_check_result_fixture_suite() {
+        assert_check_result_fixture(
+            "pod-readiness",
+            &check_pod_readiness(&[
+                pod("checkout-a", Some("Running"), Some(true)),
+                pod("checkout-b", Some("Running"), Some(false)),
+                pod("checkout-c", Some("Running"), None),
+            ]),
+        );
+        assert_check_result_fixture(
+            "rollout-availability",
+            &check_rollout_availability(&rollout(Some(3), Some(2), Some(2), Some(3), Some(1))),
+        );
+        assert_check_result_fixture(
+            "service-endpoint",
+            &check_service_endpoints(&service(1, Some(2), Some(1), Some(0))),
+        );
+        assert_check_result_fixture(
+            "http-smoke",
+            &check_http_smoke(&http_smoke(
+                Some("http://checkout-api.shop.svc.cluster.local/healthz"),
+                200,
+                None,
+                Some("connection_refused"),
+            )),
+        );
+        assert_check_result_fixture(
+            "log-fatal-pattern",
+            &check_log_fatal_patterns(&log_fatal_patterns(
+                42,
+                &["panic", "fatal"],
+                &["panic"],
+                None,
+            )),
+        );
+        assert_check_result_fixture(
+            "restart-count",
+            &check_restart_counts(
+                &[
+                    restart_count("checkout-a", "api", Some(1)),
+                    restart_count("checkout-b", "api", Some(4)),
+                    restart_count("checkout-c", "worker", None),
+                ],
+                3,
+            ),
+        );
+        assert_check_result_fixture(
+            "resource-request-sanity",
+            &check_resource_request_sanity(&[
+                resource_request("checkout-a", "api", Some(" "), Some("256Mi")),
+                resource_request("checkout-b", "worker", Some("100m"), Some("")),
+            ]),
+        );
+        assert_check_result_fixture(
+            "probe-existence",
+            &check_probe_existence(
+                &[
+                    probe_existence("checkout-api", "api", true, false, false),
+                    probe_existence("checkout-api", "worker", false, true, false),
+                ],
+                &[ProbeKind::Readiness, ProbeKind::Liveness],
+            ),
+        );
+        assert_check_result_fixture(
+            "check-timeout",
+            &check_timeout(&timeout("rollout_availability", 5_000, Some(5_001), true)),
+        );
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "restart_threshold": 3,
+  "total_containers": 3,
+  "restarted_containers": 2,
+  "threshold_exceeded_containers": 1,
+  "unknown_containers": 1,
+  "max_restart_count": 4
+}

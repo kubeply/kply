@@ -1,3 +1,8 @@
 # Report Fixtures
 
-This directory is reserved for Kply report fixtures.
+This directory contains Kply report fixtures.
+
+Current fixtures:
+
+- `check-results/`: representative JSON outputs for each runtime check result
+  type in `kply-checks`.

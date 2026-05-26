@@ -1,0 +1,8 @@
+{
+  "status": "warning",
+  "service": "checkout-api",
+  "declared_ports": 1,
+  "ready_endpoints": 2,
+  "not_ready_endpoints": 1,
+  "unknown_endpoints": 0
+}

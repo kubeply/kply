@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "workload": "checkout-api",
+  "desired_replicas": 3,
+  "ready_replicas": 2,
+  "available_replicas": 2,
+  "updated_replicas": 3,
+  "unavailable_replicas": 1
+}
