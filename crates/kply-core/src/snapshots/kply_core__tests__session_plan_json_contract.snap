@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 6882
+assertion_line: 7276
 expression: value
 ---
 {
@@ -88,6 +88,14 @@ expression: value
         "get",
         "patch"
       ]
+    }
+  ],
+  "risk_notes": [
+    {
+      "category": "secret",
+      "reason": "secret_reference_requires_metadata_only_handling",
+      "severity": "warning",
+      "target": "checkout/Secret/checkout-api-credentials"
     }
   ],
   "route_selector": {

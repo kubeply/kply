@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 7118
+assertion_line: 7526
 expression: value
 ---
 {
@@ -24,6 +24,7 @@ expression: value
       ]
     },
     "required_permissions": [],
+    "risk_notes": [],
     "route_selector": null,
     "status": "planned",
     "ttl": null,

@@ -9,8 +9,8 @@ use kply_config::{
 };
 use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
-    PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RouteSelector,
-    ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive,
+    PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RiskNote,
+    RouteSelector, ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive,
     UnsupportedFeatureWarning, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
@@ -24,6 +24,10 @@ const SESSION_HEADER_NAME: &str = "x-kply-session";
 const FEATURE_PREVIEW_ROUTING: &str = "preview_routing";
 const REASON_ROUTE_STRATEGY_PREVIEW_NOT_IMPLEMENTED: &str =
     "route_strategy_preview_not_implemented";
+const RISK_CATEGORY_DATABASE: &str = "database";
+const RISK_SEVERITY_WARNING: &str = "warning";
+const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
+    "database_reference_requires_manual_review";
 const SUPPORTED_ROUTE_STRATEGIES: [RouteStrategy; 3] = [
     RouteStrategy::Header,
     RouteStrategy::Host,
@@ -222,6 +226,10 @@ fn render_session_plan(
         for warning in plan.unsupported_feature_warnings() {
             println!("  unsupported: {warning}");
         }
+        println!("risk_notes: {}", plan.risk_notes().len());
+        for note in plan.risk_notes() {
+            println!("  risk: {note}");
+        }
         println!(
             "route_selector: {}",
             plan.route_selector()
@@ -361,6 +369,9 @@ fn session_plan_from_config(
                 "invalid unsupported feature warning metadata: {error}"
             ))
         })?;
+    let risk_notes = planned_session_risk_notes(app).map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid risk note metadata: {error}"))
+    })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -378,6 +389,7 @@ fn session_plan_from_config(
     plan = plan.with_planned_cleanup_steps(planned_cleanup_steps);
     plan = plan.with_required_permissions(required_permissions);
     plan = plan.with_unsupported_feature_warnings(unsupported_feature_warnings);
+    plan = plan.with_risk_notes(risk_notes);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -545,6 +557,56 @@ fn unsupported_session_feature_warnings(
     };
 
     Ok(warnings)
+}
+
+fn planned_session_risk_notes(app: &AppConfig) -> std::result::Result<Vec<RiskNote>, String> {
+    let target = database_like_app_target(app);
+    let notes = match target {
+        Some(target) => vec![
+            RiskNote::new(
+                RISK_CATEGORY_DATABASE,
+                RISK_SEVERITY_WARNING,
+                target,
+                RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW,
+            )
+            .map_err(|error| error.to_string())?,
+        ],
+        None => Vec::new(),
+    };
+
+    Ok(notes)
+}
+
+fn database_like_app_target(app: &AppConfig) -> Option<String> {
+    let candidates = [
+        ("app", app.name()),
+        ("workload", app.workload()),
+        ("service", app.service()),
+        ("image", app.default_image().unwrap_or_default()),
+    ];
+
+    candidates.into_iter().find_map(|(field, value)| {
+        contains_database_token(value).then(|| format!("{field}:{value}"))
+    })
+}
+
+fn contains_database_token(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .any(|token| {
+            matches!(
+                token.to_ascii_lowercase().as_str(),
+                "db" | "database"
+                    | "mysql"
+                    | "mariadb"
+                    | "postgres"
+                    | "postgresql"
+                    | "mongo"
+                    | "mongodb"
+                    | "redis"
+            )
+        })
 }
 
 fn workload_permission_resource(workload_kind: &str) -> std::result::Result<String, String> {
@@ -1085,9 +1147,10 @@ mod tests {
     use super::{
         planned_resource_token, planned_session_annotations, planned_session_checks,
         planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        required_session_permissions, session_token, unsupported_session_feature_warnings,
-        workload_permission_resource,
+        planned_session_risk_notes, required_session_permissions, session_token,
+        unsupported_session_feature_warnings, workload_permission_resource,
     };
+    use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{ImageRef, WorkloadRef};
 
     #[test]
@@ -1342,6 +1405,84 @@ mod tests {
         assert_eq!(
             preview_warnings[0].reason(),
             "route_strategy_preview_not_implemented"
+        );
+    }
+
+    #[test]
+    fn builds_planned_session_risk_notes_for_database_like_apps() {
+        let checkout_app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("registry.example.com/shop/checkout:test".to_owned()),
+            RouteStrategy::Header,
+        );
+        let database_app = AppConfig::new(
+            "checkout-db",
+            "shop",
+            "checkout-postgres",
+            "checkout-postgres",
+            Some("postgres:16".to_owned()),
+            RouteStrategy::Header,
+        );
+
+        let checkout_notes = planned_session_risk_notes(&checkout_app).expect("risk notes");
+        let database_notes = planned_session_risk_notes(&database_app).expect("risk notes");
+
+        assert!(checkout_notes.is_empty());
+        assert_eq!(database_notes.len(), 1);
+        assert_eq!(database_notes[0].category(), "database");
+        assert_eq!(database_notes[0].severity(), "warning");
+        assert_eq!(database_notes[0].target(), "app:checkout-db");
+        assert_eq!(
+            database_notes[0].reason(),
+            "database_reference_requires_manual_review"
+        );
+    }
+
+    #[test]
+    fn builds_planned_session_risk_notes_for_database_like_workloads_services_and_images() {
+        let workload_app = AppConfig::new(
+            "checkout",
+            "shop",
+            "mysql-primary",
+            "checkout-http",
+            Some("registry.example.com/shop/checkout:test".to_owned()),
+            RouteStrategy::Header,
+        );
+        let service_app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-postgres",
+            Some("registry.example.com/shop/checkout:test".to_owned()),
+            RouteStrategy::Header,
+        );
+        let image_app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("postgres:16".to_owned()),
+            RouteStrategy::Header,
+        );
+
+        assert_database_risk_note(&workload_app, "workload:mysql-primary");
+        assert_database_risk_note(&service_app, "service:checkout-postgres");
+        assert_database_risk_note(&image_app, "image:postgres:16");
+    }
+
+    fn assert_database_risk_note(app: &AppConfig, target: &str) {
+        let notes = planned_session_risk_notes(app).expect("risk notes");
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].category(), "database");
+        assert_eq!(notes[0].severity(), "warning");
+        assert_eq!(notes[0].target(), target);
+        assert_eq!(
+            notes[0].reason(),
+            "database_reference_requires_manual_review"
         );
     }
 

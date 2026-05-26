@@ -133,6 +133,9 @@ Current provisional pre-`1.0.0` session plan fields:
   and serialized in deterministic order.
 - `unsupported_feature_warnings`: list of plan features Kply can describe but
   cannot execute yet, deduplicated and serialized in deterministic order.
+- `risk_notes`: list of sensitive infrastructure references that require
+  manual review or policy handling, deduplicated and serialized in
+  deterministic order.
 - `route_selector`: always serialized as a nullable field; it is a test
   traffic selector object when configured and `null` otherwise.
 - `policy`: allowed operation policy.
@@ -180,6 +183,13 @@ Current provisional pre-`1.0.0` unsupported feature warning fields:
 - `feature`: stable unsupported feature identifier.
 - `reason`: stable reason code explaining why the feature is not executable
   yet.
+
+Current provisional pre-`1.0.0` risk note fields:
+
+- `category`: stable risk category such as `database` or `secret`.
+- `severity`: stable risk severity such as `warning`.
+- `target`: resource, config value, or metadata reference the note applies to.
+- `reason`: stable reason code explaining why the target requires review.
 
 Current provisional pre-`1.0.0` route selector fields:
 
