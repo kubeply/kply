@@ -1531,6 +1531,49 @@ impl<'de> Deserialize<'de> for PlannedCheck {
     }
 }
 
+/// Stable result status for one executed verification check.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckResultStatus {
+    /// The check completed successfully and found no blocking condition.
+    Passed,
+    /// The check completed and found a blocking condition.
+    Failed,
+    /// The check completed and found a non-blocking concern.
+    Warning,
+    /// The check did not run because prerequisites were missing or disabled.
+    Skipped,
+}
+
+impl CheckResultStatus {
+    /// Return every check result status in declaration order.
+    pub const fn all() -> &'static [Self] {
+        &[Self::Passed, Self::Failed, Self::Warning, Self::Skipped]
+    }
+
+    /// Return the stable snake_case status name used in agent-readable output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Warning => "warning",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    /// Return whether this check result should block a successful session report.
+    pub const fn is_blocking(&self) -> bool {
+        matches!(self, Self::Failed)
+    }
+}
+
+impl fmt::Display for CheckResultStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Planned cleanup operation for a future sandbox session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct PlannedCleanupStep {
@@ -4978,11 +5021,11 @@ fn is_workload_kind_character(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppGraph, AppGraphWarning, ConfidenceLevel, ConfigMapRef, ConfigMapRefError,
-        ConfigReference, ContainerRef, ContainerRefError, GraphRelationship, IMAGE_REF_MAX_LEN,
-        ImageFacts, ImageRef, ImageRefError, KubernetesResourceRef, KubernetesResourceRefError,
-        METADATA_KEY_MAX_LEN, METADATA_VALUE_MAX_LEN, MetadataEntry, MetadataEntryError,
-        MetadataKeyError, MetadataValueError, PLANNED_CHECK_NAME_MAX_LEN,
+        AppGraph, AppGraphWarning, CheckResultStatus, ConfidenceLevel, ConfigMapRef,
+        ConfigMapRefError, ConfigReference, ContainerRef, ContainerRefError, GraphRelationship,
+        IMAGE_REF_MAX_LEN, ImageFacts, ImageRef, ImageRefError, KubernetesResourceRef,
+        KubernetesResourceRefError, METADATA_KEY_MAX_LEN, METADATA_VALUE_MAX_LEN, MetadataEntry,
+        MetadataEntryError, MetadataKeyError, MetadataValueError, PLANNED_CHECK_NAME_MAX_LEN,
         PLANNED_CHECK_TARGET_MAX_LEN, PLANNED_CLEANUP_ACTION_MAX_LEN,
         PLANNED_CLEANUP_TARGET_MAX_LEN, PlannedCheck, PlannedCheckError, PlannedCheckNameError,
         PlannedCheckTargetError, PlannedCleanupActionError, PlannedCleanupStep,
@@ -8487,6 +8530,46 @@ mod tests {
             check.to_string(),
             "workload_ready -> checkout/Deployment/checkout-api"
         );
+    }
+
+    /// Verifies the stable status ordering, display names, and blocking semantics.
+    #[test]
+    fn renders_check_result_statuses() {
+        assert_eq!(
+            CheckResultStatus::all(),
+            [
+                CheckResultStatus::Passed,
+                CheckResultStatus::Failed,
+                CheckResultStatus::Warning,
+                CheckResultStatus::Skipped,
+            ]
+        );
+        assert_eq!(CheckResultStatus::Passed.as_str(), "passed");
+        assert_eq!(CheckResultStatus::Failed.as_str(), "failed");
+        assert_eq!(CheckResultStatus::Warning.as_str(), "warning");
+        assert_eq!(CheckResultStatus::Skipped.as_str(), "skipped");
+        assert_eq!(CheckResultStatus::Warning.to_string(), "warning");
+        assert!(CheckResultStatus::Failed.is_blocking());
+        assert!(!CheckResultStatus::Warning.is_blocking());
+        assert!(!CheckResultStatus::Skipped.is_blocking());
+        assert!(!CheckResultStatus::Passed.is_blocking());
+    }
+
+    /// Verifies the JSON contract for check result status values.
+    #[test]
+    fn serializes_check_result_statuses_as_stable_names() {
+        let value = serde_json::to_value([
+            CheckResultStatus::Passed,
+            CheckResultStatus::Failed,
+            CheckResultStatus::Warning,
+            CheckResultStatus::Skipped,
+        ])
+        .expect("check result statuses should serialize");
+        let statuses: Vec<CheckResultStatus> = serde_json::from_value(value.clone())
+            .expect("check result statuses should deserialize");
+
+        assert_eq!(value, json!(["passed", "failed", "warning", "skipped"]));
+        assert_eq!(statuses, CheckResultStatus::all());
     }
 
     #[test]

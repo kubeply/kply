@@ -165,6 +165,14 @@ Current provisional pre-`1.0.0` planned check fields:
 - `name`: stable planned check name string.
 - `target`: resource, image, or route target string the check will verify.
 
+Current provisional pre-`1.0.0` executed check result statuses:
+
+- `passed`: the check completed successfully and found no blocking condition.
+- `failed`: the check completed and found a blocking condition.
+- `warning`: the check completed and found a non-blocking concern.
+- `skipped`: the check did not run because prerequisites were missing or
+  disabled.
+
 Current provisional pre-`1.0.0` planned cleanup step fields:
 
 - `action`: stable planned cleanup action string.
