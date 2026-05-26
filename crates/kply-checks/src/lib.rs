@@ -1134,14 +1134,146 @@ fn container_has_probe_kind(container: &ProbeExistenceInput, probe_kind: ProbeKi
     }
 }
 
+/// Input facts for evaluating one check timeout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CheckTimeoutInput {
+    check_name: String,
+    timeout_millis: u64,
+    elapsed_millis: Option<u64>,
+    completed: bool,
+}
+
+impl CheckTimeoutInput {
+    /// Create timeout input from one check execution attempt.
+    pub fn new(
+        check_name: impl Into<String>,
+        timeout_millis: u64,
+        elapsed_millis: Option<u64>,
+        completed: bool,
+    ) -> Self {
+        Self {
+            check_name: check_name.into(),
+            timeout_millis,
+            elapsed_millis,
+            completed,
+        }
+    }
+
+    /// Borrow the check name.
+    pub fn check_name(&self) -> &str {
+        &self.check_name
+    }
+
+    /// Return the configured timeout budget in milliseconds.
+    pub const fn timeout_millis(&self) -> u64 {
+        self.timeout_millis
+    }
+
+    /// Return the observed elapsed time in milliseconds.
+    pub const fn elapsed_millis(&self) -> Option<u64> {
+        self.elapsed_millis
+    }
+
+    /// Return whether the check completed before evaluation.
+    pub const fn completed(&self) -> bool {
+        self.completed
+    }
+}
+
+/// Summary produced by the check timeout evaluator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CheckTimeoutResult {
+    status: CheckResultStatus,
+    check_name: String,
+    timeout_millis: u64,
+    elapsed_millis: Option<u64>,
+    completed: bool,
+    timed_out: bool,
+}
+
+impl CheckTimeoutResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow the evaluated check name.
+    pub fn check_name(&self) -> &str {
+        &self.check_name
+    }
+
+    /// Return the configured timeout budget in milliseconds.
+    pub const fn timeout_millis(&self) -> u64 {
+        self.timeout_millis
+    }
+
+    /// Return the observed elapsed time in milliseconds.
+    pub const fn elapsed_millis(&self) -> Option<u64> {
+        self.elapsed_millis
+    }
+
+    /// Return whether the check completed before evaluation.
+    pub const fn completed(&self) -> bool {
+        self.completed
+    }
+
+    /// Return whether timeout evidence breached the budget.
+    ///
+    /// Completed checks time out when `elapsed_millis > timeout_millis`; incomplete checks time out
+    /// when `elapsed_millis >= timeout_millis`.
+    pub const fn timed_out(&self) -> bool {
+        self.timed_out
+    }
+}
+
+/// Evaluate whether one check execution exceeded its timeout budget.
+pub fn check_timeout(timeout: &CheckTimeoutInput) -> CheckTimeoutResult {
+    let timed_out = check_timed_out(timeout);
+    let status = if timeout.timeout_millis == 0 {
+        CheckResultStatus::Skipped
+    } else if timed_out {
+        CheckResultStatus::Failed
+    } else if timeout.elapsed_millis.is_none() || !timeout.completed {
+        CheckResultStatus::Warning
+    } else {
+        CheckResultStatus::Passed
+    };
+
+    CheckTimeoutResult {
+        status,
+        check_name: timeout.check_name.clone(),
+        timeout_millis: timeout.timeout_millis,
+        elapsed_millis: timeout.elapsed_millis,
+        completed: timeout.completed,
+        timed_out,
+    }
+}
+
+/// Return whether timeout evidence shows a deadline breach.
+fn check_timed_out(timeout: &CheckTimeoutInput) -> bool {
+    if timeout.timeout_millis == 0 {
+        return false;
+    }
+
+    let Some(elapsed_millis) = timeout.elapsed_millis else {
+        return false;
+    };
+
+    if timeout.completed {
+        elapsed_millis > timeout.timeout_millis
+    } else {
+        elapsed_millis >= timeout.timeout_millis
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, ProbeExistenceInput,
-        ResourceRequestInput, RestartCountInput, RolloutAvailabilityInput, ServiceEndpointInput,
-        check_http_smoke, check_log_fatal_patterns, check_pod_readiness, check_probe_existence,
-        check_resource_request_sanity, check_restart_counts, check_rollout_availability,
-        check_service_endpoints,
+        CheckTimeoutInput, HttpSmokeInput, LogFatalPatternInput, PodReadinessInput,
+        ProbeExistenceInput, ResourceRequestInput, RestartCountInput, RolloutAvailabilityInput,
+        ServiceEndpointInput, check_http_smoke, check_log_fatal_patterns, check_pod_readiness,
+        check_probe_existence, check_resource_request_sanity, check_restart_counts,
+        check_rollout_availability, check_service_endpoints, check_timeout,
     };
     use kply_core::{CheckResultStatus, ProbeKind};
 
@@ -1250,6 +1382,16 @@ mod tests {
             liveness_probe,
             startup_probe,
         )
+    }
+
+    /// Builds a check timeout input fixture.
+    fn timeout(
+        check_name: &str,
+        timeout_millis: u64,
+        elapsed_millis: Option<u64>,
+        completed: bool,
+    ) -> CheckTimeoutInput {
+        CheckTimeoutInput::new(check_name, timeout_millis, elapsed_millis, completed)
     }
 
     #[test]
@@ -1745,5 +1887,83 @@ mod tests {
         assert_eq!(result.missing_probe_containers(), 0);
         assert_eq!(result.missing_readiness_probe_containers(), 0);
         assert_eq!(result.missing_startup_probe_containers(), 0);
+    }
+
+    #[test]
+    /// Passes when a check completes within its timeout budget.
+    fn passes_when_check_finishes_before_timeout() {
+        let result = check_timeout(&timeout("http_smoke", 5_000, Some(4_999), true));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.check_name(), "http_smoke");
+        assert_eq!(result.timeout_millis(), 5_000);
+        assert_eq!(result.elapsed_millis(), Some(4_999));
+        assert!(result.completed());
+        assert!(!result.timed_out());
+    }
+
+    #[test]
+    /// Passes when a completed check lands exactly on its timeout budget.
+    fn passes_when_completed_check_at_timeout_boundary() {
+        let result = check_timeout(&timeout("http_smoke", 5_000, Some(5_000), true));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.elapsed_millis(), Some(5_000));
+        assert!(result.completed());
+        assert!(!result.timed_out());
+    }
+
+    #[test]
+    /// Fails when a completed check exceeds its timeout budget.
+    fn fails_when_completed_check_exceeds_timeout() {
+        let result = check_timeout(&timeout("rollout_availability", 5_000, Some(5_001), true));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.elapsed_millis(), Some(5_001));
+        assert!(result.completed());
+        assert!(result.timed_out());
+    }
+
+    #[test]
+    /// Fails when an incomplete check reaches its timeout budget.
+    fn fails_when_incomplete_check_reaches_timeout() {
+        let result = check_timeout(&timeout("pod_readiness", 5_000, Some(5_000), false));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.elapsed_millis(), Some(5_000));
+        assert!(!result.completed());
+        assert!(result.timed_out());
+    }
+
+    #[test]
+    /// Warns when timeout evidence is missing.
+    fn warns_when_timeout_elapsed_evidence_is_missing() {
+        let result = check_timeout(&timeout("log_fatal_patterns", 5_000, None, true));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.elapsed_millis(), None);
+        assert!(result.completed());
+        assert!(!result.timed_out());
+    }
+
+    #[test]
+    /// Warns when a check is incomplete but has not reached its timeout.
+    fn warns_when_check_is_incomplete_before_timeout() {
+        let result = check_timeout(&timeout("restart_counts", 5_000, Some(2_500), false));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.elapsed_millis(), Some(2_500));
+        assert!(!result.completed());
+        assert!(!result.timed_out());
+    }
+
+    #[test]
+    /// Skips when no timeout budget is configured.
+    fn skips_when_timeout_budget_is_disabled() {
+        let result = check_timeout(&timeout("probe_existence", 0, Some(25_000), false));
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.timeout_millis(), 0);
+        assert!(!result.timed_out());
     }
 }
