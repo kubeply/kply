@@ -8,4 +8,4 @@ authors.workspace = true
 
 [dependencies]
 kply-core.workspace = true
-
+serde.workspace = true

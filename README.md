@@ -10,17 +10,15 @@ promoted.
 
 ## Status
 
-Early scaffold. Most product crates intentionally contain placeholders only:
-workspace structure, crate boundaries, basic CLI entrypoint, tests, CI, release
-planning, and OpenSpec context. `kply-core` has started the future Kply session
-domain model.
+Implementation in progress. The workspace now includes real session planning,
+Kubernetes discovery, sandbox create/cleanup, and early runtime check support;
+routing remains placeholder-only until its roadmap milestone starts.
 
-Sessions are not implemented yet.
+Session mutation commands require explicit `--apply` confirmation.
 
 ## Product Primitive
 
-A future Kply session is expected to be a temporary, scoped workspace for an
-agent:
+A Kply session is a temporary, scoped workspace for an agent:
 
 - target workload
 - proposed image or config change
