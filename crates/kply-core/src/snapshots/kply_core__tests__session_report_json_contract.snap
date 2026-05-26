@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 6837
+assertion_line: 7118
 expression: value
 ---
 {
@@ -27,6 +27,7 @@ expression: value
     "route_selector": null,
     "status": "planned",
     "ttl": null,
+    "unsupported_feature_warnings": [],
     "workload": {
       "kind": "Deployment",
       "name": "checkout-api",

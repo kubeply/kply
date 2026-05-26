@@ -131,6 +131,8 @@ Current provisional pre-`1.0.0` session plan fields:
 - `required_permissions`: list of Kubernetes-style permissions Kply expects
   the caller or future controller to need for the planned session, deduplicated
   and serialized in deterministic order.
+- `unsupported_feature_warnings`: list of plan features Kply can describe but
+  cannot execute yet, deduplicated and serialized in deterministic order.
 - `route_selector`: always serialized as a nullable field; it is a test
   traffic selector object when configured and `null` otherwise.
 - `policy`: allowed operation policy.
@@ -172,6 +174,12 @@ Current provisional pre-`1.0.0` required permission fields:
 - `resource`: Kubernetes resource plural string.
 - `verbs`: deduplicated list of Kubernetes RBAC verbs required for that
   resource, serialized in deterministic order.
+
+Current provisional pre-`1.0.0` unsupported feature warning fields:
+
+- `feature`: stable unsupported feature identifier.
+- `reason`: stable reason code explaining why the feature is not executable
+  yet.
 
 Current provisional pre-`1.0.0` route selector fields:
 
