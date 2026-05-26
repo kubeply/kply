@@ -9,8 +9,8 @@ use kply_config::{
 };
 use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
-    PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RouteSelector, ServiceRef, SessionId,
-    SessionName, SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
+    PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RouteSelector,
+    ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
@@ -205,6 +205,13 @@ fn render_session_plan(
             println!("  cleanup: {step}");
         }
         println!(
+            "required_permissions: {}",
+            plan.required_permissions().len()
+        );
+        for permission in plan.required_permissions() {
+            println!("  permission: {permission}");
+        }
+        println!(
             "route_selector: {}",
             plan.route_selector()
                 .map_or("<none>".to_owned(), ToString::to_string)
@@ -333,6 +340,10 @@ fn session_plan_from_config(
                     "invalid planned cleanup step metadata: {error}"
                 ))
             })?;
+    let required_permissions =
+        required_session_permissions(app.workload_kind()).map_err(|error| {
+            SessionPlanBuildError::Config(format!("invalid required permission metadata: {error}"))
+        })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -348,6 +359,7 @@ fn session_plan_from_config(
     plan = plan.with_planned_annotations(planned_annotations);
     plan = plan.with_planned_checks(planned_checks);
     plan = plan.with_planned_cleanup_steps(planned_cleanup_steps);
+    plan = plan.with_required_permissions(required_permissions);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -470,6 +482,51 @@ fn planned_session_cleanup_steps(
         PlannedCleanupStep::new(action, target).map_err(|error| error.to_string())
     })
     .collect()
+}
+
+fn required_session_permissions(
+    workload_kind: &str,
+) -> std::result::Result<Vec<RequiredPermission>, String> {
+    let workload_resource = workload_permission_resource(workload_kind)?;
+    let mut permissions = [
+        (
+            "apps",
+            workload_resource.as_str(),
+            vec!["create", "delete", "get", "patch"],
+        ),
+        ("", "pods", vec!["get", "list", "watch"]),
+        ("", "services", vec!["create", "delete", "get"]),
+        (
+            "gateway.networking.k8s.io",
+            "httproutes",
+            vec!["create", "delete", "get"],
+        ),
+    ]
+    .into_iter()
+    .map(|(api_group, resource, verbs)| {
+        RequiredPermission::new(api_group, resource, verbs).map_err(|error| error.to_string())
+    })
+    .collect::<std::result::Result<Vec<_>, _>>()?;
+    permissions.sort_unstable();
+    permissions.dedup();
+    Ok(permissions)
+}
+
+fn workload_permission_resource(workload_kind: &str) -> std::result::Result<String, String> {
+    match workload_kind {
+        "DaemonSet" => Ok("daemonsets".to_owned()),
+        "Deployment" => Ok("deployments".to_owned()),
+        "ReplicaSet" => Ok("replicasets".to_owned()),
+        "StatefulSet" => Ok("statefulsets".to_owned()),
+        value => Err(format!(
+            "unsupported workload kind `{value}` for required permission planning; expected {}",
+            supported_workload_kinds()
+        )),
+    }
+}
+
+fn supported_workload_kinds() -> String {
+    ["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"].join(", ")
 }
 
 fn planned_resource_token(session_id: &str, suffix: &str) -> String {
@@ -993,7 +1050,7 @@ mod tests {
     use super::{
         planned_resource_token, planned_session_annotations, planned_session_checks,
         planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        session_token,
+        required_session_permissions, session_token, workload_permission_resource,
     };
     use kply_core::{ImageRef, WorkloadRef};
 
@@ -1182,6 +1239,58 @@ mod tests {
             .expect_err("invalid cleanup resource should fail");
 
         assert!(error.contains("namespace"));
+    }
+
+    #[test]
+    fn builds_required_session_permissions() {
+        let permissions = required_session_permissions("Deployment").expect("required permissions");
+
+        assert_eq!(permissions.len(), 4);
+        assert_eq!(permissions[0].api_group(), "");
+        assert_eq!(permissions[0].resource(), "pods");
+        assert_eq!(permissions[0].verbs(), ["get", "list", "watch"]);
+        assert_eq!(permissions[1].api_group(), "");
+        assert_eq!(permissions[1].resource(), "services");
+        assert_eq!(permissions[1].verbs(), ["create", "delete", "get"]);
+        assert_eq!(permissions[2].api_group(), "apps");
+        assert_eq!(permissions[2].resource(), "deployments");
+        assert_eq!(permissions[2].verbs(), ["create", "delete", "get", "patch"]);
+        assert_eq!(permissions[3].api_group(), "gateway.networking.k8s.io");
+        assert_eq!(permissions[3].resource(), "httproutes");
+        assert_eq!(permissions[3].verbs(), ["create", "delete", "get"]);
+    }
+
+    #[test]
+    fn required_session_permissions_return_validation_errors() {
+        let error = required_session_permissions("Bad_Workload")
+            .expect_err("invalid workload resource should fail");
+
+        assert!(error.contains("unsupported workload kind"));
+    }
+
+    #[test]
+    fn maps_known_workload_kinds_to_permission_resources() {
+        assert_eq!(
+            workload_permission_resource("DaemonSet").expect("workload resource"),
+            "daemonsets"
+        );
+        assert_eq!(
+            workload_permission_resource("Deployment").expect("workload resource"),
+            "deployments"
+        );
+        assert_eq!(
+            workload_permission_resource("ReplicaSet").expect("workload resource"),
+            "replicasets"
+        );
+        assert_eq!(
+            workload_permission_resource("StatefulSet").expect("workload resource"),
+            "statefulsets"
+        );
+        assert!(
+            workload_permission_resource("Widget")
+                .expect_err("unknown workload kind should fail")
+                .contains("unsupported workload kind")
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 6407
+assertion_line: 6837
 expression: value
 ---
 {
@@ -23,6 +23,7 @@ expression: value
         "cleanup"
       ]
     },
+    "required_permissions": [],
     "route_selector": null,
     "status": "planned",
     "ttl": null,

@@ -13,6 +13,10 @@ const PLANNED_CHECK_NAME_MAX_LEN: usize = 63;
 const PLANNED_CHECK_TARGET_MAX_LEN: usize = 255;
 const PLANNED_CLEANUP_ACTION_MAX_LEN: usize = 63;
 const PLANNED_CLEANUP_TARGET_MAX_LEN: usize = 255;
+const REQUIRED_PERMISSION_API_GROUP_MAX_LEN: usize = 253;
+const REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN: usize = 63;
+const REQUIRED_PERMISSION_RESOURCE_MAX_LEN: usize = 253;
+const REQUIRED_PERMISSION_VERB_MAX_LEN: usize = 63;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -1559,6 +1563,83 @@ impl<'de> Deserialize<'de> for PlannedCleanupStep {
     }
 }
 
+/// Kubernetes-style permission required to execute a future session plan.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct RequiredPermission {
+    api_group: String,
+    resource: String,
+    verbs: Vec<String>,
+}
+
+impl RequiredPermission {
+    /// Create a [`RequiredPermission`] from validated RBAC-like parts.
+    pub fn new(
+        api_group: impl Into<String>,
+        resource: impl Into<String>,
+        verbs: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self, RequiredPermissionError> {
+        let api_group = api_group.into();
+        let resource = resource.into();
+        let verbs = deduplicate_permission_verbs(verbs.into_iter().map(Into::into))
+            .map_err(RequiredPermissionError::Verb)?;
+
+        validate_required_permission_api_group(&api_group)
+            .map_err(RequiredPermissionError::ApiGroup)?;
+        validate_required_permission_resource(&resource)
+            .map_err(RequiredPermissionError::Resource)?;
+        if verbs.is_empty() {
+            return Err(RequiredPermissionError::EmptyVerbs);
+        }
+
+        Ok(Self {
+            api_group,
+            resource,
+            verbs,
+        })
+    }
+
+    /// Borrow the Kubernetes API group, or an empty string for the core group.
+    pub fn api_group(&self) -> &str {
+        &self.api_group
+    }
+
+    /// Borrow the Kubernetes resource name.
+    pub fn resource(&self) -> &str {
+        &self.resource
+    }
+
+    /// Borrow required verbs in deterministic order.
+    pub fn verbs(&self) -> &[String] {
+        &self.verbs
+    }
+}
+
+impl fmt::Display for RequiredPermission {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let api_group = if self.api_group.is_empty() {
+            "core"
+        } else {
+            &self.api_group
+        };
+        write!(
+            formatter,
+            "{api_group}/{} [{}]",
+            self.resource,
+            self.verbs.join(",")
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for RequiredPermission {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = RequiredPermissionFields::deserialize(deserializer)?;
+        Self::new(fields.api_group, fields.resource, fields.verbs).map_err(D::Error::custom)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1796,9 +1877,9 @@ impl std::error::Error for SessionPolicyError {}
 /// proposed [`ImageRef`], optional time-to-live, planned
 /// [`KubernetesResourceRef`] resources, planned [`MetadataEntry`] labels and
 /// annotations, planned [`PlannedCheck`] checks, planned
-/// [`PlannedCleanupStep`] cleanup steps, optional [`RouteSelector`],
-/// [`SessionPolicy`], and initial [`SessionStatus`] for a session that has not
-/// yet been executed.
+/// [`PlannedCleanupStep`] cleanup steps, required [`RequiredPermission`]
+/// permissions, optional [`RouteSelector`], [`SessionPolicy`], and initial
+/// [`SessionStatus`] for a session that has not yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
@@ -1812,6 +1893,7 @@ pub struct SessionPlan {
     planned_annotations: Vec<MetadataEntry>,
     planned_checks: Vec<PlannedCheck>,
     planned_cleanup_steps: Vec<PlannedCleanupStep>,
+    required_permissions: Vec<RequiredPermission>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1837,6 +1919,7 @@ impl SessionPlan {
             planned_annotations: Vec::new(),
             planned_checks: Vec::new(),
             planned_cleanup_steps: Vec::new(),
+            required_permissions: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -1903,6 +1986,17 @@ impl SessionPlan {
         self
     }
 
+    /// Return a copy of this plan with required [`RequiredPermission`] values.
+    pub fn with_required_permissions(
+        mut self,
+        required_permissions: impl IntoIterator<Item = RequiredPermission>,
+    ) -> Self {
+        self.required_permissions = required_permissions.into_iter().collect();
+        self.required_permissions.sort_unstable();
+        self.required_permissions.dedup();
+        self
+    }
+
     /// Return a copy of this plan with a test traffic [`RouteSelector`].
     pub fn with_route_selector(mut self, route_selector: RouteSelector) -> Self {
         self.route_selector = Some(route_selector);
@@ -1959,6 +2053,11 @@ impl SessionPlan {
         &self.planned_cleanup_steps
     }
 
+    /// Borrow required [`RequiredPermission`] values in deterministic order.
+    pub fn required_permissions(&self) -> &[RequiredPermission] {
+        &self.required_permissions
+    }
+
     /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
@@ -2008,6 +2107,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
         plan = plan.with_planned_annotations(fields.planned_annotations);
         plan = plan.with_planned_checks(fields.planned_checks);
         plan = plan.with_planned_cleanup_steps(fields.planned_cleanup_steps);
+        plan = plan.with_required_permissions(fields.required_permissions);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -2656,6 +2756,155 @@ impl fmt::Display for PlannedCleanupTargetError {
 
 impl std::error::Error for PlannedCleanupTargetError {}
 
+/// Error returned when a [`RequiredPermission`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequiredPermissionError {
+    /// Required permission API groups must be valid.
+    ApiGroup(RequiredPermissionApiGroupError),
+    /// Required permission resources must be valid.
+    Resource(RequiredPermissionResourceError),
+    /// Required permission verbs must be valid.
+    Verb(RequiredPermissionVerbError),
+    /// Required permissions must include at least one verb.
+    EmptyVerbs,
+}
+
+impl fmt::Display for RequiredPermissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ApiGroup(error) => {
+                write!(formatter, "invalid required permission api group: {error}")
+            }
+            Self::Resource(error) => {
+                write!(formatter, "invalid required permission resource: {error}")
+            }
+            Self::Verb(error) => write!(formatter, "invalid required permission verb: {error}"),
+            Self::EmptyVerbs => formatter.write_str("required permission verbs cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for RequiredPermissionError {}
+
+/// Error returned when a required permission API group is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequiredPermissionApiGroupError {
+    /// Required permission API groups must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Required permission API group labels must stay bounded.
+    LabelTooLong { max_len: usize },
+    /// Required permission API groups must use DNS-style boundaries when present.
+    InvalidBoundary,
+    /// Required permission API groups only allow lowercase DNS-style characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RequiredPermissionApiGroupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "required permission api group cannot exceed {max_len} characters"
+                )
+            }
+            Self::LabelTooLong { max_len } => {
+                write!(
+                    formatter,
+                    "required permission api group label cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter.write_str(
+                "required permission api group must not start or end with `.` or contain `..`",
+            ),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "required permission api group contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RequiredPermissionApiGroupError {}
+
+/// Error returned when a required permission resource is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequiredPermissionResourceError {
+    /// Required permission resources cannot be empty.
+    Empty,
+    /// Required permission resources must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Required permission resources must start and end with lowercase ASCII or digits.
+    InvalidBoundary,
+    /// Required permission resources only allow lowercase DNS-style characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RequiredPermissionResourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("required permission resource cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "required permission resource cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter.write_str(
+                "required permission resource must start and end with lowercase ASCII or digit",
+            ),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "required permission resource contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RequiredPermissionResourceError {}
+
+/// Error returned when a required permission verb is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequiredPermissionVerbError {
+    /// Required permission verbs cannot be empty.
+    Empty,
+    /// Required permission verbs must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Required permission verbs must start and end with lowercase ASCII or digits.
+    InvalidBoundary,
+    /// Required permission verbs only allow lowercase action characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RequiredPermissionVerbError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("required permission verb cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "required permission verb cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter.write_str(
+                "required permission verb must start and end with lowercase ASCII or digit",
+            ),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "required permission verb contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RequiredPermissionVerbError {}
+
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceQuantityError {
@@ -3228,6 +3477,8 @@ struct SessionPlanFields {
     planned_checks: Vec<PlannedCheck>,
     #[serde(default)]
     planned_cleanup_steps: Vec<PlannedCleanupStep>,
+    #[serde(default)]
+    required_permissions: Vec<RequiredPermission>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -3250,6 +3501,14 @@ struct PlannedCheckFields {
 struct PlannedCleanupStepFields {
     action: String,
     target: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequiredPermissionFields {
+    api_group: String,
+    resource: String,
+    verbs: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -3812,6 +4071,138 @@ fn validate_planned_cleanup_target(value: &str) -> Result<(), PlannedCleanupTarg
     Ok(())
 }
 
+fn validate_required_permission_api_group(
+    value: &str,
+) -> Result<(), RequiredPermissionApiGroupError> {
+    if value.len() > REQUIRED_PERMISSION_API_GROUP_MAX_LEN {
+        return Err(RequiredPermissionApiGroupError::TooLong {
+            max_len: REQUIRED_PERMISSION_API_GROUP_MAX_LEN,
+        });
+    }
+
+    if value.is_empty() {
+        return Ok(());
+    }
+
+    for label in value.split('.') {
+        if label.len() > REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN {
+            return Err(RequiredPermissionApiGroupError::LabelTooLong {
+                max_len: REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN,
+            });
+        }
+
+        if label.is_empty() || label.starts_with('-') || label.ends_with('-') {
+            return Err(RequiredPermissionApiGroupError::InvalidBoundary);
+        }
+
+        if let Some(character) = label
+            .chars()
+            .find(|character| !is_required_permission_api_group_character(*character))
+        {
+            return Err(RequiredPermissionApiGroupError::InvalidCharacter { character });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_required_permission_api_group_character(character: char) -> bool {
+    character.is_ascii_lowercase() || character.is_ascii_digit() || matches!(character, '.' | '-')
+}
+
+fn validate_required_permission_resource(
+    value: &str,
+) -> Result<(), RequiredPermissionResourceError> {
+    if value.is_empty() {
+        return Err(RequiredPermissionResourceError::Empty);
+    }
+
+    if value.len() > REQUIRED_PERMISSION_RESOURCE_MAX_LEN {
+        return Err(RequiredPermissionResourceError::TooLong {
+            max_len: REQUIRED_PERMISSION_RESOURCE_MAX_LEN,
+        });
+    }
+
+    for segment in value.split('/') {
+        let mut characters = segment.chars();
+        let first_character = characters
+            .next()
+            .ok_or(RequiredPermissionResourceError::InvalidBoundary)?;
+        let last_character = characters.next_back().unwrap_or(first_character);
+        if !is_lowercase_ascii_alphanumeric(first_character)
+            || !is_lowercase_ascii_alphanumeric(last_character)
+        {
+            return Err(RequiredPermissionResourceError::InvalidBoundary);
+        }
+
+        if let Some(character) = segment
+            .chars()
+            .find(|character| !is_required_permission_resource_character(*character))
+        {
+            return Err(RequiredPermissionResourceError::InvalidCharacter { character });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_required_permission_resource_character(character: char) -> bool {
+    is_lowercase_ascii_alphanumeric(character) || character == '-'
+}
+
+fn validate_required_permission_verb(value: &str) -> Result<(), RequiredPermissionVerbError> {
+    if value.is_empty() {
+        return Err(RequiredPermissionVerbError::Empty);
+    }
+
+    if value.len() > REQUIRED_PERMISSION_VERB_MAX_LEN {
+        return Err(RequiredPermissionVerbError::TooLong {
+            max_len: REQUIRED_PERMISSION_VERB_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters
+        .next()
+        .ok_or(RequiredPermissionVerbError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !is_lowercase_ascii_alphanumeric(first_character)
+        || !is_lowercase_ascii_alphanumeric(last_character)
+    {
+        return Err(RequiredPermissionVerbError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_required_permission_verb_character(*character))
+    {
+        return Err(RequiredPermissionVerbError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_required_permission_verb_character(character: char) -> bool {
+    is_lowercase_ascii_alphanumeric(character) || character == '-'
+}
+
+fn is_lowercase_ascii_alphanumeric(character: char) -> bool {
+    character.is_ascii_lowercase() || character.is_ascii_digit()
+}
+
+fn deduplicate_permission_verbs(
+    verbs: impl IntoIterator<Item = String>,
+) -> Result<Vec<String>, RequiredPermissionVerbError> {
+    verbs
+        .into_iter()
+        .map(|verb| {
+            validate_required_permission_verb(&verb)?;
+            Ok((verb.clone(), verb))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()
+        .map(|verbs| verbs.into_values().collect())
+}
+
 fn deduplicate_metadata_by_key(
     metadata: impl IntoIterator<Item = MetadataEntry>,
 ) -> Vec<MetadataEntry> {
@@ -3971,13 +4362,17 @@ mod tests {
         PLANNED_CLEANUP_TARGET_MAX_LEN, PlannedCheck, PlannedCheckError, PlannedCheckNameError,
         PlannedCheckTargetError, PlannedCleanupActionError, PlannedCleanupStep,
         PlannedCleanupStepError, PlannedCleanupTargetError, PodRef, PodRefError, ProbeFacts,
-        ProbeKind, RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN,
+        ProbeKind, REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN,
+        REQUIRED_PERMISSION_API_GROUP_MAX_LEN, REQUIRED_PERMISSION_RESOURCE_MAX_LEN,
+        REQUIRED_PERMISSION_VERB_MAX_LEN, RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN,
         ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
-        RelationshipConfidence, ResourceFacts, ResourceQuantity, ResourceQuantityError,
-        RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError,
-        RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, SecretMetadataRef,
-        SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
-        SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
+        RelationshipConfidence, RequiredPermission, RequiredPermissionApiGroupError,
+        RequiredPermissionError, RequiredPermissionResourceError, RequiredPermissionVerbError,
+        ResourceFacts, ResourceQuantity, ResourceQuantityError, RouteHeaderNameError,
+        RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError, RouteSelector,
+        RouteSelectorError, SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError,
+        SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent,
+        SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
         SessionReportError, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
         TimeToLive, TimeToLiveError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
@@ -6234,6 +6629,16 @@ mod tests {
                 PlannedCleanupStep::new("delete_service", "checkout/Service/session-123-service")
                     .expect("cleanup step"),
             ])
+            .with_required_permissions([
+                RequiredPermission::new(
+                    "apps",
+                    "deployments",
+                    ["create", "delete", "get", "patch"],
+                )
+                .expect("required permission"),
+                RequiredPermission::new("", "services", ["create", "delete", "get"])
+                    .expect("required permission"),
+            ])
             .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
@@ -6308,6 +6713,18 @@ mod tests {
                     "target": "checkout/Deployment/session-123-workload"
                 }
             ],
+            "required_permissions": [
+                {
+                    "api_group": "",
+                    "resource": "services",
+                    "verbs": ["get", "create", "delete"]
+                },
+                {
+                    "api_group": "apps",
+                    "resource": "deployments",
+                    "verbs": ["patch", "get", "create", "delete", "get"]
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -6349,6 +6766,13 @@ mod tests {
                 PlannedCleanupStep::new("delete_service", "checkout/Service/session-123-service")
                     .expect("planned cleanup step")
             ]
+        );
+        assert_eq!(plan.required_permissions().len(), 2);
+        assert_eq!(plan.required_permissions()[0].api_group(), "");
+        assert_eq!(plan.required_permissions()[0].resource(), "services");
+        assert_eq!(
+            plan.required_permissions()[0].verbs(),
+            ["create", "delete", "get"]
         );
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
@@ -6630,6 +7054,7 @@ mod tests {
         assert_eq!(plan.planned_annotations(), []);
         assert_eq!(plan.planned_checks(), []);
         assert_eq!(plan.planned_cleanup_steps(), []);
+        assert_eq!(plan.required_permissions(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
@@ -6735,6 +7160,25 @@ mod tests {
         ]);
 
         assert_eq!(plan.planned_cleanup_steps(), [workload_step, route_step]);
+    }
+
+    #[test]
+    fn creates_session_plan_with_required_permissions() {
+        let service_permission = RequiredPermission::new("", "services", ["get", "create", "get"])
+            .expect("required permission");
+        let deployment_permission =
+            RequiredPermission::new("apps", "deployments", ["patch", "get", "create", "delete"])
+                .expect("required permission");
+        let plan = test_session_plan().with_required_permissions([
+            service_permission.clone(),
+            deployment_permission.clone(),
+            service_permission.clone(),
+        ]);
+
+        assert_eq!(
+            plan.required_permissions(),
+            [service_permission, deployment_permission]
+        );
     }
 
     #[test]
@@ -7447,6 +7891,172 @@ mod tests {
             "extra": "ignored"
         }))
         .expect_err("unknown cleanup step fields should be rejected");
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn creates_required_permission_from_valid_parts() {
+        let permission = RequiredPermission::new(
+            "gateway.networking.k8s.io",
+            "httproutes",
+            ["delete", "get", "create", "get"],
+        )
+        .expect("required permission");
+
+        assert_eq!(permission.api_group(), "gateway.networking.k8s.io");
+        assert_eq!(permission.resource(), "httproutes");
+        assert_eq!(permission.verbs(), ["create", "delete", "get"]);
+        assert_eq!(
+            permission.to_string(),
+            "gateway.networking.k8s.io/httproutes [create,delete,get]"
+        );
+
+        let subresource_permission =
+            RequiredPermission::new("", "pods/log", ["get"]).expect("subresource permission");
+        assert_eq!(subresource_permission.resource(), "pods/log");
+    }
+
+    #[test]
+    fn rejects_invalid_required_permission_parts() {
+        assert_eq!(
+            RequiredPermission::new("Bad_Group", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidCharacter {
+                character: 'B'
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new(".apps", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("apps.", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("apps..k8s.io", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("-apps", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("apps-", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("apps.-k8s.io", "services", ["get"]).unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new(
+                "a".repeat(REQUIRED_PERMISSION_API_GROUP_MAX_LEN + 1),
+                "services",
+                ["get"]
+            )
+            .unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::TooLong {
+                max_len: REQUIRED_PERMISSION_API_GROUP_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new(
+                format!(
+                    "{}.io",
+                    "a".repeat(REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN + 1)
+                ),
+                "services",
+                ["get"]
+            )
+            .unwrap_err(),
+            RequiredPermissionError::ApiGroup(RequiredPermissionApiGroupError::LabelTooLong {
+                max_len: REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new("", "", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::Empty)
+        );
+        assert_eq!(
+            RequiredPermission::new(
+                "",
+                "a".repeat(REQUIRED_PERMISSION_RESOURCE_MAX_LEN + 1),
+                ["get"]
+            )
+            .unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::TooLong {
+                max_len: REQUIRED_PERMISSION_RESOURCE_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new("", "-services", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("", "/services", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("", "services/", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("", "pods//log", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("", "bad_resource", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::InvalidCharacter {
+                character: '_'
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new("", "bad.resource", ["get"]).unwrap_err(),
+            RequiredPermissionError::Resource(RequiredPermissionResourceError::InvalidCharacter {
+                character: '.'
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new("", "services", Vec::<String>::new()).unwrap_err(),
+            RequiredPermissionError::EmptyVerbs
+        );
+        assert_eq!(
+            RequiredPermission::new("", "services", [""]).unwrap_err(),
+            RequiredPermissionError::Verb(RequiredPermissionVerbError::Empty)
+        );
+        assert_eq!(
+            RequiredPermission::new(
+                "",
+                "services",
+                ["a".repeat(REQUIRED_PERMISSION_VERB_MAX_LEN + 1)]
+            )
+            .unwrap_err(),
+            RequiredPermissionError::Verb(RequiredPermissionVerbError::TooLong {
+                max_len: REQUIRED_PERMISSION_VERB_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RequiredPermission::new("", "services", ["-get"]).unwrap_err(),
+            RequiredPermissionError::Verb(RequiredPermissionVerbError::InvalidBoundary)
+        );
+        assert_eq!(
+            RequiredPermission::new("", "services", ["get/list"]).unwrap_err(),
+            RequiredPermissionError::Verb(RequiredPermissionVerbError::InvalidCharacter {
+                character: '/'
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_required_permission_json_fields() {
+        let error = serde_json::from_value::<RequiredPermission>(json!({
+            "api_group": "",
+            "resource": "services",
+            "verbs": ["get"],
+            "extra": "ignored"
+        }))
+        .expect_err("unknown permission fields should be rejected");
 
         assert!(error.to_string().contains("unknown field"));
     }

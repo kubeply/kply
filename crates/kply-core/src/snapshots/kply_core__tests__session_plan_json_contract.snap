@@ -1,6 +1,6 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 6239
+assertion_line: 6612
 expression: value
 ---
 {
@@ -69,6 +69,27 @@ expression: value
       "cleanup"
     ]
   },
+  "required_permissions": [
+    {
+      "api_group": "",
+      "resource": "services",
+      "verbs": [
+        "create",
+        "delete",
+        "get"
+      ]
+    },
+    {
+      "api_group": "apps",
+      "resource": "deployments",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch"
+      ]
+    }
+  ],
   "route_selector": {
     "kind": "header",
     "name": "x-kply-session",
