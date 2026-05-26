@@ -496,7 +496,7 @@ fn render_check_run(cli: &Cli, session: &str, namespace: Option<&str>) -> Result
     };
 
     if cli.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        println!("{}", render_check_run_json_report(&report)?);
     } else if !cli.quiet {
         print!("{}", render_check_run_text_report(&report));
     }
@@ -745,6 +745,19 @@ fn session_state_check_status(status: Option<&str>) -> CheckResultStatus {
     }
 }
 
+/// Render a deterministic agent-readable JSON check report.
+fn render_check_run_json_report(report: &CheckRunReport) -> serde_json::Result<String> {
+    let json_report = CheckRunJsonReport {
+        session_id: &report.session_id,
+        namespace: &report.namespace,
+        status: report.status,
+        summary: CheckRunStatusCounts::from_checks(&report.checks),
+        checks: &report.checks,
+    };
+
+    serde_json::to_string_pretty(&json_report)
+}
+
 /// Render a deterministic human-readable check report.
 fn render_check_run_text_report(report: &CheckRunReport) -> String {
     use std::fmt::Write as _;
@@ -845,6 +858,16 @@ struct CheckRunReport {
     checks: Vec<CheckRunItem>,
 }
 
+/// JSON report emitted by `kply check run --json`.
+#[derive(Debug, Serialize)]
+struct CheckRunJsonReport<'a> {
+    session_id: &'a str,
+    namespace: &'a str,
+    status: CheckResultStatus,
+    summary: CheckRunStatusCounts,
+    checks: &'a [CheckRunItem],
+}
+
 /// One check result emitted by `kply check run`.
 #[derive(Debug, Serialize)]
 struct CheckRunItem {
@@ -854,8 +877,8 @@ struct CheckRunItem {
     evidence: serde_json::Value,
 }
 
-/// Status totals for text check reports.
-#[derive(Debug, Default, PartialEq, Eq)]
+/// Status totals for check reports.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
 struct CheckRunStatusCounts {
     passed: usize,
     failed: usize,
@@ -2633,10 +2656,10 @@ mod tests {
         SessionStateRecordError, apply_session_resources, check_run_report_from_session,
         planned_resource_token, planned_session_annotations, planned_session_checks,
         planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        planned_session_risk_notes, render_check_evidence, render_check_run_text_report,
-        required_session_permissions, session_plan_from_config, session_state_annotations,
-        session_state_check_status, session_token, unsupported_session_feature_warnings,
-        workload_permission_resource,
+        planned_session_risk_notes, render_check_evidence, render_check_run_json_report,
+        render_check_run_text_report, required_session_permissions, session_plan_from_config,
+        session_state_annotations, session_state_check_status, session_token,
+        unsupported_session_feature_warnings, workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{CheckResultStatus, ImageRef, SessionStatus, WorkloadRef};
@@ -2752,6 +2775,39 @@ mod tests {
             "check_run_text_report",
             render_check_run_text_report(&report)
         );
+    }
+
+    #[test]
+    fn renders_check_run_json_report_with_summary_and_evidence() {
+        let report = CheckRunReport {
+            session_id: "checkout-plan".to_owned(),
+            namespace: "shop".to_owned(),
+            status: CheckResultStatus::Failed,
+            checks: vec![
+                CheckRunItem {
+                    name: "session_state",
+                    target: "shop/Deployment/checkout-plan-workload".to_owned(),
+                    status: CheckResultStatus::Passed,
+                    evidence: serde_json::json!({
+                        "observed_status": "active",
+                        "expected_status": "active",
+                    }),
+                },
+                CheckRunItem {
+                    name: "smoke_http",
+                    target: "http://checkout-plan.shop.svc.cluster.local/healthz".to_owned(),
+                    status: CheckResultStatus::Failed,
+                    evidence: serde_json::json!({
+                        "status_code": 503,
+                        "expected_status_code": 200,
+                    }),
+                },
+            ],
+        };
+        let output = render_check_run_json_report(&report).expect("report should serialize");
+        let value: serde_json::Value = serde_json::from_str(&output).expect("report JSON");
+
+        insta::assert_json_snapshot!("check_run_json_report", value);
     }
 
     #[test]
