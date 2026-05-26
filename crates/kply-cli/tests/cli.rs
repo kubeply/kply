@@ -1252,6 +1252,132 @@ fn rejects_session_status_without_kubeconfig_json() {
 }
 
 #[test]
+fn rejects_session_cleanup_apply_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--apply",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "cleanup mutation errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!(
+        "session_cleanup_apply_missing_kubeconfig",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_session_cleanup_apply_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--apply",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "cleanup mutation JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_cleanup_apply_missing_kubeconfig_json", value);
+}
+
+#[test]
+fn rejects_session_cleanup_apply_default_namespace_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["session", "cleanup", "checkout-plan", "--apply", "--json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "cleanup mutation JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!(
+        "session_cleanup_apply_default_namespace_missing_kubeconfig_json",
+        value
+    );
+}
+
+#[test]
+fn rejects_session_cleanup_apply_default_namespace_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["session", "cleanup", "checkout-plan", "--apply"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "cleanup mutation errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!(
+        "session_cleanup_apply_default_namespace_missing_kubeconfig",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
 fn rejects_invalid_session_status_id() {
     let output = kply_cmd()
         .args(["session", "status", "Checkout_Plan"])
@@ -1307,6 +1433,45 @@ fn prints_session_cleanup_json() {
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("session_cleanup_json", value);
+}
+
+#[test]
+fn rejects_session_cleanup_namespace_without_apply() {
+    let output = kply_cmd()
+        .args(["session", "cleanup", "checkout-plan", "--namespace", "shop"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!(
+        "session_cleanup_namespace_without_apply",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_session_cleanup_namespace_without_apply_json() {
+    let output = kply_cmd()
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_cleanup_namespace_without_apply_json", value);
 }
 
 #[test]
@@ -2613,6 +2778,8 @@ fn covers_every_session_command() {
             "session",
             SessionCommand::Cleanup {
                 session: String::new(),
+                apply: false,
+                namespace: None,
             }
             .name(),
             "checkout-plan",

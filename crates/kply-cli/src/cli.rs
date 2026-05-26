@@ -124,6 +124,12 @@ pub enum SessionCommand {
     Cleanup {
         /// Session id to clean up.
         session: String,
+        /// Delete matching sandbox resources from the cluster.
+        #[arg(long)]
+        apply: bool,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
     },
     /// List sandbox sessions recorded in cluster metadata.
     List {

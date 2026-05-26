@@ -22,7 +22,7 @@ use kply_core::{
 };
 use kply_k8s::{
     DeploymentRolloutPhase, DeploymentSummary, DiscoveryError, KubeconfigError, MutationError,
-    MutationErrorCode, ServiceSummary, SessionSummary,
+    MutationErrorCode, ResourceDeletionSummary, ServiceSummary, SessionSummary,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -98,8 +98,13 @@ fn run() -> Result<ExitCode> {
             command: Some(SessionCommand::Status { session, namespace }),
         }) => return render_session_status(&cli, session, namespace.as_deref()),
         Some(Command::Session {
-            command: Some(SessionCommand::Cleanup { session }),
-        }) => return render_session_cleanup(&cli, session),
+            command:
+                Some(SessionCommand::Cleanup {
+                    session,
+                    apply,
+                    namespace,
+                }),
+        }) => return render_session_cleanup(&cli, session, *apply, namespace.as_deref()),
         Some(Command::Session {
             command:
                 Some(SessionCommand::Create {
@@ -457,11 +462,83 @@ fn render_session_status(cli: &Cli, session: &str, namespace: Option<&str>) -> R
 }
 
 /// Render a non-mutating sandbox session cleanup plan.
-fn render_session_cleanup(cli: &Cli, session: &str) -> Result<ExitCode> {
+fn render_session_cleanup(
+    cli: &Cli,
+    session: &str,
+    apply: bool,
+    namespace: Option<&str>,
+) -> Result<ExitCode> {
     let session_id = match SessionId::new(session) {
         Ok(session_id) => session_id,
         Err(error) => return render_session_cleanup_error(&error.to_string(), cli.json),
     };
+
+    if !apply && namespace.is_some() {
+        return render_session_cleanup_error("--namespace requires --apply", cli.json);
+    }
+
+    if apply {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let loaded_client = match runtime.block_on(kply_k8s::load_mutation_client()) {
+            Ok(loaded_client) => loaded_client,
+            Err(error) => {
+                let error = SessionCleanupApplyError {
+                    error,
+                    deletion_accepted_resources: Vec::new(),
+                    pending_resources: Vec::new(),
+                };
+                return render_session_cleanup_apply_error(&error, cli.json);
+            }
+        };
+        let namespace = match namespace {
+            Some(namespace) => namespace.to_owned(),
+            None => loaded_client.default_namespace.clone(),
+        };
+        let deletion_accepted_resources =
+            match runtime.block_on(kply_k8s::delete_session_resources(
+                loaded_client.client,
+                &namespace,
+                session_id.as_str(),
+            )) {
+                Ok(deletion_accepted_resources) => deletion_accepted_resources,
+                Err(error) => {
+                    let error = session_cleanup_error_from_cleanup_error(error);
+                    return render_session_cleanup_apply_error(&error, cli.json);
+                }
+            };
+
+        if cli.json {
+            let value = serde_json::json!({
+                "session_id": session_id.as_str(),
+                "namespace": namespace,
+                "status": "cleanup_requested",
+                "mutation": "applied",
+                "apply": true,
+                "deletion_accepted_resources": deletion_accepted_resources,
+            });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else if !cli.quiet {
+            println!("kply session cleanup {}", session_id.as_str());
+            println!("namespace: {namespace}");
+            println!("status: cleanup_requested");
+            println!("mutation: applied");
+            println!("apply: true");
+            println!(
+                "deletion_accepted_resources: {}",
+                deletion_accepted_resources.len()
+            );
+            for resource in &deletion_accepted_resources {
+                println!(
+                    "  deletion_accepted: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
+        }
+
+        return Ok(ExitCode::SUCCESS);
+    }
 
     if cli.json {
         let value = serde_json::json!({
@@ -479,6 +556,20 @@ fn render_session_cleanup(cli: &Cli, session: &str) -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Convert Kubernetes cleanup failures into CLI cleanup apply failures.
+fn session_cleanup_error_from_cleanup_error(
+    error: kply_k8s::CleanupError,
+) -> SessionCleanupApplyError {
+    SessionCleanupApplyError {
+        error: MutationError::from_kubernetes_api_error(
+            "delete sandbox session resources",
+            error.source(),
+        ),
+        deletion_accepted_resources: error.deletion_accepted_resources,
+        pending_resources: error.pending_resources,
+    }
 }
 
 /// List sandbox sessions through the Kubernetes adapter.
@@ -537,6 +628,14 @@ struct SessionStateRecordSummary {
 struct SessionStateRecordError {
     error: MutationError,
     recorded_resources: Vec<SessionManifestSummary>,
+}
+
+/// Error raised while cleaning up session resources.
+#[derive(Debug)]
+struct SessionCleanupApplyError {
+    error: MutationError,
+    deletion_accepted_resources: Vec<ResourceDeletionSummary>,
+    pending_resources: Vec<ResourceDeletionSummary>,
 }
 
 /// Error raised while applying session resources to Kubernetes.
@@ -1890,6 +1989,57 @@ fn render_session_cleanup_error(message: &str, wants_json: bool) -> Result<ExitC
     }
 
     Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render session cleanup apply errors while mutating Kubernetes resources.
+fn render_session_cleanup_apply_error(
+    error: &SessionCleanupApplyError,
+    wants_json: bool,
+) -> Result<ExitCode> {
+    let exit_code_value = match error.error.code {
+        MutationErrorCode::ForbiddenAccess | MutationErrorCode::KubernetesApi => EXIT_BLOCKING,
+        _ => EXIT_USAGE,
+    };
+
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "session_cleanup_apply",
+                "exit_code": exit_code_value,
+                "kubernetes_code": error.error.code,
+                "message": error.error.message,
+                "deletion_accepted_resources": error.deletion_accepted_resources,
+                "pending_resources": error.pending_resources
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!(
+            "kply error: session cleanup apply\n\n{}",
+            error.error.message
+        );
+        if !error.deletion_accepted_resources.is_empty() || !error.pending_resources.is_empty() {
+            eprintln!(
+                "\ndeletion_accepted_resources: {}",
+                error.deletion_accepted_resources.len()
+            );
+            for resource in &error.deletion_accepted_resources {
+                eprintln!(
+                    "  deletion_accepted: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
+            eprintln!("pending_resources: {}", error.pending_resources.len());
+            for resource in &error.pending_resources {
+                eprintln!(
+                    "  pending: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
+        }
+    }
+
+    Ok(exit_code(exit_code_value))
 }
 
 /// Render session create apply errors while mutating Kubernetes resources.
