@@ -85,6 +85,25 @@ fn run() -> Result<ExitCode> {
         }) => return render_app_graph(&cli, app),
         Some(Command::Session {
             command:
+                Some(SessionCommand::Create {
+                    app,
+                    image,
+                    namespace,
+                    time_to_live,
+                    route_strategy,
+                }),
+        }) => {
+            return render_session_create(
+                &cli,
+                app,
+                image.as_deref(),
+                namespace.as_deref(),
+                time_to_live.as_deref(),
+                route_strategy.as_deref(),
+            );
+        }
+        Some(Command::Session {
+            command:
                 Some(SessionCommand::Plan {
                     app,
                     image,
@@ -180,6 +199,66 @@ fn run() -> Result<ExitCode> {
     } else if !cli.quiet {
         println!("kply {}", env!("CARGO_PKG_VERSION"));
         println!("Placeholder CLI. Roadmap and commands are intentionally pending.");
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render the explicit session create command without mutating cluster state.
+fn render_session_create(
+    cli: &Cli,
+    app_name: &str,
+    image: Option<&str>,
+    namespace: Option<&str>,
+    time_to_live: Option<&str>,
+    route_strategy: Option<&str>,
+) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+
+    let Some(app) = config
+        .apps()
+        .entries()
+        .iter()
+        .find(|app| app.name() == app_name)
+    else {
+        return render_app_not_found_error(app_name, cli.json);
+    };
+
+    let plan = match session_plan_from_config(app, image, namespace, time_to_live, route_strategy) {
+        Ok(plan) => plan,
+        Err(SessionPlanBuildError::Config(message)) => {
+            return render_session_plan_config_error(&message, cli.json);
+        }
+        Err(SessionPlanBuildError::Usage(message)) => {
+            return render_session_plan_error(&message, cli.json);
+        }
+    };
+
+    if cli.json {
+        let value = serde_json::json!({
+            "app": app_name,
+            "session_id": plan.id(),
+            "status": "planned",
+            "mutation": "not_applied",
+            "planned_resources": plan.planned_resources(),
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else if !cli.quiet {
+        println!("kply session create {app_name}");
+        println!("session_id: {}", plan.id());
+        println!("status: planned");
+        println!("mutation: not_applied");
+        println!("planned_resources: {}", plan.planned_resources().len());
+        for resource in plan.planned_resources() {
+            println!("  resource: {resource}");
+        }
     }
 
     Ok(ExitCode::SUCCESS)

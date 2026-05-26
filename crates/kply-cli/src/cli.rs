@@ -120,6 +120,23 @@ impl Command {
 /// Sandbox session commands.
 #[derive(Clone, Debug, Subcommand)]
 pub enum SessionCommand {
+    /// Plan creation of sandbox resources for one configured app.
+    Create {
+        /// Configured app name to create a session for.
+        app: String,
+        /// Candidate image reference for the sandbox workload.
+        #[arg(long, value_name = "IMAGE")]
+        image: Option<String>,
+        /// Namespace override for the planned sandbox resources.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+        /// Lifetime for the planned sandbox session.
+        #[arg(long = "ttl", value_name = "DURATION")]
+        time_to_live: Option<String>,
+        /// Route strategy override for the planned sandbox session.
+        #[arg(long, value_name = "STRATEGY")]
+        route_strategy: Option<String>,
+    },
     /// Plan a future sandbox session for one configured app.
     Plan {
         /// Configured app name to plan.
@@ -163,6 +180,7 @@ impl SessionCommand {
     /// Return the stable command name used in CLI output.
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::Create { .. } => "create",
             Self::Plan { .. } => "plan",
             Self::Manifests { .. } => "manifests",
         }

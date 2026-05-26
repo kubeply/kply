@@ -1027,6 +1027,46 @@ fn prints_session_plan_placeholder_json_with_all_overrides() {
 }
 
 #[test]
+fn prints_session_create_text() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args(["--config", config_path, "session", "create", "checkout"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_create_text", output);
+}
+
+#[test]
+fn prints_session_create_json() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "create",
+                "checkout",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("session_create_json", value);
+}
+
+#[test]
 fn prints_session_manifests_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -1188,6 +1228,23 @@ fn suppresses_session_plan_placeholder_text_when_quiet() {
                 "--config",
                 config_path,
                 "session",
+                SessionCommand::Create {
+                    app: String::new(),
+                    image: None,
+                    namespace: None,
+                    time_to_live: None,
+                    route_strategy: None,
+                }
+                .name(),
+                "checkout",
+            ])
+            .assert()
+            .success();
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
                 "plan",
                 "checkout",
                 "--quiet",
@@ -1226,6 +1283,24 @@ fn suppresses_session_plan_placeholder_text_when_quiet() {
                 "30m",
                 "--route-strategy",
                 "header",
+                "--quiet",
+            ])
+            .assert()
+            .success()
+            .stdout("");
+    });
+}
+
+#[test]
+fn suppresses_session_create_text_when_quiet() {
+    with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "create",
+                "checkout",
                 "--quiet",
             ])
             .assert()
@@ -2250,7 +2325,7 @@ fn covers_every_session_command() {
 
     assert_eq!(
         command_names,
-        ["manifests", "plan"],
+        ["create", "manifests", "plan"],
         "update session command tests when the session command surface changes"
     );
 
