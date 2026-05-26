@@ -48,6 +48,11 @@ See [docs/implementation-roadmap.md](docs/implementation-roadmap.md).
 See [docs/cli.md](docs/cli.md) for command contract notes, including exit
 codes.
 
+## Local Demo
+
+See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup
+guide.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
