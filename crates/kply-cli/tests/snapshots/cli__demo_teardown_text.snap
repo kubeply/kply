@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 500
+expression: normalize_output(&output)
+---
+kply demo teardown
+status: torn_down
+namespace: kply-demo
+deleted_resources: 1
+  deleted: namespace/kply-demo

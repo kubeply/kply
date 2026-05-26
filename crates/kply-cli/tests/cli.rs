@@ -483,6 +483,95 @@ fn reports_demo_reset_missing_kubectl_json() {
 }
 
 #[test]
+fn prints_demo_teardown_text() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 0);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "teardown"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("demo_teardown_text", normalize_output(&output));
+
+    let log = std::fs::read_to_string(log_path).expect("fake kubectl log should be readable");
+    insta::assert_snapshot!("demo_teardown_kubectl_sequence", normalize_output(&log));
+}
+
+#[test]
+fn prints_demo_teardown_json() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 0);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "teardown", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("demo_teardown_json", value);
+}
+
+#[test]
+fn reports_demo_teardown_kubectl_failure() {
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 7);
+    let output = kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", &log_path)
+        .args(["demo", "teardown"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("demo_teardown_kubectl_failure", normalize_output(&output));
+}
+
+#[test]
+fn reports_demo_teardown_missing_kubectl() {
+    let output = kply_cmd()
+        .env("PATH", "")
+        .args(["demo", "teardown"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("demo_teardown_missing_kubectl", normalize_output(&output));
+}
+
+#[test]
+fn reports_demo_teardown_missing_kubectl_json() {
+    let output = kply_cmd()
+        .env("PATH", "")
+        .args(["demo", "teardown", "--json"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .stderr
+        .clone();
+
+    let output = String::from_utf8(output).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("demo_teardown_missing_kubectl_json", value);
+}
+
+#[test]
 fn prints_session_plan_placeholder_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -2002,7 +2091,7 @@ fn covers_every_demo_command() {
 
     assert_eq!(
         command_names,
-        ["doctor", "install", "reset"],
+        ["doctor", "install", "reset", "teardown"],
         "update demo command tests when the demo command surface changes"
     );
 
@@ -2028,6 +2117,15 @@ fn covers_every_demo_command() {
         .env("PATH", path)
         .env("KPLY_FAKE_KUBECTL_LOG", log_path)
         .args(["demo", DemoCommand::Reset.name()])
+        .assert()
+        .success();
+
+    let workspace = temp_workspace();
+    let (path, log_path) = fake_kubectl_path(workspace.path(), 0);
+    kply_cmd()
+        .env("PATH", path)
+        .env("KPLY_FAKE_KUBECTL_LOG", log_path)
+        .args(["demo", DemoCommand::Teardown.name()])
         .assert()
         .success();
 }
