@@ -1,0 +1,12 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1436
+expression: result
+---
+{
+  "status": "failed",
+  "target": "http://checkout-api.shop.svc.cluster.local/healthz",
+  "expected_status_code": 200,
+  "observed_status_code": null,
+  "transport_error": "connection_refused"
+}

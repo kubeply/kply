@@ -1,0 +1,13 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1423
+expression: result
+---
+{
+  "status": "warning",
+  "service": "checkout-api",
+  "declared_ports": 1,
+  "ready_endpoints": 2,
+  "not_ready_endpoints": 1,
+  "unknown_endpoints": 0
+}
