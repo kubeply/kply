@@ -658,12 +658,147 @@ pub fn check_log_fatal_patterns(logs: &LogFatalPatternInput) -> LogFatalPatternC
     }
 }
 
+/// Input facts for evaluating one container restart count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RestartCountInput {
+    pod: String,
+    container: String,
+    restart_count: Option<u32>,
+}
+
+impl RestartCountInput {
+    /// Create restart count input from one container status.
+    pub fn new(
+        pod: impl Into<String>,
+        container: impl Into<String>,
+        restart_count: Option<u32>,
+    ) -> Self {
+        Self {
+            pod: pod.into(),
+            container: container.into(),
+            restart_count,
+        }
+    }
+
+    /// Borrow the pod name.
+    pub fn pod(&self) -> &str {
+        &self.pod
+    }
+
+    /// Borrow the container name.
+    pub fn container(&self) -> &str {
+        &self.container
+    }
+
+    /// Return the observed restart count.
+    pub const fn restart_count(&self) -> Option<u32> {
+        self.restart_count
+    }
+}
+
+/// Summary produced by the restart count check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RestartCountCheckResult {
+    status: CheckResultStatus,
+    restart_threshold: u32,
+    total_containers: usize,
+    restarted_containers: usize,
+    threshold_exceeded_containers: usize,
+    unknown_containers: usize,
+    max_restart_count: Option<u32>,
+}
+
+impl RestartCountCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Return the configured restart threshold.
+    pub const fn restart_threshold(&self) -> u32 {
+        self.restart_threshold
+    }
+
+    /// Return the number of containers considered by the check.
+    pub const fn total_containers(&self) -> usize {
+        self.total_containers
+    }
+
+    /// Return the number of containers with at least one restart.
+    pub const fn restarted_containers(&self) -> usize {
+        self.restarted_containers
+    }
+
+    /// Return the number of containers above the restart threshold.
+    pub const fn threshold_exceeded_containers(&self) -> usize {
+        self.threshold_exceeded_containers
+    }
+
+    /// Return the number of containers without restart evidence.
+    pub const fn unknown_containers(&self) -> usize {
+        self.unknown_containers
+    }
+
+    /// Return the maximum observed restart count.
+    pub const fn max_restart_count(&self) -> Option<u32> {
+        self.max_restart_count
+    }
+}
+
+/// Evaluate whether container restart counts exceed a threshold.
+pub fn check_restart_counts(
+    containers: &[RestartCountInput],
+    restart_threshold: u32,
+) -> RestartCountCheckResult {
+    let total_containers = containers.len();
+    let restarted_containers = containers
+        .iter()
+        .filter(|container| container.restart_count.unwrap_or_default() > 0)
+        .count();
+    let threshold_exceeded_containers = containers
+        .iter()
+        .filter(|container| {
+            container
+                .restart_count
+                .is_some_and(|restart_count| restart_count > restart_threshold)
+        })
+        .count();
+    let unknown_containers = containers
+        .iter()
+        .filter(|container| container.restart_count.is_none())
+        .count();
+    let max_restart_count = containers
+        .iter()
+        .filter_map(|container| container.restart_count)
+        .max();
+    let status = if total_containers == 0 {
+        CheckResultStatus::Skipped
+    } else if threshold_exceeded_containers > 0 {
+        CheckResultStatus::Failed
+    } else if unknown_containers > 0 || restarted_containers > 0 {
+        CheckResultStatus::Warning
+    } else {
+        CheckResultStatus::Passed
+    };
+
+    RestartCountCheckResult {
+        status,
+        restart_threshold,
+        total_containers,
+        restarted_containers,
+        threshold_exceeded_containers,
+        unknown_containers,
+        max_restart_count,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, RolloutAvailabilityInput,
-        ServiceEndpointInput, check_http_smoke, check_log_fatal_patterns, check_pod_readiness,
-        check_rollout_availability, check_service_endpoints,
+        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, RestartCountInput,
+        RolloutAvailabilityInput, ServiceEndpointInput, check_http_smoke, check_log_fatal_patterns,
+        check_pod_readiness, check_restart_counts, check_rollout_availability,
+        check_service_endpoints,
     };
     use kply_core::CheckResultStatus;
 
@@ -735,6 +870,11 @@ mod tests {
             matched_patterns.iter().map(ToString::to_string).collect(),
             log_collection_error.map(ToOwned::to_owned),
         )
+    }
+
+    /// Builds a restart count input fixture.
+    fn restart_count(pod: &str, container: &str, restart_count: Option<u32>) -> RestartCountInput {
+        RestartCountInput::new(pod, container, restart_count)
     }
 
     #[test]
@@ -1014,5 +1154,72 @@ mod tests {
 
         assert_eq!(result.status(), CheckResultStatus::Skipped);
         assert!(result.fatal_patterns().is_empty());
+    }
+
+    #[test]
+    /// Passes when all container restart counts are zero.
+    fn passes_when_restart_counts_are_zero() {
+        let result = check_restart_counts(
+            &[
+                restart_count("checkout-a", "api", Some(0)),
+                restart_count("checkout-b", "api", Some(0)),
+            ],
+            3,
+        );
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.restart_threshold(), 3);
+        assert_eq!(result.total_containers(), 2);
+        assert_eq!(result.restarted_containers(), 0);
+        assert_eq!(result.threshold_exceeded_containers(), 0);
+        assert_eq!(result.unknown_containers(), 0);
+        assert_eq!(result.max_restart_count(), Some(0));
+    }
+
+    #[test]
+    /// Fails when any container restart count exceeds the threshold.
+    fn fails_when_restart_count_exceeds_threshold() {
+        let result = check_restart_counts(
+            &[
+                restart_count("checkout-a", "api", Some(1)),
+                restart_count("checkout-b", "api", Some(4)),
+            ],
+            3,
+        );
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.restarted_containers(), 2);
+        assert_eq!(result.threshold_exceeded_containers(), 1);
+        assert_eq!(result.max_restart_count(), Some(4));
+    }
+
+    #[test]
+    /// Warns when restarts are present but below the threshold.
+    fn warns_when_restart_count_is_below_threshold() {
+        let result = check_restart_counts(&[restart_count("checkout-a", "api", Some(1))], 3);
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.restarted_containers(), 1);
+        assert_eq!(result.threshold_exceeded_containers(), 0);
+    }
+
+    #[test]
+    /// Warns when restart count evidence is incomplete.
+    fn warns_when_restart_count_evidence_is_missing() {
+        let result = check_restart_counts(&[restart_count("checkout-a", "api", None)], 3);
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.unknown_containers(), 1);
+        assert_eq!(result.max_restart_count(), None);
+    }
+
+    #[test]
+    /// Skips when no containers are available for restart evaluation.
+    fn skips_when_no_restart_count_inputs_are_available() {
+        let result = check_restart_counts(&[], 3);
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.total_containers(), 0);
+        assert_eq!(result.max_restart_count(), None);
     }
 }
