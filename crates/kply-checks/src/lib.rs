@@ -119,14 +119,205 @@ fn pod_has_not_ready_phase(pod: &PodReadinessInput) -> bool {
     )
 }
 
+/// Input facts for evaluating one workload rollout availability check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RolloutAvailabilityInput {
+    workload: String,
+    desired_replicas: Option<u32>,
+    ready_replicas: Option<u32>,
+    available_replicas: Option<u32>,
+    updated_replicas: Option<u32>,
+    unavailable_replicas: Option<u32>,
+}
+
+impl RolloutAvailabilityInput {
+    /// Create rollout availability input from workload replica facts.
+    pub fn new(
+        workload: impl Into<String>,
+        desired_replicas: Option<u32>,
+        ready_replicas: Option<u32>,
+        available_replicas: Option<u32>,
+        updated_replicas: Option<u32>,
+        unavailable_replicas: Option<u32>,
+    ) -> Self {
+        Self {
+            workload: workload.into(),
+            desired_replicas,
+            ready_replicas,
+            available_replicas,
+            updated_replicas,
+            unavailable_replicas,
+        }
+    }
+
+    /// Borrow the workload name.
+    pub fn workload(&self) -> &str {
+        &self.workload
+    }
+
+    /// Return the desired replica count.
+    pub const fn desired_replicas(&self) -> Option<u32> {
+        self.desired_replicas
+    }
+
+    /// Return the ready replica count.
+    pub const fn ready_replicas(&self) -> Option<u32> {
+        self.ready_replicas
+    }
+
+    /// Return the available replica count.
+    pub const fn available_replicas(&self) -> Option<u32> {
+        self.available_replicas
+    }
+
+    /// Return the updated replica count.
+    pub const fn updated_replicas(&self) -> Option<u32> {
+        self.updated_replicas
+    }
+
+    /// Return the unavailable replica count.
+    pub const fn unavailable_replicas(&self) -> Option<u32> {
+        self.unavailable_replicas
+    }
+}
+
+/// Summary produced by the rollout availability check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RolloutAvailabilityCheckResult {
+    status: CheckResultStatus,
+    workload: String,
+    desired_replicas: Option<u32>,
+    ready_replicas: Option<u32>,
+    available_replicas: Option<u32>,
+    updated_replicas: Option<u32>,
+    unavailable_replicas: Option<u32>,
+}
+
+impl RolloutAvailabilityCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow the evaluated workload name.
+    pub fn workload(&self) -> &str {
+        &self.workload
+    }
+
+    /// Return the desired replica count.
+    pub const fn desired_replicas(&self) -> Option<u32> {
+        self.desired_replicas
+    }
+
+    /// Return the ready replica count.
+    pub const fn ready_replicas(&self) -> Option<u32> {
+        self.ready_replicas
+    }
+
+    /// Return the available replica count.
+    pub const fn available_replicas(&self) -> Option<u32> {
+        self.available_replicas
+    }
+
+    /// Return the updated replica count.
+    pub const fn updated_replicas(&self) -> Option<u32> {
+        self.updated_replicas
+    }
+
+    /// Return the unavailable replica count.
+    pub const fn unavailable_replicas(&self) -> Option<u32> {
+        self.unavailable_replicas
+    }
+}
+
+/// Evaluate whether a workload rollout is fully available.
+pub fn check_rollout_availability(
+    rollout: &RolloutAvailabilityInput,
+) -> RolloutAvailabilityCheckResult {
+    let status = if rollout.desired_replicas == Some(0) {
+        CheckResultStatus::Skipped
+    } else if rollout_has_missing_evidence(rollout) {
+        CheckResultStatus::Warning
+    } else if rollout_has_complete_availability(rollout) {
+        CheckResultStatus::Passed
+    } else {
+        CheckResultStatus::Failed
+    };
+
+    RolloutAvailabilityCheckResult {
+        status,
+        workload: rollout.workload.clone(),
+        desired_replicas: rollout.desired_replicas,
+        ready_replicas: rollout.ready_replicas,
+        available_replicas: rollout.available_replicas,
+        updated_replicas: rollout.updated_replicas,
+        unavailable_replicas: rollout.unavailable_replicas,
+    }
+}
+
+/// Return whether a rollout lacks required replica evidence.
+fn rollout_has_missing_evidence(rollout: &RolloutAvailabilityInput) -> bool {
+    rollout.desired_replicas.is_none()
+        || rollout.ready_replicas.is_none()
+        || rollout.available_replicas.is_none()
+        || rollout.updated_replicas.is_none()
+        || rollout.unavailable_replicas.is_none()
+}
+
+/// Return whether a rollout has reached full replica availability.
+fn rollout_has_complete_availability(rollout: &RolloutAvailabilityInput) -> bool {
+    let Some(desired_replicas) = rollout.desired_replicas else {
+        return false;
+    };
+    let Some(ready_replicas) = rollout.ready_replicas else {
+        return false;
+    };
+    let Some(available_replicas) = rollout.available_replicas else {
+        return false;
+    };
+    let Some(updated_replicas) = rollout.updated_replicas else {
+        return false;
+    };
+    let Some(unavailable_replicas) = rollout.unavailable_replicas else {
+        return false;
+    };
+
+    desired_replicas > 0
+        && ready_replicas >= desired_replicas
+        && available_replicas >= desired_replicas
+        && updated_replicas >= desired_replicas
+        && unavailable_replicas == 0
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PodReadinessInput, check_pod_readiness};
+    use super::{
+        PodReadinessInput, RolloutAvailabilityInput, check_pod_readiness,
+        check_rollout_availability,
+    };
     use kply_core::CheckResultStatus;
 
     /// Builds a pod readiness input fixture.
     fn pod(name: &str, phase: Option<&str>, ready: Option<bool>) -> PodReadinessInput {
         PodReadinessInput::new(name, phase.map(ToOwned::to_owned), ready)
+    }
+
+    /// Builds a rollout availability input fixture.
+    fn rollout(
+        desired_replicas: Option<u32>,
+        ready_replicas: Option<u32>,
+        available_replicas: Option<u32>,
+        updated_replicas: Option<u32>,
+        unavailable_replicas: Option<u32>,
+    ) -> RolloutAvailabilityInput {
+        RolloutAvailabilityInput::new(
+            "checkout-api",
+            desired_replicas,
+            ready_replicas,
+            available_replicas,
+            updated_replicas,
+            unavailable_replicas,
+        )
     }
 
     #[test]
@@ -197,5 +388,54 @@ mod tests {
         assert_eq!(result.ready_pods(), 0);
         assert_eq!(result.not_ready_pods(), 0);
         assert_eq!(result.unknown_pods(), 0);
+    }
+
+    #[test]
+    /// Passes when the rollout has every desired replica ready and available.
+    fn passes_when_rollout_is_fully_available() {
+        let result =
+            check_rollout_availability(&rollout(Some(3), Some(3), Some(3), Some(3), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.workload(), "checkout-api");
+        assert_eq!(result.desired_replicas(), Some(3));
+        assert_eq!(result.ready_replicas(), Some(3));
+        assert_eq!(result.available_replicas(), Some(3));
+        assert_eq!(result.updated_replicas(), Some(3));
+        assert_eq!(result.unavailable_replicas(), Some(0));
+    }
+
+    #[test]
+    /// Fails when known rollout facts show incomplete availability.
+    fn fails_when_rollout_is_not_fully_available() {
+        let result =
+            check_rollout_availability(&rollout(Some(3), Some(2), Some(2), Some(3), Some(1)));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.desired_replicas(), Some(3));
+        assert_eq!(result.ready_replicas(), Some(2));
+        assert_eq!(result.available_replicas(), Some(2));
+        assert_eq!(result.updated_replicas(), Some(3));
+        assert_eq!(result.unavailable_replicas(), Some(1));
+    }
+
+    #[test]
+    /// Warns when rollout replica evidence is incomplete.
+    fn warns_when_rollout_evidence_is_missing() {
+        let result = check_rollout_availability(&rollout(Some(3), Some(3), None, Some(3), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.desired_replicas(), Some(3));
+        assert_eq!(result.available_replicas(), None);
+    }
+
+    #[test]
+    /// Skips when a rollout intentionally targets zero replicas.
+    fn skips_when_rollout_has_no_desired_replicas() {
+        let result =
+            check_rollout_availability(&rollout(Some(0), Some(0), Some(0), Some(0), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.desired_replicas(), Some(0));
     }
 }
