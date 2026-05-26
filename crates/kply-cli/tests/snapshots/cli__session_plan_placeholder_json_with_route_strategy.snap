@@ -143,6 +143,7 @@ expression: value
   },
   "status": "planned",
   "ttl": null,
+  "unsupported_feature_warnings": [],
   "workload": {
     "kind": "Deployment",
     "name": "checkout-api",

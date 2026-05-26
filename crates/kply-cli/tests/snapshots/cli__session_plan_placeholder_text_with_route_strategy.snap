@@ -35,6 +35,7 @@ required_permissions: 4
   permission: core/services [create,delete,get]
   permission: apps/deployments [create,delete,get,patch]
   permission: gateway.networking.k8s.io/httproutes [create,delete,get]
+unsupported_feature_warnings: 0
 route_selector: host:checkout-plan.shop.kply.local
 policy_operations: 6
 status: planned

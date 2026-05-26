@@ -10,7 +10,8 @@ use kply_config::{
 use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
     PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RouteSelector,
-    ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive, WorkloadRef,
+    ServiceRef, SessionId, SessionName, SessionPlan, SessionPolicy, TimeToLive,
+    UnsupportedFeatureWarning, WorkloadRef,
 };
 use kply_k8s::KubeconfigError;
 use std::ffi::OsString;
@@ -20,6 +21,9 @@ const EXIT_USAGE: i32 = 2;
 const EXIT_INTERNAL: i32 = 3;
 const EXIT_BLOCKING: i32 = 1;
 const SESSION_HEADER_NAME: &str = "x-kply-session";
+const FEATURE_PREVIEW_ROUTING: &str = "preview_routing";
+const REASON_ROUTE_STRATEGY_PREVIEW_NOT_IMPLEMENTED: &str =
+    "route_strategy_preview_not_implemented";
 const SUPPORTED_ROUTE_STRATEGIES: [RouteStrategy; 3] = [
     RouteStrategy::Header,
     RouteStrategy::Host,
@@ -212,6 +216,13 @@ fn render_session_plan(
             println!("  permission: {permission}");
         }
         println!(
+            "unsupported_feature_warnings: {}",
+            plan.unsupported_feature_warnings().len()
+        );
+        for warning in plan.unsupported_feature_warnings() {
+            println!("  unsupported: {warning}");
+        }
+        println!(
             "route_selector: {}",
             plan.route_selector()
                 .map_or("<none>".to_owned(), ToString::to_string)
@@ -344,6 +355,12 @@ fn session_plan_from_config(
         required_session_permissions(app.workload_kind()).map_err(|error| {
             SessionPlanBuildError::Config(format!("invalid required permission metadata: {error}"))
         })?;
+    let unsupported_feature_warnings = unsupported_session_feature_warnings(route_strategy)
+        .map_err(|error| {
+            SessionPlanBuildError::Config(format!(
+                "invalid unsupported feature warning metadata: {error}"
+            ))
+        })?;
 
     let mut plan = SessionPlan::new(
         session_id,
@@ -360,6 +377,7 @@ fn session_plan_from_config(
     plan = plan.with_planned_checks(planned_checks);
     plan = plan.with_planned_cleanup_steps(planned_cleanup_steps);
     plan = plan.with_required_permissions(required_permissions);
+    plan = plan.with_unsupported_feature_warnings(unsupported_feature_warnings);
     if let Some(route_selector) = route_selector {
         plan = plan.with_route_selector(route_selector);
     }
@@ -510,6 +528,23 @@ fn required_session_permissions(
     permissions.sort_unstable();
     permissions.dedup();
     Ok(permissions)
+}
+
+fn unsupported_session_feature_warnings(
+    route_strategy: &str,
+) -> std::result::Result<Vec<UnsupportedFeatureWarning>, String> {
+    let warnings = match route_strategy {
+        "preview" => vec![
+            UnsupportedFeatureWarning::new(
+                FEATURE_PREVIEW_ROUTING,
+                REASON_ROUTE_STRATEGY_PREVIEW_NOT_IMPLEMENTED,
+            )
+            .map_err(|error| error.to_string())?,
+        ],
+        _ => Vec::new(),
+    };
+
+    Ok(warnings)
 }
 
 fn workload_permission_resource(workload_kind: &str) -> std::result::Result<String, String> {
@@ -1050,7 +1085,8 @@ mod tests {
     use super::{
         planned_resource_token, planned_session_annotations, planned_session_checks,
         planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        required_session_permissions, session_token, workload_permission_resource,
+        required_session_permissions, session_token, unsupported_session_feature_warnings,
+        workload_permission_resource,
     };
     use kply_core::{ImageRef, WorkloadRef};
 
@@ -1290,6 +1326,22 @@ mod tests {
             workload_permission_resource("Widget")
                 .expect_err("unknown workload kind should fail")
                 .contains("unsupported workload kind")
+        );
+    }
+
+    #[test]
+    fn builds_unsupported_session_feature_warnings() {
+        let header_warnings =
+            unsupported_session_feature_warnings("header").expect("unsupported warnings");
+        let preview_warnings =
+            unsupported_session_feature_warnings("preview").expect("unsupported warnings");
+
+        assert!(header_warnings.is_empty());
+        assert_eq!(preview_warnings.len(), 1);
+        assert_eq!(preview_warnings[0].feature(), "preview_routing");
+        assert_eq!(
+            preview_warnings[0].reason(),
+            "route_strategy_preview_not_implemented"
         );
     }
 

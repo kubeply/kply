@@ -17,6 +17,8 @@ const REQUIRED_PERMISSION_API_GROUP_MAX_LEN: usize = 253;
 const REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN: usize = 63;
 const REQUIRED_PERMISSION_RESOURCE_MAX_LEN: usize = 253;
 const REQUIRED_PERMISSION_VERB_MAX_LEN: usize = 63;
+const UNSUPPORTED_FEATURE_NAME_MAX_LEN: usize = 63;
+const UNSUPPORTED_FEATURE_REASON_MAX_LEN: usize = 255;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -1640,6 +1642,57 @@ impl<'de> Deserialize<'de> for RequiredPermission {
     }
 }
 
+/// Warning for a requested session feature Kply can describe but not execute yet.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct UnsupportedFeatureWarning {
+    feature: String,
+    reason: String,
+}
+
+impl UnsupportedFeatureWarning {
+    /// Create an [`UnsupportedFeatureWarning`] from validated feature and reason parts.
+    pub fn new(
+        feature: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<Self, UnsupportedFeatureWarningError> {
+        let feature = feature.into();
+        let reason = reason.into();
+
+        validate_unsupported_feature_name(&feature)
+            .map_err(UnsupportedFeatureWarningError::Feature)?;
+        validate_unsupported_feature_reason(&reason)
+            .map_err(UnsupportedFeatureWarningError::Reason)?;
+
+        Ok(Self { feature, reason })
+    }
+
+    /// Borrow the unsupported feature name.
+    pub fn feature(&self) -> &str {
+        &self.feature
+    }
+
+    /// Borrow the unsupported feature reason.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+impl fmt::Display for UnsupportedFeatureWarning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.feature, self.reason)
+    }
+}
+
+impl<'de> Deserialize<'de> for UnsupportedFeatureWarning {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = UnsupportedFeatureWarningFields::deserialize(deserializer)?;
+        Self::new(fields.feature, fields.reason).map_err(D::Error::custom)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1878,8 +1931,9 @@ impl std::error::Error for SessionPolicyError {}
 /// [`KubernetesResourceRef`] resources, planned [`MetadataEntry`] labels and
 /// annotations, planned [`PlannedCheck`] checks, planned
 /// [`PlannedCleanupStep`] cleanup steps, required [`RequiredPermission`]
-/// permissions, optional [`RouteSelector`], [`SessionPolicy`], and initial
-/// [`SessionStatus`] for a session that has not yet been executed.
+/// permissions, unsupported [`UnsupportedFeatureWarning`] warnings, optional
+/// [`RouteSelector`], [`SessionPolicy`], and initial [`SessionStatus`] for a
+/// session that has not yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
@@ -1894,6 +1948,7 @@ pub struct SessionPlan {
     planned_checks: Vec<PlannedCheck>,
     planned_cleanup_steps: Vec<PlannedCleanupStep>,
     required_permissions: Vec<RequiredPermission>,
+    unsupported_feature_warnings: Vec<UnsupportedFeatureWarning>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1920,6 +1975,7 @@ impl SessionPlan {
             planned_checks: Vec::new(),
             planned_cleanup_steps: Vec::new(),
             required_permissions: Vec::new(),
+            unsupported_feature_warnings: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -1997,6 +2053,17 @@ impl SessionPlan {
         self
     }
 
+    /// Return a copy of this plan with unsupported [`UnsupportedFeatureWarning`] values.
+    pub fn with_unsupported_feature_warnings(
+        mut self,
+        unsupported_feature_warnings: impl IntoIterator<Item = UnsupportedFeatureWarning>,
+    ) -> Self {
+        self.unsupported_feature_warnings = unsupported_feature_warnings.into_iter().collect();
+        self.unsupported_feature_warnings.sort_unstable();
+        self.unsupported_feature_warnings.dedup();
+        self
+    }
+
     /// Return a copy of this plan with a test traffic [`RouteSelector`].
     pub fn with_route_selector(mut self, route_selector: RouteSelector) -> Self {
         self.route_selector = Some(route_selector);
@@ -2058,6 +2125,11 @@ impl SessionPlan {
         &self.required_permissions
     }
 
+    /// Borrow unsupported [`UnsupportedFeatureWarning`] values in deterministic order.
+    pub fn unsupported_feature_warnings(&self) -> &[UnsupportedFeatureWarning] {
+        &self.unsupported_feature_warnings
+    }
+
     /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
@@ -2108,6 +2180,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
         plan = plan.with_planned_checks(fields.planned_checks);
         plan = plan.with_planned_cleanup_steps(fields.planned_cleanup_steps);
         plan = plan.with_required_permissions(fields.required_permissions);
+        plan = plan.with_unsupported_feature_warnings(fields.unsupported_feature_warnings);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -2905,6 +2978,96 @@ impl fmt::Display for RequiredPermissionVerbError {
 
 impl std::error::Error for RequiredPermissionVerbError {}
 
+/// Error returned when an [`UnsupportedFeatureWarning`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsupportedFeatureWarningError {
+    /// Unsupported feature names must be valid.
+    Feature(UnsupportedFeatureNameError),
+    /// Unsupported feature reasons must be valid.
+    Reason(UnsupportedFeatureReasonError),
+}
+
+impl fmt::Display for UnsupportedFeatureWarningError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Feature(error) => write!(formatter, "invalid unsupported feature: {error}"),
+            Self::Reason(error) => write!(formatter, "invalid unsupported feature reason: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for UnsupportedFeatureWarningError {}
+
+/// Error returned when an unsupported feature name is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsupportedFeatureNameError {
+    /// Unsupported feature names cannot be empty.
+    Empty,
+    /// Unsupported feature names must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Unsupported feature names must start and end with lowercase ASCII or digits.
+    InvalidBoundary,
+    /// Unsupported feature names only allow lowercase ASCII feature characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for UnsupportedFeatureNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("unsupported feature cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "unsupported feature cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("unsupported feature must start and end with lowercase ASCII or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "unsupported feature contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for UnsupportedFeatureNameError {}
+
+/// Error returned when an unsupported feature reason is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsupportedFeatureReasonError {
+    /// Unsupported feature reasons cannot be empty.
+    Empty,
+    /// Unsupported feature reasons must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Unsupported feature reasons only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for UnsupportedFeatureReasonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("unsupported feature reason cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "unsupported feature reason cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "unsupported feature reason contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for UnsupportedFeatureReasonError {}
+
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceQuantityError {
@@ -3479,6 +3642,8 @@ struct SessionPlanFields {
     planned_cleanup_steps: Vec<PlannedCleanupStep>,
     #[serde(default)]
     required_permissions: Vec<RequiredPermission>,
+    #[serde(default)]
+    unsupported_feature_warnings: Vec<UnsupportedFeatureWarning>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -3509,6 +3674,13 @@ struct RequiredPermissionFields {
     api_group: String,
     resource: String,
     verbs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnsupportedFeatureWarningFields {
+    feature: String,
+    reason: String,
 }
 
 #[derive(Deserialize)]
@@ -4203,6 +4375,63 @@ fn deduplicate_permission_verbs(
         .map(|verbs| verbs.into_values().collect())
 }
 
+fn validate_unsupported_feature_name(value: &str) -> Result<(), UnsupportedFeatureNameError> {
+    if value.is_empty() {
+        return Err(UnsupportedFeatureNameError::Empty);
+    }
+
+    if value.len() > UNSUPPORTED_FEATURE_NAME_MAX_LEN {
+        return Err(UnsupportedFeatureNameError::TooLong {
+            max_len: UNSUPPORTED_FEATURE_NAME_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters
+        .next()
+        .ok_or(UnsupportedFeatureNameError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !is_lowercase_ascii_alphanumeric(first_character)
+        || !is_lowercase_ascii_alphanumeric(last_character)
+    {
+        return Err(UnsupportedFeatureNameError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_unsupported_feature_name_character(*character))
+    {
+        return Err(UnsupportedFeatureNameError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_unsupported_feature_name_character(character: char) -> bool {
+    is_lowercase_ascii_alphanumeric(character) || matches!(character, '_' | '-')
+}
+
+fn validate_unsupported_feature_reason(value: &str) -> Result<(), UnsupportedFeatureReasonError> {
+    if value.is_empty() {
+        return Err(UnsupportedFeatureReasonError::Empty);
+    }
+
+    if value.len() > UNSUPPORTED_FEATURE_REASON_MAX_LEN {
+        return Err(UnsupportedFeatureReasonError::TooLong {
+            max_len: UNSUPPORTED_FEATURE_REASON_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !character.is_ascii_graphic())
+    {
+        return Err(UnsupportedFeatureReasonError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
 fn deduplicate_metadata_by_key(
     metadata: impl IntoIterator<Item = MetadataEntry>,
 ) -> Vec<MetadataEntry> {
@@ -4375,8 +4604,11 @@ mod tests {
         SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
         SessionReportError, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
-        TimeToLive, TimeToLiveError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
+        UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
+        UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -6639,6 +6871,11 @@ mod tests {
                 RequiredPermission::new("", "services", ["create", "delete", "get"])
                     .expect("required permission"),
             ])
+            .with_unsupported_feature_warnings([UnsupportedFeatureWarning::new(
+                "preview_routing",
+                "route_strategy_preview_not_implemented",
+            )
+            .expect("unsupported feature warning")])
             .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
@@ -6725,6 +6962,12 @@ mod tests {
                     "verbs": ["patch", "get", "create", "delete", "get"]
                 }
             ],
+            "unsupported_feature_warnings": [
+                {
+                    "feature": "preview_routing",
+                    "reason": "route_strategy_preview_not_implemented"
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -6773,6 +7016,11 @@ mod tests {
         assert_eq!(
             plan.required_permissions()[0].verbs(),
             ["create", "delete", "get"]
+        );
+        assert_eq!(plan.unsupported_feature_warnings().len(), 1);
+        assert_eq!(
+            plan.unsupported_feature_warnings()[0].feature(),
+            "preview_routing"
         );
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
@@ -7055,6 +7303,7 @@ mod tests {
         assert_eq!(plan.planned_checks(), []);
         assert_eq!(plan.planned_cleanup_steps(), []);
         assert_eq!(plan.required_permissions(), []);
+        assert_eq!(plan.unsupported_feature_warnings(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
@@ -7179,6 +7428,19 @@ mod tests {
             plan.required_permissions(),
             [service_permission, deployment_permission]
         );
+    }
+
+    #[test]
+    fn creates_session_plan_with_unsupported_feature_warnings() {
+        let preview_warning = UnsupportedFeatureWarning::new(
+            "preview_routing",
+            "route_strategy_preview_not_implemented",
+        )
+        .expect("unsupported feature warning");
+        let plan = test_session_plan()
+            .with_unsupported_feature_warnings([preview_warning.clone(), preview_warning.clone()]);
+
+        assert_eq!(plan.unsupported_feature_warnings(), [preview_warning]);
     }
 
     #[test]
@@ -8057,6 +8319,83 @@ mod tests {
             "extra": "ignored"
         }))
         .expect_err("unknown permission fields should be rejected");
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn creates_unsupported_feature_warning_from_valid_parts() {
+        let warning = UnsupportedFeatureWarning::new(
+            "preview_routing",
+            "route_strategy_preview_not_implemented",
+        )
+        .expect("unsupported feature warning");
+
+        assert_eq!(warning.feature(), "preview_routing");
+        assert_eq!(warning.reason(), "route_strategy_preview_not_implemented");
+        assert_eq!(
+            warning.to_string(),
+            "preview_routing: route_strategy_preview_not_implemented"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_unsupported_feature_warning_parts() {
+        assert_eq!(
+            UnsupportedFeatureWarning::new("", "route_strategy_preview_not_implemented")
+                .unwrap_err(),
+            UnsupportedFeatureWarningError::Feature(UnsupportedFeatureNameError::Empty)
+        );
+        assert_eq!(
+            UnsupportedFeatureWarning::new(
+                "a".repeat(UNSUPPORTED_FEATURE_NAME_MAX_LEN + 1),
+                "reason"
+            )
+            .unwrap_err(),
+            UnsupportedFeatureWarningError::Feature(UnsupportedFeatureNameError::TooLong {
+                max_len: UNSUPPORTED_FEATURE_NAME_MAX_LEN
+            })
+        );
+        assert_eq!(
+            UnsupportedFeatureWarning::new("-preview", "reason").unwrap_err(),
+            UnsupportedFeatureWarningError::Feature(UnsupportedFeatureNameError::InvalidBoundary)
+        );
+        assert_eq!(
+            UnsupportedFeatureWarning::new("preview/routing", "reason").unwrap_err(),
+            UnsupportedFeatureWarningError::Feature(
+                UnsupportedFeatureNameError::InvalidCharacter { character: '/' }
+            )
+        );
+        assert_eq!(
+            UnsupportedFeatureWarning::new("preview_routing", "").unwrap_err(),
+            UnsupportedFeatureWarningError::Reason(UnsupportedFeatureReasonError::Empty)
+        );
+        assert_eq!(
+            UnsupportedFeatureWarning::new(
+                "preview_routing",
+                "a".repeat(UNSUPPORTED_FEATURE_REASON_MAX_LEN + 1)
+            )
+            .unwrap_err(),
+            UnsupportedFeatureWarningError::Reason(UnsupportedFeatureReasonError::TooLong {
+                max_len: UNSUPPORTED_FEATURE_REASON_MAX_LEN
+            })
+        );
+        assert_eq!(
+            UnsupportedFeatureWarning::new("preview_routing", "bad reason").unwrap_err(),
+            UnsupportedFeatureWarningError::Reason(
+                UnsupportedFeatureReasonError::InvalidCharacter { character: ' ' }
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_unsupported_feature_warning_json_fields() {
+        let error = serde_json::from_value::<UnsupportedFeatureWarning>(json!({
+            "feature": "preview_routing",
+            "reason": "route_strategy_preview_not_implemented",
+            "extra": "ignored"
+        }))
+        .expect_err("unknown unsupported feature warning fields should be rejected");
 
         assert!(error.to_string().contains("unknown field"));
     }
