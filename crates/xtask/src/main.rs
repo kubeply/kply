@@ -212,7 +212,7 @@ fn check_future_session_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
             path: architecture_path,
             required_phrases: vec![
                 "Real session planning and Kubernetes execution are now implemented".into(),
-                "routing remains placeholder-only".into(),
+                "Gateway API routing groundwork".into(),
             ],
         },
         DocExpectation {
@@ -220,7 +220,7 @@ fn check_future_session_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
             required_phrases: vec![
                 "roadmap hypothesis, partially implemented behavior".into(),
                 "runtime checks are landing".into(),
-                "routing remains placeholder-only".into(),
+                "Gateway API routing groundwork".into(),
             ],
         },
     ];
@@ -1019,9 +1019,8 @@ fn collect_crate_sources(root: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
 }
 
 fn check_placeholders() -> Result<()> {
-    // Product crates that have not reached their roadmap work remain placeholder-only.
-    // CLI, config, core, checks, k8s, test, and xtask crates need real support code for active milestones.
-    let product_crates = ["crates/kply-routing/src/lib.rs"];
+    // Product crates that have reached their roadmap work no longer need placeholder-only guards.
+    let product_crates: [&str; 0] = [];
 
     check_placeholder_sources(product_crates)
 }
@@ -1068,7 +1067,7 @@ fn check_placeholder_docs() -> Result<()> {
             path: "README.md".into(),
             required_phrases: vec![
                 "Implementation in progress".into(),
-                "routing remains placeholder-only".into(),
+                "Gateway API routing groundwork".into(),
             ],
         },
         DocExpectation {
@@ -1082,7 +1081,7 @@ fn check_placeholder_docs() -> Result<()> {
             path: "docs/product.md".into(),
             required_phrases: vec![
                 "roadmap hypothesis, partially implemented behavior".into(),
-                "routing remains placeholder-only".into(),
+                "Gateway API routing groundwork".into(),
             ],
         },
     ];
@@ -1509,7 +1508,7 @@ Session mutation commands require explicit `--apply` confirmation.
             "docs/architecture.md",
             "\
 Real session planning and Kubernetes execution are now implemented.
-routing remains placeholder-only.
+Gateway API routing groundwork has started.
 ",
         );
         let product_path = write_nested_source(
@@ -1518,7 +1517,7 @@ routing remains placeholder-only.
             "\
 This is a roadmap hypothesis, partially implemented behavior.
 runtime checks are landing.
-routing remains placeholder-only.
+Gateway API routing groundwork has started.
 ",
         );
 
@@ -1546,7 +1545,7 @@ Session mutation commands require explicit `--apply` confirmation.
             "\
 This is a roadmap hypothesis, partially implemented behavior.
 runtime checks are landing.
-routing remains placeholder-only.
+Gateway API routing groundwork has started.
 ",
         );
 
