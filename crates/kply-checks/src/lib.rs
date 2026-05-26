@@ -424,11 +424,126 @@ fn service_has_mixed_endpoint_evidence(service: &ServiceEndpointInput) -> bool {
             || service.unknown_endpoints.unwrap_or_default() > 0)
 }
 
+/// Input facts for evaluating one HTTP smoke check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HttpSmokeInput {
+    target: Option<String>,
+    expected_status_code: u16,
+    observed_status_code: Option<u16>,
+    transport_error: Option<String>,
+}
+
+impl HttpSmokeInput {
+    /// Create HTTP smoke input from one completed probe attempt.
+    pub fn new(
+        target: Option<String>,
+        expected_status_code: u16,
+        observed_status_code: Option<u16>,
+        transport_error: Option<String>,
+    ) -> Self {
+        Self {
+            target,
+            expected_status_code,
+            observed_status_code,
+            transport_error,
+        }
+    }
+
+    /// Borrow the configured target.
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    /// Return the expected HTTP status code.
+    pub const fn expected_status_code(&self) -> u16 {
+        self.expected_status_code
+    }
+
+    /// Return the observed HTTP status code.
+    pub const fn observed_status_code(&self) -> Option<u16> {
+        self.observed_status_code
+    }
+
+    /// Borrow the transport error label.
+    pub fn transport_error(&self) -> Option<&str> {
+        self.transport_error.as_deref()
+    }
+}
+
+/// Summary produced by the HTTP smoke check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HttpSmokeCheckResult {
+    status: CheckResultStatus,
+    target: Option<String>,
+    expected_status_code: u16,
+    observed_status_code: Option<u16>,
+    transport_error: Option<String>,
+}
+
+impl HttpSmokeCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow the evaluated target.
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    /// Return the expected HTTP status code.
+    pub const fn expected_status_code(&self) -> u16 {
+        self.expected_status_code
+    }
+
+    /// Return the observed HTTP status code.
+    pub const fn observed_status_code(&self) -> Option<u16> {
+        self.observed_status_code
+    }
+
+    /// Borrow the transport error label.
+    pub fn transport_error(&self) -> Option<&str> {
+        self.transport_error.as_deref()
+    }
+}
+
+/// Evaluate whether an HTTP probe returned the expected status code.
+pub fn check_http_smoke(smoke: &HttpSmokeInput) -> HttpSmokeCheckResult {
+    let status = if smoke_target_is_empty(smoke) {
+        CheckResultStatus::Skipped
+    } else if smoke.transport_error.is_some() {
+        CheckResultStatus::Failed
+    } else if smoke.observed_status_code.is_none() {
+        CheckResultStatus::Warning
+    } else if smoke.observed_status_code == Some(smoke.expected_status_code) {
+        CheckResultStatus::Passed
+    } else {
+        CheckResultStatus::Failed
+    };
+
+    HttpSmokeCheckResult {
+        status,
+        target: smoke.target.clone(),
+        expected_status_code: smoke.expected_status_code,
+        observed_status_code: smoke.observed_status_code,
+        transport_error: smoke.transport_error.clone(),
+    }
+}
+
+/// Return whether the smoke check target is absent.
+fn smoke_target_is_empty(smoke: &HttpSmokeInput) -> bool {
+    smoke
+        .target
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        PodReadinessInput, RolloutAvailabilityInput, ServiceEndpointInput, check_pod_readiness,
-        check_rollout_availability, check_service_endpoints,
+        HttpSmokeInput, PodReadinessInput, RolloutAvailabilityInput, ServiceEndpointInput,
+        check_http_smoke, check_pod_readiness, check_rollout_availability, check_service_endpoints,
     };
     use kply_core::CheckResultStatus;
 
@@ -468,6 +583,21 @@ mod tests {
             ready_endpoints,
             not_ready_endpoints,
             unknown_endpoints,
+        )
+    }
+
+    /// Builds an HTTP smoke input fixture.
+    fn http_smoke(
+        target: Option<&str>,
+        expected_status_code: u16,
+        observed_status_code: Option<u16>,
+        transport_error: Option<&str>,
+    ) -> HttpSmokeInput {
+        HttpSmokeInput::new(
+            target.map(ToOwned::to_owned),
+            expected_status_code,
+            observed_status_code,
+            transport_error.map(ToOwned::to_owned),
         )
     }
 
@@ -639,5 +769,59 @@ mod tests {
 
         assert_eq!(result.status(), CheckResultStatus::Skipped);
         assert_eq!(result.declared_ports(), 0);
+    }
+
+    #[test]
+    /// Passes when the HTTP probe returns the expected status code.
+    fn passes_when_http_smoke_status_matches() {
+        let result = check_http_smoke(&http_smoke(Some("/healthz"), 200, Some(200), None));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.target(), Some("/healthz"));
+        assert_eq!(result.expected_status_code(), 200);
+        assert_eq!(result.observed_status_code(), Some(200));
+        assert_eq!(result.transport_error(), None);
+    }
+
+    #[test]
+    /// Fails when the HTTP probe returns an unexpected status code.
+    fn fails_when_http_smoke_status_differs() {
+        let result = check_http_smoke(&http_smoke(Some("/healthz"), 200, Some(503), None));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.expected_status_code(), 200);
+        assert_eq!(result.observed_status_code(), Some(503));
+    }
+
+    #[test]
+    /// Fails when the HTTP probe records a transport error.
+    fn fails_when_http_smoke_has_transport_error() {
+        let result = check_http_smoke(&http_smoke(
+            Some("/healthz"),
+            200,
+            None,
+            Some("connection_refused"),
+        ));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.transport_error(), Some("connection_refused"));
+    }
+
+    #[test]
+    /// Warns when the HTTP probe has no observed status or error.
+    fn warns_when_http_smoke_evidence_is_missing() {
+        let result = check_http_smoke(&http_smoke(Some("/healthz"), 200, None, None));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.observed_status_code(), None);
+    }
+
+    #[test]
+    /// Skips when no HTTP smoke target is configured.
+    fn skips_when_http_smoke_target_is_missing() {
+        let result = check_http_smoke(&http_smoke(Some("  "), 200, None, None));
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.target(), Some("  "));
     }
 }
