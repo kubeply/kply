@@ -1,6 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 337
+assertion_line: 808
 expression: value
 ---
 {
@@ -114,7 +114,8 @@ expression: value
       "verbs": [
         "create",
         "delete",
-        "get"
+        "get",
+        "patch"
       ]
     },
     {

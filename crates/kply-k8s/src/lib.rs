@@ -1,6 +1,6 @@
 //! Kubernetes adapters for future safe session execution.
 
-use std::{error::Error, fmt, path::Path};
+use std::{collections::BTreeMap, error::Error, fmt, path::Path};
 
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{Container, Pod, Probe, Service};
@@ -11,7 +11,7 @@ use kply_core::WorkloadRef;
 pub use kube::config::KubeconfigError;
 use kube::{
     Api, Client, Config, ResourceExt,
-    api::{ListParams, PostParams},
+    api::{ListParams, Patch, PatchParams, PostParams},
     config::{KubeConfigOptions, Kubeconfig},
     core::{ApiResource, DynamicObject, GroupVersionKind},
 };
@@ -676,6 +676,29 @@ pub async fn get_deployment(
     Ok(deployment_summary(&observed))
 }
 
+/// Patch annotations on one Deployment and return its observed summary.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API patch request fails.
+pub async fn patch_deployment_annotations(
+    client: Client,
+    namespace: &str,
+    name: &str,
+    annotations: &BTreeMap<String, String>,
+) -> Result<DeploymentSummary, kube::Error> {
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    let patch = serde_json::json!({
+        "metadata": {
+            "annotations": annotations,
+        }
+    });
+    let observed = deployments
+        .patch(name, &PatchParams::default(), &Patch::Merge(&patch))
+        .await?;
+    Ok(deployment_summary(&observed))
+}
+
 /// Create one Service in a namespace and return its observed summary.
 ///
 /// # Errors
@@ -689,6 +712,29 @@ pub async fn create_service(
     let services: Api<Service> = Api::namespaced(client, namespace);
     let created = services.create(&PostParams::default(), service).await?;
     Ok(service_summary(&created))
+}
+
+/// Patch annotations on one Service and return its observed summary.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API patch request fails.
+pub async fn patch_service_annotations(
+    client: Client,
+    namespace: &str,
+    name: &str,
+    annotations: &BTreeMap<String, String>,
+) -> Result<ServiceSummary, kube::Error> {
+    let services: Api<Service> = Api::namespaced(client, namespace);
+    let patch = serde_json::json!({
+        "metadata": {
+            "annotations": annotations,
+        }
+    });
+    let observed = services
+        .patch(name, &PatchParams::default(), &Patch::Merge(&patch))
+        .await?;
+    Ok(service_summary(&observed))
 }
 
 /// Return a discovered Deployment summary matching a requested workload.
