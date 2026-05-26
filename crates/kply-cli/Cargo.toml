@@ -25,3 +25,4 @@ tokio.workspace = true
 [dev-dependencies]
 insta.workspace = true
 kply-test.workspace = true
+serde_norway.workspace = true
