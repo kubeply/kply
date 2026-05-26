@@ -5,7 +5,9 @@ mod manifest;
 pub use manifest::{
     SandboxContainer, SandboxDeploymentManifest, SandboxDeploymentSpec, SandboxLabelSelector,
     SandboxManifestError, SandboxObjectMetadata, SandboxPodSpec, SandboxPodTemplate,
-    SandboxPodTemplateMetadata, sandbox_deployment_manifest,
+    SandboxPodTemplateMetadata, SandboxServiceManifest, SandboxServicePort,
+    SandboxServicePortConfig, SandboxServiceSpec, sandbox_deployment_manifest,
+    sandbox_service_manifest, sandbox_service_manifest_with_port,
 };
 
 use serde::de::Error as DeserializeError;
