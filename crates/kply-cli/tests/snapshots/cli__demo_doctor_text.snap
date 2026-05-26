@@ -1,0 +1,17 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_output(&output)
+---
+kply demo doctor
+status: ready
+checks: 10
+  ok: demo_config -> fixtures/demo/ecommerce-basic/kply.yaml
+  ok: demo_manifest -> fixtures/demo/ecommerce-basic/manifests/namespace.yaml
+  ok: demo_manifest -> fixtures/demo/ecommerce-basic/manifests/frontend.yaml
+  ok: demo_manifest -> fixtures/demo/ecommerce-basic/manifests/backend.yaml
+  ok: demo_manifest -> fixtures/demo/ecommerce-basic/manifests/backend-broken.yaml
+  ok: demo_manifest -> fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml
+  ok: demo_manifest -> fixtures/demo/ecommerce-basic/manifests/catalog.yaml
+  ok: kind -> kind at <absolute-path>
+  ok: kubectl -> kubectl at <absolute-path>
+  ok: container_runtime -> docker at <absolute-path>

@@ -6,11 +6,13 @@ use kply_cli::cli::Cli;
 use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
+use kply_cli::cli::DemoCommand;
 use kply_cli::cli::SessionCommand;
 use kply_test::{
     EXIT_BLOCKING, EXIT_USAGE, assert_kply_exit_code, kply_cmd, normalize_output, temp_workspace,
     write_fake_kubeconfig, write_temp_file,
 };
+use std::path::Path;
 
 const SESSION_PLAN_CONFIG: &str = r#"
 version: 1
@@ -68,6 +70,31 @@ fn with_session_plan_no_image_config<T>(run: impl FnOnce(&str) -> T) -> T {
     run(config_path)
 }
 
+fn fake_demo_path(workspace: &Path) -> String {
+    let bin_dir = workspace.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("fake PATH bin directory should be created");
+    for command in ["kind", "kubectl", "docker"] {
+        let path = bin_dir.join(command);
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").expect("fake executable should be written");
+        set_fake_executable_permissions(&path);
+    }
+    bin_dir.to_string_lossy().into_owned()
+}
+
+#[cfg(unix)]
+fn set_fake_executable_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = std::fs::metadata(path)
+        .expect("fake executable metadata should be readable")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("fake executable permissions should be set");
+}
+
+#[cfg(not(unix))]
+fn set_fake_executable_permissions(_path: &Path) {}
+
 #[test]
 fn prints_placeholder_text() {
     let output = kply_cmd().assert().success().get_output().stdout.clone();
@@ -116,6 +143,7 @@ fn prints_version_json() {
         .clone();
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let output = normalize_output(&output);
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("version_json", value);
 }
@@ -182,6 +210,61 @@ fn prints_command_group_json_placeholders() {
             serde_json::from_str(&output).expect("stdout should be JSON");
         insta::assert_json_snapshot!(format!("command_group_{command}_json"), value);
     }
+}
+
+#[test]
+fn prints_demo_doctor_text() {
+    let workspace = temp_workspace();
+    let output = kply_cmd()
+        .env("PATH", fake_demo_path(workspace.path()))
+        .args(["demo", "doctor"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("demo_doctor_text", normalize_output(&output));
+}
+
+#[test]
+fn prints_demo_doctor_json() {
+    let workspace = temp_workspace();
+    let output = kply_cmd()
+        .env("PATH", fake_demo_path(workspace.path()))
+        .args(["demo", "doctor", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let output = normalize_output(&output);
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("demo_doctor_json", value);
+}
+
+#[test]
+fn reports_demo_doctor_missing_tools() {
+    let workspace = temp_workspace();
+    let empty_path = workspace.path().join("empty-bin");
+    std::fs::create_dir_all(&empty_path).expect("empty PATH directory should be created");
+    let output = kply_cmd()
+        .env("PATH", &empty_path)
+        .args(["demo", "doctor"])
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stderr.is_empty(),
+        "doctor blocking results should write to stdout, not stderr"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("demo_doctor_missing_tools", normalize_output(&stdout));
 }
 
 #[test]
@@ -1551,6 +1634,7 @@ fn covers_every_top_level_command() {
             "cluster",
             "completion",
             "config",
+            "demo",
             "help",
             "report",
             "session"
@@ -1687,6 +1771,30 @@ fn covers_every_cluster_command() {
     kply_cmd()
         .env("KUBECONFIG", kubeconfig_path)
         .args(["cluster", ClusterCommand::Info.name()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn covers_every_demo_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("demo")
+        .expect("demo command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["doctor"],
+        "update demo command tests when the demo command surface changes"
+    );
+
+    let workspace = temp_workspace();
+    kply_cmd()
+        .env("PATH", fake_demo_path(workspace.path()))
+        .args(["demo", DemoCommand::Doctor.name()])
         .assert()
         .success();
 }
