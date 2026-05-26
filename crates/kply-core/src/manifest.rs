@@ -37,8 +37,9 @@ pub fn sandbox_deployment_manifest(
     let planned_labels = metadata_entries_to_map(plan.planned_labels());
     ensure_ownership_labels(&planned_labels)?;
     let labels = sandbox_labels(&planned_labels);
-    let annotations = metadata_entries_to_map(plan.planned_annotations());
-    ensure_audit_annotations(&annotations)?;
+    let planned_annotations = metadata_entries_to_map(plan.planned_annotations());
+    ensure_audit_annotations(&planned_annotations)?;
+    let annotations = sandbox_annotations(&planned_annotations);
 
     Ok(SandboxDeploymentManifest {
         api_version: "apps/v1",
@@ -86,8 +87,9 @@ pub fn sandbox_service_manifest_with_port(
     let planned_labels = metadata_entries_to_map(plan.planned_labels());
     ensure_ownership_labels(&planned_labels)?;
     let labels = sandbox_labels(&planned_labels);
-    let annotations = metadata_entries_to_map(plan.planned_annotations());
-    ensure_audit_annotations(&annotations)?;
+    let planned_annotations = metadata_entries_to_map(plan.planned_annotations());
+    ensure_audit_annotations(&planned_annotations)?;
+    let annotations = sandbox_annotations(&planned_annotations);
 
     Ok(SandboxServiceManifest {
         api_version: "v1",
@@ -378,6 +380,23 @@ fn should_preserve_label(key: &str) -> bool {
     REQUIRED_OWNERSHIP_LABELS.contains(&key) || SAFE_APP_LABELS.contains(&key)
 }
 
+/// Return only Kply audit annotations for generated sandbox manifests.
+///
+/// Production annotations often control ingress, sidecars, policy, or external
+/// integrations. They are intentionally not copied unless Kply owns the key.
+fn sandbox_annotations(planned_annotations: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    planned_annotations
+        .iter()
+        .filter(|(key, _)| should_preserve_annotation(key))
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect()
+}
+
+/// Check whether a planned annotation belongs in generated sandbox manifests.
+fn should_preserve_annotation(key: &str) -> bool {
+    REQUIRED_AUDIT_ANNOTATIONS.contains(&key)
+}
+
 fn metadata_entries_to_map(metadata: &[MetadataEntry]) -> BTreeMap<String, String> {
     metadata
         .iter()
@@ -456,6 +475,8 @@ mod tests {
                     .expect("annotation"),
                 MetadataEntry::new("kply.dev/route-strategy", "header").expect("annotation"),
                 MetadataEntry::new("kply.dev/workload", "checkout/Deployment/checkout-api")
+                    .expect("annotation"),
+                MetadataEntry::new("nginx.ingress.kubernetes.io/rewrite-target", "/")
                     .expect("annotation"),
             ])
     }
@@ -558,6 +579,37 @@ mod tests {
                 .is_none()
         );
         assert!(value["spec"]["selector"].get("pod-template-hash").is_none());
+    }
+
+    #[test]
+    fn filters_unsafe_annotations_from_sandbox_deployment_manifest() {
+        let plan = test_labeled_session_plan();
+        let manifest = sandbox_deployment_manifest(&plan).expect("deployment manifest");
+        let value = serde_json::to_value(manifest).expect("manifest should serialize");
+
+        assert!(
+            value["metadata"]["annotations"]
+                .get("nginx.ingress.kubernetes.io/rewrite-target")
+                .is_none()
+        );
+        assert!(
+            value["spec"]["template"]["metadata"]["annotations"]
+                .get("nginx.ingress.kubernetes.io/rewrite-target")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn filters_unsafe_annotations_from_sandbox_service_manifest() {
+        let plan = test_labeled_session_plan();
+        let manifest = sandbox_service_manifest(&plan).expect("service manifest");
+        let value = serde_json::to_value(manifest).expect("manifest should serialize");
+
+        assert!(
+            value["metadata"]["annotations"]
+                .get("nginx.ingress.kubernetes.io/rewrite-target")
+                .is_none()
+        );
     }
 
     #[test]
