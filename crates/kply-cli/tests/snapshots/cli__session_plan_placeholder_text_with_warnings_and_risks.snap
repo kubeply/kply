@@ -1,0 +1,44 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 512
+expression: output
+---
+kply session plan checkout-db
+id: checkout-db-plan
+name: checkout-db-session
+workload: shop/Deployment/checkout-postgres
+image: postgres:16
+planned_resources: 3
+  resource: shop/Deployment/checkout-db-plan-workload
+  resource: shop/HTTPRoute/checkout-db-plan-route
+  resource: shop/Service/checkout-db-plan-service
+planned_labels: 4
+  label: kply.dev/app=checkout-db
+  label: kply.dev/managed-by=kply
+  label: kply.dev/session-id=checkout-db-plan
+  label: kply.dev/session-name=checkout-db-session
+planned_annotations: 3
+  annotation: kply.dev/image=postgres:16
+  annotation: kply.dev/route-strategy=preview
+  annotation: kply.dev/workload=shop/Deployment/checkout-postgres
+planned_checks: 4
+  check: image_pull -> postgres:16
+  check: route_ready -> preview
+  check: service_endpoints -> shop/checkout-db-plan-service
+  check: workload_ready -> shop/Deployment/checkout-postgres
+planned_cleanup_steps: 3
+  cleanup: delete_route -> shop/HTTPRoute/checkout-db-plan-route
+  cleanup: delete_service -> shop/Service/checkout-db-plan-service
+  cleanup: delete_workload -> shop/Deployment/checkout-db-plan-workload
+required_permissions: 4
+  permission: core/pods [get,list,watch]
+  permission: core/services [create,delete,get]
+  permission: apps/deployments [create,delete,get,patch]
+  permission: gateway.networking.k8s.io/httproutes [create,delete,get]
+unsupported_feature_warnings: 1
+  unsupported: preview_routing: route_strategy_preview_not_implemented
+risk_notes: 1
+  risk: warning:database -> app:checkout-db (database_reference_requires_manual_review)
+route_selector: <none>
+policy_operations: 6
+status: planned

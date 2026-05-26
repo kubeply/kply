@@ -23,9 +23,28 @@ apps:
     route_strategy: header
 "#;
 
+const SESSION_PLAN_RISK_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: checkout-db
+    namespace: shop
+    workload: checkout-postgres
+    service: checkout-postgres
+    default_image: postgres:16
+    route_strategy: preview
+"#;
+
 fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
     let workspace = temp_workspace();
     let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_CONFIG);
+    let config_path = config_path.to_str().expect("config path should be UTF-8");
+
+    run(config_path)
+}
+
+fn with_session_plan_risk_config<T>(run: impl FnOnce(&str) -> T) -> T {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_RISK_CONFIG);
     let config_path = config_path.to_str().expect("config path should be UTF-8");
 
     run(config_path)
@@ -475,6 +494,25 @@ fn prints_session_plan_placeholder_text_with_all_overrides() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     insta::assert_snapshot!("session_plan_placeholder_text_with_all_overrides", output);
+}
+
+#[test]
+fn prints_session_plan_placeholder_text_with_warnings_and_risks() {
+    let output = with_session_plan_risk_config(|config_path| {
+        kply_cmd()
+            .args(["--config", config_path, "session", "plan", "checkout-db"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!(
+        "session_plan_placeholder_text_with_warnings_and_risks",
+        output
+    );
 }
 
 #[test]
