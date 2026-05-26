@@ -19,6 +19,10 @@ const REQUIRED_PERMISSION_RESOURCE_MAX_LEN: usize = 253;
 const REQUIRED_PERMISSION_VERB_MAX_LEN: usize = 63;
 const UNSUPPORTED_FEATURE_NAME_MAX_LEN: usize = 63;
 const UNSUPPORTED_FEATURE_REASON_MAX_LEN: usize = 255;
+const RISK_NOTE_CATEGORY_MAX_LEN: usize = 63;
+const RISK_NOTE_SEVERITY_MAX_LEN: usize = 63;
+const RISK_NOTE_TARGET_MAX_LEN: usize = 255;
+const RISK_NOTE_REASON_MAX_LEN: usize = 255;
 
 /// Maximum allowed length for an [`ImageRef`] value.
 pub const IMAGE_REF_MAX_LEN: usize = 255;
@@ -1693,6 +1697,88 @@ impl<'de> Deserialize<'de> for UnsupportedFeatureWarning {
     }
 }
 
+/// Risk note for sensitive infrastructure references in a future session plan.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct RiskNote {
+    category: String,
+    severity: String,
+    target: String,
+    reason: String,
+}
+
+impl RiskNote {
+    /// Create a [`RiskNote`] from validated category, severity, target, and reason parts.
+    pub fn new(
+        category: impl Into<String>,
+        severity: impl Into<String>,
+        target: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<Self, RiskNoteError> {
+        let category = category.into();
+        let severity = severity.into();
+        let target = target.into();
+        let reason = reason.into();
+
+        validate_risk_note_category(&category).map_err(RiskNoteError::Category)?;
+        validate_risk_note_severity(&severity).map_err(RiskNoteError::Severity)?;
+        validate_risk_note_target(&target).map_err(RiskNoteError::Target)?;
+        validate_risk_note_reason(&reason).map_err(RiskNoteError::Reason)?;
+
+        Ok(Self {
+            category,
+            severity,
+            target,
+            reason,
+        })
+    }
+
+    /// Borrow the stable risk category.
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+
+    /// Borrow the stable risk severity.
+    pub fn severity(&self) -> &str {
+        &self.severity
+    }
+
+    /// Borrow the resource, config value, or reference the risk applies to.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// Borrow the stable reason code explaining the risk.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+impl fmt::Display for RiskNote {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}:{} -> {} ({})",
+            self.severity, self.category, self.target, self.reason
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for RiskNote {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = RiskNoteFields::deserialize(deserializer)?;
+        Self::new(
+            fields.category,
+            fields.severity,
+            fields.target,
+            fields.reason,
+        )
+        .map_err(D::Error::custom)
+    }
+}
+
 /// Traffic selector for routing future test requests to a sandbox workload.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -1931,9 +2017,9 @@ impl std::error::Error for SessionPolicyError {}
 /// [`KubernetesResourceRef`] resources, planned [`MetadataEntry`] labels and
 /// annotations, planned [`PlannedCheck`] checks, planned
 /// [`PlannedCleanupStep`] cleanup steps, required [`RequiredPermission`]
-/// permissions, unsupported [`UnsupportedFeatureWarning`] warnings, optional
-/// [`RouteSelector`], [`SessionPolicy`], and initial [`SessionStatus`] for a
-/// session that has not yet been executed.
+/// permissions, unsupported [`UnsupportedFeatureWarning`] warnings,
+/// [`RiskNote`] risk notes, optional [`RouteSelector`], [`SessionPolicy`], and
+/// initial [`SessionStatus`] for a session that has not yet been executed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionPlan {
     id: SessionId,
@@ -1949,6 +2035,7 @@ pub struct SessionPlan {
     planned_cleanup_steps: Vec<PlannedCleanupStep>,
     required_permissions: Vec<RequiredPermission>,
     unsupported_feature_warnings: Vec<UnsupportedFeatureWarning>,
+    risk_notes: Vec<RiskNote>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -1976,6 +2063,7 @@ impl SessionPlan {
             planned_cleanup_steps: Vec::new(),
             required_permissions: Vec::new(),
             unsupported_feature_warnings: Vec::new(),
+            risk_notes: Vec::new(),
             route_selector: None,
             policy,
             status: SessionStatus::Planned,
@@ -2064,6 +2152,14 @@ impl SessionPlan {
         self
     }
 
+    /// Return a copy of this plan with sensitive infrastructure [`RiskNote`] values.
+    pub fn with_risk_notes(mut self, risk_notes: impl IntoIterator<Item = RiskNote>) -> Self {
+        self.risk_notes = risk_notes.into_iter().collect();
+        self.risk_notes.sort_unstable();
+        self.risk_notes.dedup();
+        self
+    }
+
     /// Return a copy of this plan with a test traffic [`RouteSelector`].
     pub fn with_route_selector(mut self, route_selector: RouteSelector) -> Self {
         self.route_selector = Some(route_selector);
@@ -2130,6 +2226,11 @@ impl SessionPlan {
         &self.unsupported_feature_warnings
     }
 
+    /// Borrow sensitive infrastructure [`RiskNote`] values in deterministic order.
+    pub fn risk_notes(&self) -> &[RiskNote] {
+        &self.risk_notes
+    }
+
     /// Borrow the optional [`RouteSelector`].
     pub fn route_selector(&self) -> Option<&RouteSelector> {
         self.route_selector.as_ref()
@@ -2181,6 +2282,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
         plan = plan.with_planned_cleanup_steps(fields.planned_cleanup_steps);
         plan = plan.with_required_permissions(fields.required_permissions);
         plan = plan.with_unsupported_feature_warnings(fields.unsupported_feature_warnings);
+        plan = plan.with_risk_notes(fields.risk_notes);
         if let Some(route_selector) = fields.route_selector {
             plan = plan.with_route_selector(route_selector);
         }
@@ -3068,6 +3170,172 @@ impl fmt::Display for UnsupportedFeatureReasonError {
 
 impl std::error::Error for UnsupportedFeatureReasonError {}
 
+/// Error returned when a [`RiskNote`] is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RiskNoteError {
+    /// Risk note categories must be valid.
+    Category(RiskNoteCategoryError),
+    /// Risk note severities must be valid.
+    Severity(RiskNoteSeverityError),
+    /// Risk note targets must be valid.
+    Target(RiskNoteTargetError),
+    /// Risk note reasons must be valid.
+    Reason(RiskNoteReasonError),
+}
+
+impl fmt::Display for RiskNoteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Category(error) => write!(formatter, "invalid risk note category: {error}"),
+            Self::Severity(error) => write!(formatter, "invalid risk note severity: {error}"),
+            Self::Target(error) => write!(formatter, "invalid risk note target: {error}"),
+            Self::Reason(error) => write!(formatter, "invalid risk note reason: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RiskNoteError {}
+
+/// Error returned when a risk note category is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RiskNoteCategoryError {
+    /// Risk note categories cannot be empty.
+    Empty,
+    /// Risk note categories must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Risk note categories must start and end with lowercase ASCII or digits.
+    InvalidBoundary,
+    /// Risk note categories only allow lowercase ASCII category characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RiskNoteCategoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("risk note category cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "risk note category cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("risk note category must start and end with lowercase ASCII or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "risk note category contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RiskNoteCategoryError {}
+
+/// Error returned when a risk note severity is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RiskNoteSeverityError {
+    /// Risk note severities cannot be empty.
+    Empty,
+    /// Risk note severities must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Risk note severities must start and end with lowercase ASCII or digits.
+    InvalidBoundary,
+    /// Risk note severities only allow lowercase ASCII severity characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RiskNoteSeverityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("risk note severity cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "risk note severity cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("risk note severity must start and end with lowercase ASCII or digit"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "risk note severity contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RiskNoteSeverityError {}
+
+/// Error returned when a risk note target is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RiskNoteTargetError {
+    /// Risk note targets cannot be empty.
+    Empty,
+    /// Risk note targets must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Risk note targets only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RiskNoteTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("risk note target cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "risk note target cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "risk note target contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RiskNoteTargetError {}
+
+/// Error returned when a risk note reason is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RiskNoteReasonError {
+    /// Risk note reasons cannot be empty.
+    Empty,
+    /// Risk note reasons must stay bounded for stable reports.
+    TooLong { max_len: usize },
+    /// Risk note reasons only allow visible ASCII characters.
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for RiskNoteReasonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("risk note reason cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "risk note reason cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "risk note reason contains invalid character `{character}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RiskNoteReasonError {}
+
 /// Error returned when a [`ResourceQuantity`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceQuantityError {
@@ -3644,6 +3912,8 @@ struct SessionPlanFields {
     required_permissions: Vec<RequiredPermission>,
     #[serde(default)]
     unsupported_feature_warnings: Vec<UnsupportedFeatureWarning>,
+    #[serde(default)]
+    risk_notes: Vec<RiskNote>,
     route_selector: Option<RouteSelector>,
     policy: SessionPolicy,
     status: SessionStatus,
@@ -3680,6 +3950,15 @@ struct RequiredPermissionFields {
 #[serde(deny_unknown_fields)]
 struct UnsupportedFeatureWarningFields {
     feature: String,
+    reason: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RiskNoteFields {
+    category: String,
+    severity: String,
+    target: String,
     reason: String,
 }
 
@@ -4432,6 +4711,112 @@ fn validate_unsupported_feature_reason(value: &str) -> Result<(), UnsupportedFea
     Ok(())
 }
 
+fn validate_risk_note_category(value: &str) -> Result<(), RiskNoteCategoryError> {
+    if value.is_empty() {
+        return Err(RiskNoteCategoryError::Empty);
+    }
+
+    if value.len() > RISK_NOTE_CATEGORY_MAX_LEN {
+        return Err(RiskNoteCategoryError::TooLong {
+            max_len: RISK_NOTE_CATEGORY_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(RiskNoteCategoryError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !is_lowercase_ascii_alphanumeric(first_character)
+        || !is_lowercase_ascii_alphanumeric(last_character)
+    {
+        return Err(RiskNoteCategoryError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_risk_note_code_character(*character))
+    {
+        return Err(RiskNoteCategoryError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn validate_risk_note_severity(value: &str) -> Result<(), RiskNoteSeverityError> {
+    if value.is_empty() {
+        return Err(RiskNoteSeverityError::Empty);
+    }
+
+    if value.len() > RISK_NOTE_SEVERITY_MAX_LEN {
+        return Err(RiskNoteSeverityError::TooLong {
+            max_len: RISK_NOTE_SEVERITY_MAX_LEN,
+        });
+    }
+
+    let mut characters = value.chars();
+    let first_character = characters.next().ok_or(RiskNoteSeverityError::Empty)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+    if !is_lowercase_ascii_alphanumeric(first_character)
+        || !is_lowercase_ascii_alphanumeric(last_character)
+    {
+        return Err(RiskNoteSeverityError::InvalidBoundary);
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_risk_note_code_character(*character))
+    {
+        return Err(RiskNoteSeverityError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn validate_risk_note_target(value: &str) -> Result<(), RiskNoteTargetError> {
+    if value.is_empty() {
+        return Err(RiskNoteTargetError::Empty);
+    }
+
+    if value.len() > RISK_NOTE_TARGET_MAX_LEN {
+        return Err(RiskNoteTargetError::TooLong {
+            max_len: RISK_NOTE_TARGET_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !character.is_ascii_graphic())
+    {
+        return Err(RiskNoteTargetError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn validate_risk_note_reason(value: &str) -> Result<(), RiskNoteReasonError> {
+    if value.is_empty() {
+        return Err(RiskNoteReasonError::Empty);
+    }
+
+    if value.len() > RISK_NOTE_REASON_MAX_LEN {
+        return Err(RiskNoteReasonError::TooLong {
+            max_len: RISK_NOTE_REASON_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !character.is_ascii_graphic())
+    {
+        return Err(RiskNoteReasonError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+fn is_risk_note_code_character(character: char) -> bool {
+    is_lowercase_ascii_alphanumeric(character) || matches!(character, '_' | '-')
+}
+
 fn deduplicate_metadata_by_key(
     metadata: impl IntoIterator<Item = MetadataEntry>,
 ) -> Vec<MetadataEntry> {
@@ -4593,15 +4978,17 @@ mod tests {
         PlannedCleanupStepError, PlannedCleanupTargetError, PodRef, PodRefError, ProbeFacts,
         ProbeKind, REQUIRED_PERMISSION_API_GROUP_LABEL_MAX_LEN,
         REQUIRED_PERMISSION_API_GROUP_MAX_LEN, REQUIRED_PERMISSION_RESOURCE_MAX_LEN,
-        REQUIRED_PERMISSION_VERB_MAX_LEN, RESOURCE_QUANTITY_MAX_LEN, ROUTE_HEADER_NAME_MAX_LEN,
-        ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN, ROUTE_HOST_MAX_LEN,
-        RelationshipConfidence, RequiredPermission, RequiredPermissionApiGroupError,
-        RequiredPermissionError, RequiredPermissionResourceError, RequiredPermissionVerbError,
-        ResourceFacts, ResourceQuantity, ResourceQuantityError, RouteHeaderNameError,
-        RouteHeaderValueError, RouteHostError, RouteRef, RouteRefError, RouteSelector,
-        RouteSelectorError, SESSION_TOKEN_MAX_LEN, SecretMetadataRef, SecretMetadataRefError,
-        SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef, SessionEvent,
-        SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
+        REQUIRED_PERMISSION_VERB_MAX_LEN, RESOURCE_QUANTITY_MAX_LEN, RISK_NOTE_CATEGORY_MAX_LEN,
+        RISK_NOTE_REASON_MAX_LEN, RISK_NOTE_SEVERITY_MAX_LEN, RISK_NOTE_TARGET_MAX_LEN,
+        ROUTE_HEADER_NAME_MAX_LEN, ROUTE_HEADER_VALUE_MAX_LEN, ROUTE_HOST_LABEL_MAX_LEN,
+        ROUTE_HOST_MAX_LEN, RelationshipConfidence, RequiredPermission,
+        RequiredPermissionApiGroupError, RequiredPermissionError, RequiredPermissionResourceError,
+        RequiredPermissionVerbError, ResourceFacts, ResourceQuantity, ResourceQuantityError,
+        RiskNote, RiskNoteCategoryError, RiskNoteError, RiskNoteReasonError, RiskNoteSeverityError,
+        RiskNoteTargetError, RouteHeaderNameError, RouteHeaderValueError, RouteHostError, RouteRef,
+        RouteRefError, RouteSelector, RouteSelectorError, SESSION_TOKEN_MAX_LEN, SecretMetadataRef,
+        SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
+        SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
         SessionReportError, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
         TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
@@ -6876,6 +7263,13 @@ mod tests {
                 "route_strategy_preview_not_implemented",
             )
             .expect("unsupported feature warning")])
+            .with_risk_notes([RiskNote::new(
+                "secret",
+                "warning",
+                "checkout/Secret/checkout-api-credentials",
+                "secret_reference_requires_metadata_only_handling",
+            )
+            .expect("risk note")])
             .with_route_selector(route_selector);
         let value = serde_json::to_value(plan).expect("session plan should serialize");
 
@@ -6968,6 +7362,14 @@ mod tests {
                     "reason": "route_strategy_preview_not_implemented"
                 }
             ],
+            "risk_notes": [
+                {
+                    "category": "database",
+                    "severity": "warning",
+                    "target": "checkout/Service/checkout-postgres",
+                    "reason": "database_reference_requires_manual_review"
+                }
+            ],
             "route_selector": {
                 "kind": "host",
                 "hostname": "session-123.preview.example.com"
@@ -7021,6 +7423,12 @@ mod tests {
         assert_eq!(
             plan.unsupported_feature_warnings()[0].feature(),
             "preview_routing"
+        );
+        assert_eq!(plan.risk_notes().len(), 1);
+        assert_eq!(plan.risk_notes()[0].category(), "database");
+        assert_eq!(
+            plan.risk_notes()[0].target(),
+            "checkout/Service/checkout-postgres"
         );
         assert_eq!(plan.status(), SessionStatus::Planned);
     }
@@ -7304,6 +7712,7 @@ mod tests {
         assert_eq!(plan.planned_cleanup_steps(), []);
         assert_eq!(plan.required_permissions(), []);
         assert_eq!(plan.unsupported_feature_warnings(), []);
+        assert_eq!(plan.risk_notes(), []);
         assert_eq!(plan.route_selector(), None);
         assert_eq!(plan.policy(), &policy);
         assert_eq!(plan.status(), SessionStatus::Planned);
@@ -7441,6 +7850,31 @@ mod tests {
             .with_unsupported_feature_warnings([preview_warning.clone(), preview_warning.clone()]);
 
         assert_eq!(plan.unsupported_feature_warnings(), [preview_warning]);
+    }
+
+    #[test]
+    fn creates_session_plan_with_risk_notes() {
+        let database_note = RiskNote::new(
+            "database",
+            "warning",
+            "checkout/Service/checkout-postgres",
+            "database_reference_requires_manual_review",
+        )
+        .expect("risk note");
+        let secret_note = RiskNote::new(
+            "secret",
+            "warning",
+            "checkout/Secret/checkout-api-credentials",
+            "secret_reference_requires_metadata_only_handling",
+        )
+        .expect("risk note");
+        let plan = test_session_plan().with_risk_notes([
+            secret_note.clone(),
+            database_note.clone(),
+            secret_note.clone(),
+        ]);
+
+        assert_eq!(plan.risk_notes(), [database_note, secret_note]);
     }
 
     #[test]
@@ -8396,6 +8830,135 @@ mod tests {
             "extra": "ignored"
         }))
         .expect_err("unknown unsupported feature warning fields should be rejected");
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn creates_risk_note_from_valid_parts() {
+        let note = RiskNote::new(
+            "secret",
+            "warning",
+            "checkout/Secret/checkout-api-credentials",
+            "secret_reference_requires_metadata_only_handling",
+        )
+        .expect("risk note");
+
+        assert_eq!(note.category(), "secret");
+        assert_eq!(note.severity(), "warning");
+        assert_eq!(note.target(), "checkout/Secret/checkout-api-credentials");
+        assert_eq!(
+            note.reason(),
+            "secret_reference_requires_metadata_only_handling"
+        );
+        assert_eq!(
+            note.to_string(),
+            "warning:secret -> checkout/Secret/checkout-api-credentials (secret_reference_requires_metadata_only_handling)"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_risk_note_parts() {
+        assert_eq!(
+            RiskNote::new("", "warning", "target", "reason").unwrap_err(),
+            RiskNoteError::Category(RiskNoteCategoryError::Empty)
+        );
+        assert_eq!(
+            RiskNote::new(
+                "a".repeat(RISK_NOTE_CATEGORY_MAX_LEN + 1),
+                "warning",
+                "target",
+                "reason",
+            )
+            .unwrap_err(),
+            RiskNoteError::Category(RiskNoteCategoryError::TooLong {
+                max_len: RISK_NOTE_CATEGORY_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RiskNote::new("-secret", "warning", "target", "reason").unwrap_err(),
+            RiskNoteError::Category(RiskNoteCategoryError::InvalidBoundary)
+        );
+        assert_eq!(
+            RiskNote::new("secret/value", "warning", "target", "reason").unwrap_err(),
+            RiskNoteError::Category(RiskNoteCategoryError::InvalidCharacter { character: '/' })
+        );
+        assert_eq!(
+            RiskNote::new("secret", "", "target", "reason").unwrap_err(),
+            RiskNoteError::Severity(RiskNoteSeverityError::Empty)
+        );
+        assert_eq!(
+            RiskNote::new(
+                "secret",
+                "a".repeat(RISK_NOTE_SEVERITY_MAX_LEN + 1),
+                "target",
+                "reason",
+            )
+            .unwrap_err(),
+            RiskNoteError::Severity(RiskNoteSeverityError::TooLong {
+                max_len: RISK_NOTE_SEVERITY_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RiskNote::new("secret", "-warning", "target", "reason").unwrap_err(),
+            RiskNoteError::Severity(RiskNoteSeverityError::InvalidBoundary)
+        );
+        assert_eq!(
+            RiskNote::new("secret", "soft warning", "target", "reason").unwrap_err(),
+            RiskNoteError::Severity(RiskNoteSeverityError::InvalidCharacter { character: ' ' })
+        );
+        assert_eq!(
+            RiskNote::new("secret", "warning", "", "reason").unwrap_err(),
+            RiskNoteError::Target(RiskNoteTargetError::Empty)
+        );
+        assert_eq!(
+            RiskNote::new(
+                "secret",
+                "warning",
+                "a".repeat(RISK_NOTE_TARGET_MAX_LEN + 1),
+                "reason",
+            )
+            .unwrap_err(),
+            RiskNoteError::Target(RiskNoteTargetError::TooLong {
+                max_len: RISK_NOTE_TARGET_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RiskNote::new("secret", "warning", "bad target", "reason").unwrap_err(),
+            RiskNoteError::Target(RiskNoteTargetError::InvalidCharacter { character: ' ' })
+        );
+        assert_eq!(
+            RiskNote::new("secret", "warning", "target", "").unwrap_err(),
+            RiskNoteError::Reason(RiskNoteReasonError::Empty)
+        );
+        assert_eq!(
+            RiskNote::new(
+                "secret",
+                "warning",
+                "target",
+                "a".repeat(RISK_NOTE_REASON_MAX_LEN + 1),
+            )
+            .unwrap_err(),
+            RiskNoteError::Reason(RiskNoteReasonError::TooLong {
+                max_len: RISK_NOTE_REASON_MAX_LEN
+            })
+        );
+        assert_eq!(
+            RiskNote::new("secret", "warning", "target", "bad reason").unwrap_err(),
+            RiskNoteError::Reason(RiskNoteReasonError::InvalidCharacter { character: ' ' })
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_risk_note_json_fields() {
+        let error = serde_json::from_value::<RiskNote>(json!({
+            "category": "secret",
+            "severity": "warning",
+            "target": "checkout/Secret/checkout-api-credentials",
+            "reason": "secret_reference_requires_metadata_only_handling",
+            "extra": "ignored"
+        }))
+        .expect_err("unknown risk note fields should be rejected");
 
         assert!(error.to_string().contains("unknown field"));
     }

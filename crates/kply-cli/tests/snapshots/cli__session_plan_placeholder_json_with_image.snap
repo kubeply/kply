@@ -137,6 +137,7 @@ expression: value
       ]
     }
   ],
+  "risk_notes": [],
   "route_selector": {
     "kind": "header",
     "name": "x-kply-session",

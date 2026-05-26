@@ -137,6 +137,7 @@ expression: value
       ]
     }
   ],
+  "risk_notes": [],
   "route_selector": {
     "hostname": "checkout-plan.shop.kply.local",
     "kind": "host"
