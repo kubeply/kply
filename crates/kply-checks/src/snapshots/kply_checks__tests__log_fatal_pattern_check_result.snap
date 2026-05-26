@@ -1,0 +1,18 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1449
+expression: result
+---
+{
+  "status": "failed",
+  "source": "checkout-api",
+  "scanned_lines": 42,
+  "fatal_patterns": [
+    "panic",
+    "fatal"
+  ],
+  "matched_patterns": [
+    "panic"
+  ],
+  "log_collection_error": null
+}

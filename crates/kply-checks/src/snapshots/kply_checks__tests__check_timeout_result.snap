@@ -1,0 +1,13 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1497
+expression: result
+---
+{
+  "status": "failed",
+  "check_name": "rollout_availability",
+  "timeout_millis": 5000,
+  "elapsed_millis": 5001,
+  "completed": true,
+  "timed_out": true
+}

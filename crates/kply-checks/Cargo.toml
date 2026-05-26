@@ -9,3 +9,6 @@ authors.workspace = true
 [dependencies]
 kply-core.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

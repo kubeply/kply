@@ -1,0 +1,12 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1406
+expression: result
+---
+{
+  "status": "failed",
+  "total_pods": 3,
+  "ready_pods": 1,
+  "not_ready_pods": 1,
+  "unknown_pods": 1
+}

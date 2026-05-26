@@ -1395,6 +1395,109 @@ mod tests {
     }
 
     #[test]
+    /// Snapshots the pod readiness check result JSON contract.
+    fn snapshots_pod_readiness_check_result() {
+        let result = check_pod_readiness(&[
+            pod("checkout-a", Some("Running"), Some(true)),
+            pod("checkout-b", Some("Running"), Some(false)),
+            pod("checkout-c", Some("Running"), None),
+        ]);
+
+        insta::assert_json_snapshot!("pod_readiness_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the rollout availability check result JSON contract.
+    fn snapshots_rollout_availability_check_result() {
+        let result =
+            check_rollout_availability(&rollout(Some(3), Some(2), Some(2), Some(3), Some(1)));
+
+        insta::assert_json_snapshot!("rollout_availability_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the service endpoint check result JSON contract.
+    fn snapshots_service_endpoint_check_result() {
+        let result = check_service_endpoints(&service(1, Some(2), Some(1), Some(0)));
+
+        insta::assert_json_snapshot!("service_endpoint_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the HTTP smoke check result JSON contract.
+    fn snapshots_http_smoke_check_result() {
+        let result = check_http_smoke(&http_smoke(
+            Some("http://checkout-api.shop.svc.cluster.local/healthz"),
+            200,
+            None,
+            Some("connection_refused"),
+        ));
+
+        insta::assert_json_snapshot!("http_smoke_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the log fatal-pattern check result JSON contract.
+    fn snapshots_log_fatal_pattern_check_result() {
+        let result = check_log_fatal_patterns(&log_fatal_patterns(
+            42,
+            &["panic", "fatal"],
+            &["panic"],
+            None,
+        ));
+
+        insta::assert_json_snapshot!("log_fatal_pattern_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the restart count check result JSON contract.
+    fn snapshots_restart_count_check_result() {
+        let result = check_restart_counts(
+            &[
+                restart_count("checkout-a", "api", Some(1)),
+                restart_count("checkout-b", "api", Some(4)),
+                restart_count("checkout-c", "worker", None),
+            ],
+            3,
+        );
+
+        insta::assert_json_snapshot!("restart_count_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the resource request sanity check result JSON contract.
+    fn snapshots_resource_request_sanity_check_result() {
+        let result = check_resource_request_sanity(&[
+            resource_request("checkout-a", "api", Some(" "), Some("256Mi")),
+            resource_request("checkout-b", "worker", Some("100m"), Some("")),
+        ]);
+
+        insta::assert_json_snapshot!("resource_request_sanity_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the probe existence check result JSON contract.
+    fn snapshots_probe_existence_check_result() {
+        let result = check_probe_existence(
+            &[
+                probe_existence("checkout-api", "api", true, false, false),
+                probe_existence("checkout-api", "worker", false, true, false),
+            ],
+            &[ProbeKind::Readiness, ProbeKind::Liveness],
+        );
+
+        insta::assert_json_snapshot!("probe_existence_check_result", result);
+    }
+
+    #[test]
+    /// Snapshots the check timeout result JSON contract.
+    fn snapshots_check_timeout_result() {
+        let result = check_timeout(&timeout("rollout_availability", 5_000, Some(5_001), true));
+
+        insta::assert_json_snapshot!("check_timeout_result", result);
+    }
+
+    #[test]
     /// Passes when every observed pod is running and ready.
     fn passes_when_all_pods_are_ready() {
         let result = check_pod_readiness(&[

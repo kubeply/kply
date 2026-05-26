@@ -1,0 +1,18 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1489
+expression: result
+---
+{
+  "status": "warning",
+  "required_probe_kinds": [
+    "readiness",
+    "liveness"
+  ],
+  "total_containers": 2,
+  "complete_probe_containers": 0,
+  "missing_probe_containers": 2,
+  "missing_readiness_probe_containers": 1,
+  "missing_liveness_probe_containers": 1,
+  "missing_startup_probe_containers": 0
+}

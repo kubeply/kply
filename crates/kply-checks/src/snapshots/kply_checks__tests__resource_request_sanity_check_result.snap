@@ -1,0 +1,13 @@
+---
+source: crates/kply-checks/src/lib.rs
+assertion_line: 1475
+expression: result
+---
+{
+  "status": "failed",
+  "total_containers": 2,
+  "complete_request_containers": 0,
+  "missing_cpu_request_containers": 0,
+  "missing_memory_request_containers": 0,
+  "empty_request_containers": 2
+}

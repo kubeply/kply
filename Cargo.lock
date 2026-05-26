@@ -596,6 +596,7 @@ dependencies = [
 name = "kply-checks"
 version = "0.1.0"
 dependencies = [
+ "insta",
  "kply-core",
  "serde",
 ]
