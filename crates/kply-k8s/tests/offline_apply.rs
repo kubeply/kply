@@ -1,5 +1,6 @@
 //! Offline integration tests for Kubernetes mutation adapters.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use http::{Method, Request, Response};
@@ -49,6 +50,27 @@ async fn gets_deployment_with_mocked_kubernetes_api() {
 }
 
 #[tokio::test]
+async fn patches_deployment_annotations_with_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_deployment_annotation_patch_api(handle);
+    let annotations = session_state_annotations();
+
+    let summary = kply_k8s::patch_deployment_annotations(
+        client,
+        "shop",
+        "checkout-plan-workload",
+        &annotations,
+    )
+    .await
+    .expect("mocked Deployment annotation patch should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(summary.namespace, "shop");
+    assert_eq!(summary.name, "checkout-plan-workload");
+}
+
+#[tokio::test]
 async fn creates_service_with_mocked_kubernetes_api() {
     let (client, handle) = mock_client();
     let server = spawn_mock_service_create_api(handle);
@@ -65,6 +87,23 @@ async fn creates_service_with_mocked_kubernetes_api() {
     assert_eq!(summary.service_type, Some("ClusterIP".to_owned()));
     assert_eq!(summary.ports.len(), 1);
     assert_eq!(summary.ports[0].port, 8080);
+}
+
+#[tokio::test]
+async fn patches_service_annotations_with_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_service_annotation_patch_api(handle);
+    let annotations = session_state_annotations();
+
+    let summary =
+        kply_k8s::patch_service_annotations(client, "shop", "checkout-plan-service", &annotations)
+            .await
+            .expect("mocked Service annotation patch should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(summary.namespace, "shop");
+    assert_eq!(summary.name, "checkout-plan-service");
 }
 
 fn mock_client() -> (Client, MockKubeHandle) {
@@ -140,6 +179,10 @@ fn sandbox_service() -> Service {
     .expect("sandbox Service fixture should deserialize")
 }
 
+fn session_state_annotations() -> BTreeMap<String, String> {
+    BTreeMap::from([("kply.dev/session-status".to_owned(), "active".to_owned())])
+}
+
 fn spawn_mock_deployment_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut handle = std::pin::pin!(handle);
@@ -198,6 +241,38 @@ fn spawn_mock_deployment_get_api(handle: MockKubeHandle) -> JoinHandle<()> {
     })
 }
 
+fn spawn_mock_deployment_annotation_patch_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment patch request");
+
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock Deployment patch request body should be collectable");
+        assert_annotation_patch_body(&body);
+
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    serde_json::to_vec(&sandbox_deployment())
+                        .expect("sandbox Deployment response should serialize"),
+                ))
+                .expect("mock Deployment patch response should build"),
+        );
+    })
+}
+
 fn spawn_mock_service_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut handle = std::pin::pin!(handle);
@@ -223,6 +298,38 @@ fn spawn_mock_service_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
                         .expect("sandbox Service response should serialize"),
                 ))
                 .expect("mock Service create response should build"),
+        );
+    })
+}
+
+fn spawn_mock_service_annotation_patch_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service patch request");
+
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/shop/services/checkout-plan-service"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock Service patch request body should be collectable");
+        assert_annotation_patch_body(&body);
+
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    serde_json::to_vec(&sandbox_service())
+                        .expect("sandbox Service response should serialize"),
+                ))
+                .expect("mock Service patch response should build"),
         );
     })
 }
@@ -309,6 +416,16 @@ fn assert_service_request_body(body: &[u8]) {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default()
+    );
+}
+
+fn assert_annotation_patch_body(body: &[u8]) {
+    let actual: serde_json::Value =
+        serde_json::from_slice(body).expect("mock annotation patch body should deserialize");
+
+    assert_eq!(
+        actual["metadata"]["annotations"]["kply.dev/session-status"],
+        "active"
     );
 }
 

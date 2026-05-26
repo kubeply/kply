@@ -1,6 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 512
+assertion_line: 964
 expression: output
 ---
 kply session plan checkout-db
@@ -32,7 +32,7 @@ planned_cleanup_steps: 3
   cleanup: delete_workload -> shop/Deployment/checkout-db-plan-workload
 required_permissions: 4
   permission: core/pods [get,list,watch]
-  permission: core/services [create,delete,get]
+  permission: core/services [create,delete,get,patch]
   permission: apps/deployments [create,delete,get,patch]
   permission: gateway.networking.k8s.io/httproutes [create,delete,get]
 unsupported_feature_warnings: 1

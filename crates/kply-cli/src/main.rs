@@ -17,14 +17,15 @@ use kply_core::{
     AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
     PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RiskNote,
     RouteSelector, SandboxManifestError, ServiceRef, SessionId, SessionName, SessionPlan,
-    SessionPolicy, TimeToLive, UnsupportedFeatureWarning, WorkloadRef, sandbox_deployment_manifest,
-    sandbox_route_placeholder_manifest, sandbox_service_manifest,
+    SessionPolicy, SessionStatus, TimeToLive, UnsupportedFeatureWarning, WorkloadRef,
+    sandbox_deployment_manifest, sandbox_route_placeholder_manifest, sandbox_service_manifest,
 };
 use kply_k8s::{
     DeploymentRolloutPhase, DeploymentSummary, KubeconfigError, MutationError, MutationErrorCode,
     ServiceSummary,
 };
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::process::ExitCode;
@@ -42,6 +43,7 @@ const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
     "database_reference_requires_manual_review";
 const SANDBOX_WORKLOAD_KIND: &str = "Deployment";
+const SESSION_STATUS_ANNOTATION: &str = "kply.dev/session-status";
 const SUPPORTED_ROUTE_STRATEGIES: [RouteStrategy; 3] = [
     RouteStrategy::Header,
     RouteStrategy::Host,
@@ -263,6 +265,7 @@ fn render_session_create(
             |namespace, name| {
                 runtime.block_on(wait_for_session_deployment_readiness(namespace, name))
             },
+            |resources, status| runtime.block_on(record_session_state_metadata(resources, status)),
         ) {
             Ok(applied) => applied,
             Err(SessionCreateApplyError::Manifest(error)) => {
@@ -275,11 +278,13 @@ fn render_session_create(
                 error,
                 created_resources,
                 pending_resources,
+                recorded_resources,
             }) => {
                 return render_session_create_partial_apply_error(
                     &error,
                     &created_resources,
                     &pending_resources,
+                    &recorded_resources,
                     cli.json,
                 );
             }
@@ -295,6 +300,7 @@ fn render_session_create(
                 "created_resources": applied.created_resources,
                 "pending_resources": applied.pending_resources,
                 "readiness": applied.readiness,
+                "state": applied.state,
             });
             println!("{}", serde_json::to_string_pretty(&value)?);
         } else if !cli.quiet {
@@ -324,6 +330,13 @@ fn render_session_create(
                 applied.readiness.resource.name,
                 applied.readiness.phase.as_str()
             );
+            println!("state: {}", applied.state.status.as_str());
+            for resource in &applied.state.resources {
+                println!(
+                    "  state: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
         }
 
         return Ok(ExitCode::SUCCESS);
@@ -360,6 +373,7 @@ struct SessionCreateApplyResult {
     created_resources: Vec<SessionManifestSummary>,
     pending_resources: Vec<SessionManifestSummary>,
     readiness: SessionReadinessSummary,
+    state: SessionStateRecordSummary,
 }
 
 /// Readiness status observed before `session create --apply` succeeds.
@@ -367,6 +381,20 @@ struct SessionCreateApplyResult {
 struct SessionReadinessSummary {
     resource: SessionManifestSummary,
     phase: DeploymentRolloutPhase,
+}
+
+/// Session state recorded in Kubernetes resource metadata.
+#[derive(Debug, Serialize)]
+struct SessionStateRecordSummary {
+    status: SessionStatus,
+    resources: Vec<SessionManifestSummary>,
+}
+
+/// Error raised after one or more state metadata writes may have completed.
+#[derive(Debug)]
+struct SessionStateRecordError {
+    error: MutationError,
+    recorded_resources: Vec<SessionManifestSummary>,
 }
 
 /// Error raised while applying session resources to Kubernetes.
@@ -384,6 +412,8 @@ enum SessionCreateApplyError {
         created_resources: Vec<SessionManifestSummary>,
         /// Resources not created because the failure stopped apply.
         pending_resources: Vec<SessionManifestSummary>,
+        /// Resources already annotated with session state before the failure.
+        recorded_resources: Vec<SessionManifestSummary>,
     },
 }
 
@@ -399,6 +429,13 @@ fn apply_session_resources(
         &str,
         &str,
     ) -> std::result::Result<DeploymentSummary, MutationError>,
+    record_state: impl FnOnce(
+        Vec<SessionManifestSummary>,
+        SessionStatus,
+    ) -> std::result::Result<
+        Vec<SessionManifestSummary>,
+        SessionStateRecordError,
+    >,
 ) -> std::result::Result<SessionCreateApplyResult, SessionCreateApplyError> {
     let deployment =
         session_deployment_manifest(plan).map_err(SessionCreateApplyError::Manifest)?;
@@ -441,6 +478,7 @@ fn apply_session_resources(
             error,
             created_resources: vec![created_deployment_resource.clone()],
             pending_resources: pending_after_deployment,
+            recorded_resources: Vec::new(),
         }
     })?;
     let created_service_resource = SessionManifestSummary {
@@ -459,7 +497,22 @@ fn apply_session_resources(
             created_service_resource.clone(),
         ],
         pending_resources: pending_resources.clone(),
+        recorded_resources: Vec::new(),
     })?;
+
+    let created_resources = vec![
+        created_deployment_resource.clone(),
+        created_service_resource.clone(),
+    ];
+    let state_resources =
+        record_state(created_resources.clone(), SessionStatus::Active).map_err(|error| {
+            SessionCreateApplyError::PartialMutation {
+                error: error.error,
+                created_resources: created_resources.clone(),
+                pending_resources: pending_resources.clone(),
+                recorded_resources: error.recorded_resources,
+            }
+        })?;
 
     Ok(SessionCreateApplyResult {
         created_resources: vec![
@@ -470,6 +523,10 @@ fn apply_session_resources(
         readiness: SessionReadinessSummary {
             resource: created_deployment_resource,
             phase: ready_deployment.rollout.phase,
+        },
+        state: SessionStateRecordSummary {
+            status: SessionStatus::Active,
+            resources: state_resources,
         },
     })
 }
@@ -534,6 +591,77 @@ async fn wait_for_session_deployment_readiness(
 
         tokio::time::sleep(READINESS_INTERVAL).await;
     }
+}
+
+/// Record current session state in Kubernetes resource metadata.
+async fn record_session_state_metadata(
+    resources: Vec<SessionManifestSummary>,
+    status: SessionStatus,
+) -> std::result::Result<Vec<SessionManifestSummary>, SessionStateRecordError> {
+    let client = kply_k8s::load_kube_client()
+        .await
+        .map_err(|error| SessionStateRecordError {
+            error,
+            recorded_resources: Vec::new(),
+        })?;
+    let annotations = session_state_annotations(status);
+    let mut recorded_resources = Vec::new();
+
+    for resource in resources {
+        match resource.kind.as_str() {
+            "Deployment" => {
+                kply_k8s::patch_deployment_annotations(
+                    client.clone(),
+                    &resource.namespace,
+                    &resource.name,
+                    &annotations,
+                )
+                .await
+                .map_err(|error| {
+                    let error = MutationError::from_kubernetes_api_error(
+                        "record sandbox Deployment session state",
+                        &error,
+                    );
+                    SessionStateRecordError {
+                        error,
+                        recorded_resources: recorded_resources.clone(),
+                    }
+                })?;
+                recorded_resources.push(resource);
+            }
+            "Service" => {
+                kply_k8s::patch_service_annotations(
+                    client.clone(),
+                    &resource.namespace,
+                    &resource.name,
+                    &annotations,
+                )
+                .await
+                .map_err(|error| {
+                    let error = MutationError::from_kubernetes_api_error(
+                        "record sandbox Service session state",
+                        &error,
+                    );
+                    SessionStateRecordError {
+                        error,
+                        recorded_resources: recorded_resources.clone(),
+                    }
+                })?;
+                recorded_resources.push(resource);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(recorded_resources)
+}
+
+/// Build stable session state annotations for cluster metadata.
+fn session_state_annotations(status: SessionStatus) -> BTreeMap<String, String> {
+    BTreeMap::from([(
+        SESSION_STATUS_ANNOTATION.to_owned(),
+        status.as_str().to_owned(),
+    )])
 }
 
 /// Render a deterministic dry-run list of generated sandbox manifests.
@@ -1151,7 +1279,7 @@ fn required_session_permissions(
             vec!["create", "delete", "get", "patch"],
         ),
         ("", "pods", vec!["get", "list", "watch"]),
-        ("", "services", vec!["create", "delete", "get"]),
+        ("", "services", vec!["create", "delete", "get", "patch"]),
         (
             "gateway.networking.k8s.io",
             "httproutes",
@@ -1609,6 +1737,7 @@ fn render_session_create_partial_apply_error(
     error: &MutationError,
     created_resources: &[SessionManifestSummary],
     pending_resources: &[SessionManifestSummary],
+    recorded_resources: &[SessionManifestSummary],
     wants_json: bool,
 ) -> Result<ExitCode> {
     if wants_json {
@@ -1620,6 +1749,7 @@ fn render_session_create_partial_apply_error(
                 "mutation": "partially_applied",
                 "created_resources": created_resources,
                 "pending_resources": pending_resources,
+                "recorded_resources": recorded_resources,
             }
         });
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
@@ -1637,6 +1767,13 @@ fn render_session_create_partial_apply_error(
         for resource in pending_resources {
             eprintln!(
                 "  pending: {} {}/{}",
+                resource.kind, resource.namespace, resource.name
+            );
+        }
+        eprintln!("recorded_resources: {}", recorded_resources.len());
+        for resource in recorded_resources {
+            eprintln!(
+                "  recorded: {} {}/{}",
                 resource.kind, resource.namespace, resource.name
             );
         }
@@ -1851,14 +1988,15 @@ fn print_verbose_trace(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionCreateApplyError, apply_session_resources, planned_resource_token,
-        planned_session_annotations, planned_session_checks, planned_session_cleanup_steps,
-        planned_session_labels, planned_session_resources, planned_session_risk_notes,
-        required_session_permissions, session_plan_from_config, session_token,
-        unsupported_session_feature_warnings, workload_permission_resource,
+        SessionCreateApplyError, SessionStateRecordError, apply_session_resources,
+        planned_resource_token, planned_session_annotations, planned_session_checks,
+        planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
+        planned_session_risk_notes, required_session_permissions, session_plan_from_config,
+        session_state_annotations, session_token, unsupported_session_feature_warnings,
+        workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
-    use kply_core::{ImageRef, WorkloadRef};
+    use kply_core::{ImageRef, SessionStatus, WorkloadRef};
     use kply_k8s::{
         DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, MutationError,
         MutationErrorCode, ServiceSummary,
@@ -1991,6 +2129,14 @@ mod tests {
                     },
                 })
             },
+            |resources, status| {
+                assert_eq!(status, SessionStatus::Active);
+                assert_eq!(resources.len(), 2);
+                assert_eq!(resources[0].kind, "Deployment");
+                assert_eq!(resources[1].kind, "Service");
+
+                Ok(resources)
+            },
         )
         .expect("session resource apply should succeed");
 
@@ -2011,6 +2157,8 @@ mod tests {
         assert_eq!(applied.readiness.resource.kind, "Deployment");
         assert_eq!(applied.readiness.resource.name, "checkout-plan-workload");
         assert_eq!(applied.readiness.phase, DeploymentRolloutPhase::Complete);
+        assert_eq!(applied.state.status, SessionStatus::Active);
+        assert_eq!(applied.state.resources.len(), 2);
     }
 
     #[test]
@@ -2059,6 +2207,7 @@ mod tests {
                 })
             },
             |_namespace, _name| panic!("readiness must not run after Service creation fails"),
+            |_resources, _status| panic!("state must not record after Service creation fails"),
         )
         .expect_err("service failure after Deployment create should be partial");
 
@@ -2141,6 +2290,7 @@ mod tests {
                     message: "sandbox Deployment did not become ready".to_owned(),
                 })
             },
+            |_resources, _status| panic!("state must not record after readiness fails"),
         )
         .expect_err("readiness failure after resources create should be partial");
 
@@ -2166,6 +2316,223 @@ mod tests {
         );
         assert_eq!(pending_resources.len(), 1);
         assert_eq!(pending_resources[0].kind, "ConfigMap");
+    }
+
+    #[test]
+    fn reports_partial_apply_when_state_recording_fails() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("ghcr.io/acme/checkout:next".to_owned()),
+            RouteStrategy::Header,
+        );
+        let plan = session_plan_from_config(&app, None, None, None, None)
+            .unwrap_or_else(|_| panic!("session plan should be created"));
+
+        let error = apply_session_resources(
+            &plan,
+            |namespace, _deployment| {
+                Ok(DeploymentSummary {
+                    namespace: namespace.to_owned(),
+                    name: "checkout-plan-workload".to_owned(),
+                    replicas: Some(1),
+                    available_replicas: None,
+                    ready_replicas: None,
+                    updated_replicas: None,
+                    images: Vec::new(),
+                    probes: Vec::new(),
+                    resources: Vec::new(),
+                    rollout: DeploymentRolloutSummary {
+                        phase: DeploymentRolloutPhase::Unknown,
+                        generation: None,
+                        observed_generation: None,
+                        desired_replicas: Some(1),
+                        ready_replicas: None,
+                        available_replicas: None,
+                        updated_replicas: None,
+                        unavailable_replicas: None,
+                        conditions: Vec::new(),
+                    },
+                })
+            },
+            |namespace, _service| {
+                Ok(ServiceSummary {
+                    namespace: namespace.to_owned(),
+                    name: "checkout-plan-service".to_owned(),
+                    service_type: Some("ClusterIP".to_owned()),
+                    selector: Vec::new(),
+                    ports: Vec::new(),
+                })
+            },
+            |namespace, name| {
+                Ok(DeploymentSummary {
+                    namespace: namespace.to_owned(),
+                    name: name.to_owned(),
+                    replicas: Some(1),
+                    available_replicas: Some(1),
+                    ready_replicas: Some(1),
+                    updated_replicas: Some(1),
+                    images: Vec::new(),
+                    probes: Vec::new(),
+                    resources: Vec::new(),
+                    rollout: DeploymentRolloutSummary {
+                        phase: DeploymentRolloutPhase::Complete,
+                        generation: Some(1),
+                        observed_generation: Some(1),
+                        desired_replicas: Some(1),
+                        ready_replicas: Some(1),
+                        available_replicas: Some(1),
+                        updated_replicas: Some(1),
+                        unavailable_replicas: None,
+                        conditions: Vec::new(),
+                    },
+                })
+            },
+            |_resources, status| {
+                assert_eq!(status, SessionStatus::Active);
+                Err(SessionStateRecordError {
+                    error: MutationError {
+                        code: MutationErrorCode::KubernetesApi,
+                        message: "record session state failed".to_owned(),
+                    },
+                    recorded_resources: Vec::new(),
+                })
+            },
+        )
+        .expect_err("state recording failure after resources create should be partial");
+
+        let SessionCreateApplyError::PartialMutation {
+            created_resources,
+            pending_resources,
+            ..
+        } = error
+        else {
+            panic!("expected a partial mutation error");
+        };
+
+        assert_eq!(created_resources.len(), 2);
+        assert!(
+            created_resources
+                .iter()
+                .any(|resource| resource.kind == "Deployment")
+        );
+        assert!(
+            created_resources
+                .iter()
+                .any(|resource| resource.kind == "Service")
+        );
+        assert_eq!(pending_resources.len(), 1);
+        assert_eq!(pending_resources[0].kind, "ConfigMap");
+    }
+
+    #[test]
+    fn reports_recorded_resources_when_state_recording_partially_fails() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("ghcr.io/acme/checkout:next".to_owned()),
+            RouteStrategy::Header,
+        );
+        let plan = session_plan_from_config(&app, None, None, None, None)
+            .unwrap_or_else(|_| panic!("session plan should be created"));
+
+        let error = apply_session_resources(
+            &plan,
+            |namespace, _deployment| {
+                Ok(DeploymentSummary {
+                    namespace: namespace.to_owned(),
+                    name: "checkout-plan-workload".to_owned(),
+                    replicas: Some(1),
+                    available_replicas: None,
+                    ready_replicas: None,
+                    updated_replicas: None,
+                    images: Vec::new(),
+                    probes: Vec::new(),
+                    resources: Vec::new(),
+                    rollout: DeploymentRolloutSummary {
+                        phase: DeploymentRolloutPhase::Unknown,
+                        generation: None,
+                        observed_generation: None,
+                        desired_replicas: Some(1),
+                        ready_replicas: None,
+                        available_replicas: None,
+                        updated_replicas: None,
+                        unavailable_replicas: None,
+                        conditions: Vec::new(),
+                    },
+                })
+            },
+            |namespace, _service| {
+                Ok(ServiceSummary {
+                    namespace: namespace.to_owned(),
+                    name: "checkout-plan-service".to_owned(),
+                    service_type: Some("ClusterIP".to_owned()),
+                    selector: Vec::new(),
+                    ports: Vec::new(),
+                })
+            },
+            |namespace, name| {
+                Ok(DeploymentSummary {
+                    namespace: namespace.to_owned(),
+                    name: name.to_owned(),
+                    replicas: Some(1),
+                    available_replicas: Some(1),
+                    ready_replicas: Some(1),
+                    updated_replicas: Some(1),
+                    images: Vec::new(),
+                    probes: Vec::new(),
+                    resources: Vec::new(),
+                    rollout: DeploymentRolloutSummary {
+                        phase: DeploymentRolloutPhase::Complete,
+                        generation: Some(1),
+                        observed_generation: Some(1),
+                        desired_replicas: Some(1),
+                        ready_replicas: Some(1),
+                        available_replicas: Some(1),
+                        updated_replicas: Some(1),
+                        unavailable_replicas: None,
+                        conditions: Vec::new(),
+                    },
+                })
+            },
+            |resources, _status| {
+                Err(SessionStateRecordError {
+                    error: MutationError {
+                        code: MutationErrorCode::KubernetesApi,
+                        message: "record Service state failed".to_owned(),
+                    },
+                    recorded_resources: vec![resources[0].clone()],
+                })
+            },
+        )
+        .expect_err("partial state recording should be auditable");
+
+        let SessionCreateApplyError::PartialMutation {
+            recorded_resources, ..
+        } = error
+        else {
+            panic!("expected a partial mutation error");
+        };
+
+        assert_eq!(recorded_resources.len(), 1);
+        assert_eq!(recorded_resources[0].kind, "Deployment");
+        assert_eq!(recorded_resources[0].name, "checkout-plan-workload");
+    }
+
+    #[test]
+    fn builds_session_state_annotations() {
+        let annotations = session_state_annotations(SessionStatus::Active);
+
+        assert_eq!(
+            annotations
+                .get("kply.dev/session-status")
+                .map(String::as_str),
+            Some("active")
+        );
     }
 
     #[test]
@@ -2327,7 +2694,7 @@ mod tests {
         assert_eq!(permissions[0].verbs(), ["get", "list", "watch"]);
         assert_eq!(permissions[1].api_group(), "");
         assert_eq!(permissions[1].resource(), "services");
-        assert_eq!(permissions[1].verbs(), ["create", "delete", "get"]);
+        assert_eq!(permissions[1].verbs(), ["create", "delete", "get", "patch"]);
         assert_eq!(permissions[2].api_group(), "apps");
         assert_eq!(permissions[2].resource(), "deployments");
         assert_eq!(permissions[2].verbs(), ["create", "delete", "get", "patch"]);
