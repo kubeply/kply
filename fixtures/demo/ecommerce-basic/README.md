@@ -14,3 +14,9 @@ commands can stay scoped.
 
 The manifests are fixtures only. Demo install, reset, teardown, and live Kind
 workflow commands are not implemented yet.
+
+## Variants
+
+- `manifests/backend.yaml`: baseline backend fixture.
+- `manifests/backend-broken.yaml`: intentionally broken backend response for
+  future agent repair and verification flows.
