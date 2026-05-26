@@ -141,6 +141,9 @@ pub enum SessionCommand {
     Manifests {
         /// Configured app name to generate manifests for.
         app: String,
+        /// Print generated Kubernetes manifests as a YAML stream.
+        #[arg(long, conflicts_with = "json")]
+        yaml: bool,
         /// Candidate image reference for the sandbox workload.
         #[arg(long, value_name = "IMAGE")]
         image: Option<String>,

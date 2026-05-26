@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "error": {
+    "code": "usage",
+    "details": "error: the argument '--yaml' cannot be used with '--json'\n\nUsage: kply session manifests --yaml <APP>\n\nFor more information, try '--help'.\n",
+    "exit_code": 2,
+    "message": "error: the argument '--yaml' cannot be used with '--json'"
+  }
+}

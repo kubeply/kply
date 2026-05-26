@@ -106,6 +106,7 @@ fn run() -> Result<ExitCode> {
             command:
                 Some(SessionCommand::Manifests {
                     app,
+                    yaml,
                     image,
                     namespace,
                     time_to_live,
@@ -115,6 +116,7 @@ fn run() -> Result<ExitCode> {
             return render_session_manifests(
                 &cli,
                 app,
+                *yaml,
                 image.as_deref(),
                 namespace.as_deref(),
                 time_to_live.as_deref(),
@@ -187,6 +189,7 @@ fn run() -> Result<ExitCode> {
 fn render_session_manifests(
     cli: &Cli,
     app_name: &str,
+    wants_yaml: bool,
     image: Option<&str>,
     namespace: Option<&str>,
     time_to_live: Option<&str>,
@@ -224,7 +227,13 @@ fn render_session_manifests(
         Err(error) => return render_session_manifest_error(&error, cli.json),
     };
 
-    if cli.json {
+    if wants_yaml {
+        let manifests = match session_manifest_values(&plan) {
+            Ok(manifests) => manifests,
+            Err(error) => return render_session_manifest_error(&error, cli.json),
+        };
+        print!("{}", render_yaml_documents(&manifests)?);
+    } else if cli.json {
         let value = serde_json::json!({
             "app": app_name,
             "session_id": plan.id(),
@@ -386,11 +395,43 @@ fn session_manifest_summaries(
     Ok(manifests)
 }
 
+/// Build serialized Kubernetes manifest values from a session plan.
+fn session_manifest_values(
+    plan: &SessionPlan,
+) -> std::result::Result<Vec<serde_json::Value>, SessionManifestBuildError> {
+    let deployment = sandbox_deployment_manifest(plan)?;
+    let service = sandbox_service_manifest(plan)?;
+    let mut manifests = vec![
+        serde_json::to_value(deployment).map_err(SessionManifestBuildError::Serialize)?,
+        serde_json::to_value(service).map_err(SessionManifestBuildError::Serialize)?,
+    ];
+
+    if plan.route_selector().is_some() {
+        let route = sandbox_route_placeholder_manifest(plan)?;
+        manifests.push(serde_json::to_value(route).map_err(SessionManifestBuildError::Serialize)?);
+    }
+
+    Ok(manifests)
+}
+
+/// Render manifests as a Kubernetes-style multi-document YAML stream.
+fn render_yaml_documents(manifests: &[serde_json::Value]) -> Result<String> {
+    let mut output = String::new();
+    for manifest in manifests {
+        output.push_str("---\n");
+        output.push_str(&serde_norway::to_string(manifest)?);
+    }
+
+    Ok(output)
+}
+
 /// Error produced while deriving the session manifest output summary.
 #[derive(Debug)]
 enum SessionManifestBuildError {
     /// Core manifest generation rejected the session plan.
     Manifest(SandboxManifestError),
+    /// Manifest serialization failed before rendering output.
+    Serialize(serde_json::Error),
     /// CLI summary extraction could not find an expected planned resource.
     Summary(&'static str),
 }
@@ -399,6 +440,7 @@ impl fmt::Display for SessionManifestBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Manifest(error) => write!(formatter, "{error}"),
+            Self::Serialize(error) => write!(formatter, "{error}"),
             Self::Summary(message) => formatter.write_str(message),
         }
     }
