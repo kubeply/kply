@@ -222,11 +222,6 @@ fn render_session_manifests(
             return render_session_plan_error(&message, cli.json);
         }
     };
-    let manifests = match session_manifest_summaries(&plan) {
-        Ok(manifests) => manifests,
-        Err(error) => return render_session_manifest_error(&error, cli.json),
-    };
-
     if wants_yaml {
         let manifests = match session_manifest_values(&plan) {
             Ok(manifests) => manifests,
@@ -234,6 +229,10 @@ fn render_session_manifests(
         };
         print!("{}", render_yaml_documents(&manifests)?);
     } else if cli.json {
+        let manifests = match session_manifest_documents(&plan) {
+            Ok(manifests) => manifests,
+            Err(error) => return render_session_manifest_error(&error, cli.json),
+        };
         let value = serde_json::json!({
             "app": app_name,
             "session_id": plan.id(),
@@ -242,6 +241,10 @@ fn render_session_manifests(
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else if !cli.quiet {
+        let manifests = match session_manifest_summaries(&plan) {
+            Ok(manifests) => manifests,
+            Err(error) => return render_session_manifest_error(&error, cli.json),
+        };
         println!("kply session manifests {app_name}");
         println!("session_id: {}", plan.id());
         println!("manifests: {}", manifests.len());
@@ -368,6 +371,15 @@ struct SessionManifestSummary {
     name: String,
 }
 
+/// Serialized manifest document rendered for agent-oriented JSON output.
+#[derive(Debug, Serialize)]
+struct SessionManifestDocument {
+    kind: String,
+    namespace: String,
+    name: String,
+    object: serde_json::Value,
+}
+
 /// Error produced while building a session plan from config and CLI input.
 enum SessionPlanBuildError {
     /// Configuration-derived data could not be converted into the core model.
@@ -412,6 +424,31 @@ fn session_manifest_values(
     }
 
     Ok(manifests)
+}
+
+/// Pair generated manifest identities with full Kubernetes object bodies.
+/// Summary and value helpers must generate the same resource sequence.
+fn session_manifest_documents(
+    plan: &SessionPlan,
+) -> std::result::Result<Vec<SessionManifestDocument>, SessionManifestBuildError> {
+    let summaries = session_manifest_summaries(plan)?;
+    let values = session_manifest_values(plan)?;
+    debug_assert_eq!(
+        summaries.len(),
+        values.len(),
+        "session manifest summaries and values must describe the same resources",
+    );
+
+    Ok(summaries
+        .into_iter()
+        .zip(values)
+        .map(|(summary, object)| SessionManifestDocument {
+            kind: summary.kind,
+            namespace: summary.namespace,
+            name: summary.name,
+            object,
+        })
+        .collect())
 }
 
 /// Render manifests as a Kubernetes-style multi-document YAML stream.
