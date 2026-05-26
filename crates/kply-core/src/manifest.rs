@@ -17,13 +17,26 @@ const REQUIRED_AUDIT_ANNOTATIONS: [&str; 3] = [
     "kply.dev/workload",
 ];
 
+/// Stable application identity labels safe to preserve in sandbox manifests.
+///
+/// Keep this allowlist limited to generic, non-sensitive app identity metadata.
+/// Exclude controller, rollout, and version labels because sandbox sessions can
+/// run a different image than production and should not inherit stale identity.
+const SAFE_APP_LABELS: [&str; 4] = [
+    "app.kubernetes.io/component",
+    "app.kubernetes.io/instance",
+    "app.kubernetes.io/name",
+    "app.kubernetes.io/part-of",
+];
+
 /// Generate a sandbox Kubernetes Deployment manifest from a dry-run session plan.
 pub fn sandbox_deployment_manifest(
     plan: &SessionPlan,
 ) -> Result<SandboxDeploymentManifest, SandboxManifestError> {
     let deployment = unique_planned_resource(plan, "Deployment")?;
-    let labels = metadata_entries_to_map(plan.planned_labels());
-    ensure_ownership_labels(&labels)?;
+    let planned_labels = metadata_entries_to_map(plan.planned_labels());
+    ensure_ownership_labels(&planned_labels)?;
+    let labels = sandbox_labels(&planned_labels);
     let annotations = metadata_entries_to_map(plan.planned_annotations());
     ensure_audit_annotations(&annotations)?;
 
@@ -70,8 +83,9 @@ pub fn sandbox_service_manifest_with_port(
     port_config: SandboxServicePortConfig,
 ) -> Result<SandboxServiceManifest, SandboxManifestError> {
     let service = unique_planned_resource(plan, "Service")?;
-    let labels = metadata_entries_to_map(plan.planned_labels());
-    ensure_ownership_labels(&labels)?;
+    let planned_labels = metadata_entries_to_map(plan.planned_labels());
+    ensure_ownership_labels(&planned_labels)?;
+    let labels = sandbox_labels(&planned_labels);
     let annotations = metadata_entries_to_map(plan.planned_annotations());
     ensure_audit_annotations(&annotations)?;
 
@@ -347,6 +361,23 @@ fn ensure_audit_annotations(
     Ok(())
 }
 
+/// Return only required ownership labels and safe app identity labels.
+///
+/// This avoids copying controller-managed labels such as `pod-template-hash`
+/// into generated manifests where they could create misleading selectors.
+fn sandbox_labels(planned_labels: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    planned_labels
+        .iter()
+        .filter(|(key, _)| should_preserve_label(key))
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect()
+}
+
+/// Check whether a planned label belongs in generated sandbox manifests.
+fn should_preserve_label(key: &str) -> bool {
+    REQUIRED_OWNERSHIP_LABELS.contains(&key) || SAFE_APP_LABELS.contains(&key)
+}
+
 fn metadata_entries_to_map(metadata: &[MetadataEntry]) -> BTreeMap<String, String> {
     metadata
         .iter()
@@ -412,10 +443,12 @@ mod tests {
                     .expect("planned workload"),
             ])
             .with_planned_labels([
+                MetadataEntry::new_label("app.kubernetes.io/component", "api").expect("label"),
                 MetadataEntry::new_label("kply.dev/app", "checkout").expect("label"),
                 MetadataEntry::new_label("kply.dev/managed-by", "kply").expect("label"),
                 MetadataEntry::new_label("kply.dev/session-id", "session-123").expect("label"),
                 MetadataEntry::new_label("kply.dev/session-name", "checkout-test").expect("label"),
+                MetadataEntry::new_label("pod-template-hash", "abc123").expect("label"),
             ])
             .expect("planned labels")
             .with_planned_annotations([
@@ -477,6 +510,54 @@ mod tests {
         let value = serde_json::to_value(manifest).expect("manifest should serialize");
 
         insta::assert_json_snapshot!("sandbox_service_manifest_with_explicit_port", value);
+    }
+
+    #[test]
+    fn preserves_safe_app_labels_in_sandbox_deployment_manifest() {
+        let plan = test_labeled_session_plan();
+        let manifest = sandbox_deployment_manifest(&plan).expect("deployment manifest");
+        let value = serde_json::to_value(manifest).expect("manifest should serialize");
+
+        assert_eq!(
+            value["metadata"]["labels"]["app.kubernetes.io/component"],
+            "api"
+        );
+        assert_eq!(
+            value["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"],
+            "api"
+        );
+        assert!(
+            value["metadata"]["labels"]
+                .get("pod-template-hash")
+                .is_none()
+        );
+        assert!(
+            value["spec"]["template"]["metadata"]["labels"]
+                .get("pod-template-hash")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn preserves_safe_app_labels_in_sandbox_service_manifest() {
+        let plan = test_labeled_session_plan();
+        let manifest = sandbox_service_manifest(&plan).expect("service manifest");
+        let value = serde_json::to_value(manifest).expect("manifest should serialize");
+
+        assert_eq!(
+            value["metadata"]["labels"]["app.kubernetes.io/component"],
+            "api"
+        );
+        assert_eq!(
+            value["spec"]["selector"]["app.kubernetes.io/component"],
+            "api"
+        );
+        assert!(
+            value["metadata"]["labels"]
+                .get("pod-template-hash")
+                .is_none()
+        );
+        assert!(value["spec"]["selector"].get("pod-template-hash").is_none());
     }
 
     #[test]
