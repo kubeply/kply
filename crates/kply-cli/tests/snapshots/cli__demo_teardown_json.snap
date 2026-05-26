@@ -1,0 +1,13 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 522
+expression: value
+---
+{
+  "command": "demo teardown",
+  "deleted_resources": [
+    "namespace/kply-demo"
+  ],
+  "namespace": "kply-demo",
+  "status": "torn_down"
+}

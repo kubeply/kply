@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 540
+expression: normalize_output(&output)
+---
+kply error: demo teardown
+
+kubectl exited with status 7
+command: kubectl delete namespace kply-demo --ignore-not-found --wait=true --timeout 5m
+stderr: fake kubectl

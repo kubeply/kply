@@ -1,0 +1,6 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 503
+expression: normalize_output(&log)
+---
+delete	namespace	kply-demo	--ignore-not-found	--wait=true	--timeout	5m

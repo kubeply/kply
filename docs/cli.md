@@ -74,3 +74,7 @@ blocking demo readiness results.
 `kply demo reset` re-applies the same baseline ecommerce fixture and waits for
 the same demo deployments. Use it to return the local demo to the known-good
 baseline after switching backend variants.
+
+`kply demo teardown` deletes the dedicated `kply-demo` namespace with
+`--ignore-not-found`, waits for deletion, and uses a timeout. It does not delete
+the Kind cluster itself.

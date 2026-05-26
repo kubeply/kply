@@ -202,6 +202,8 @@ pub enum DemoCommand {
     Install,
     /// Reset the local demo resources to the baseline state.
     Reset,
+    /// Tear down the local demo namespace.
+    Teardown,
 }
 
 impl DemoCommand {
@@ -211,6 +213,7 @@ impl DemoCommand {
             Self::Doctor => "doctor",
             Self::Install => "install",
             Self::Reset => "reset",
+            Self::Teardown => "teardown",
         }
     }
 }
