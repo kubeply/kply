@@ -2,9 +2,9 @@
 
 This guide sets up the ecommerce demo fixture in a local Kind cluster.
 
-The current flow uses `kind` and `kubectl` directly. `kply demo doctor`,
-`kply demo install`, `kply demo reset`, and `kply demo teardown` are not
-implemented yet.
+The current flow uses `kind` and `kubectl` directly. `kply demo install`,
+`kply demo reset`, and `kply demo teardown` are not implemented yet. Use
+`kply demo doctor` to validate local prerequisites first.
 
 ## Prerequisites
 
@@ -14,6 +14,12 @@ implemented yet.
 - A checkout of this repository.
 
 ## Create The Cluster
+
+Check local prerequisites before creating the cluster:
+
+```bash
+cargo run --locked --bin kply -- demo doctor
+```
 
 ```bash
 kind create cluster --name kply-demo

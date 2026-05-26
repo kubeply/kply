@@ -79,6 +79,12 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<ClusterCommand>,
     },
+    /// Manage the local Kply demo.
+    Demo {
+        /// Optional demo command.
+        #[command(subcommand)]
+        command: Option<DemoCommand>,
+    },
     /// Generate future shell completion scripts.
     Completion,
     /// Read future session reports.
@@ -92,6 +98,7 @@ impl Command {
         Self::App { command: None },
         Self::Config { command: None },
         Self::Cluster { command: None },
+        Self::Demo { command: None },
         Self::Completion,
         Self::Report,
     ];
@@ -104,6 +111,7 @@ impl Command {
             Self::App { .. } => "app",
             Self::Config { .. } => "config",
             Self::Cluster { .. } => "cluster",
+            Self::Demo { .. } => "demo",
             Self::Completion => "completion",
             Self::Report => "report",
         }
@@ -181,6 +189,22 @@ impl ClusterCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Info => "info",
+        }
+    }
+}
+
+/// Local demo commands.
+#[derive(Clone, Copy, Debug, Subcommand)]
+pub enum DemoCommand {
+    /// Check local prerequisites for the demo.
+    Doctor,
+}
+
+impl DemoCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Doctor => "doctor",
         }
     }
 }

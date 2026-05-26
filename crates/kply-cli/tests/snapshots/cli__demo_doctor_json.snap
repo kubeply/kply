@@ -1,0 +1,60 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "checks": [
+    {
+      "message": "fixtures/demo/ecommerce-basic/kply.yaml",
+      "name": "demo_config",
+      "status": "ok"
+    },
+    {
+      "message": "fixtures/demo/ecommerce-basic/manifests/namespace.yaml",
+      "name": "demo_manifest",
+      "status": "ok"
+    },
+    {
+      "message": "fixtures/demo/ecommerce-basic/manifests/frontend.yaml",
+      "name": "demo_manifest",
+      "status": "ok"
+    },
+    {
+      "message": "fixtures/demo/ecommerce-basic/manifests/backend.yaml",
+      "name": "demo_manifest",
+      "status": "ok"
+    },
+    {
+      "message": "fixtures/demo/ecommerce-basic/manifests/backend-broken.yaml",
+      "name": "demo_manifest",
+      "status": "ok"
+    },
+    {
+      "message": "fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml",
+      "name": "demo_manifest",
+      "status": "ok"
+    },
+    {
+      "message": "fixtures/demo/ecommerce-basic/manifests/catalog.yaml",
+      "name": "demo_manifest",
+      "status": "ok"
+    },
+    {
+      "message": "kind at <absolute-path>",
+      "name": "kind",
+      "status": "ok"
+    },
+    {
+      "message": "kubectl at <absolute-path>",
+      "name": "kubectl",
+      "status": "ok"
+    },
+    {
+      "message": "docker at <absolute-path>",
+      "name": "container_runtime",
+      "status": "ok"
+    }
+  ],
+  "command": "demo doctor",
+  "status": "ready"
+}

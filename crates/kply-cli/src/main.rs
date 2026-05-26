@@ -1,9 +1,13 @@
 //! Command-line entrypoint for the Kply placeholder CLI.
 
+mod demo;
+
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use kply_cli::cli::{AppCommand, Cli, ClusterCommand, Command, ConfigCommand, SessionCommand};
+use kply_cli::cli::{
+    AppCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand, SessionCommand,
+};
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
 };
@@ -97,6 +101,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
+        Some(Command::Demo {
+            command: Some(DemoCommand::Doctor),
+        }) => return demo::doctor::render_demo_doctor(&cli),
         Some(command) => {
             if cli.json {
                 let value = serde_json::json!({

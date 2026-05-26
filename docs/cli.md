@@ -48,3 +48,16 @@ precedence input and `--no-config` will force the default in-memory shape.
 
 Exit codes are part of the CLI contract. Changes to these meanings must update
 this document, tests, snapshots, and release notes in the same pull request.
+
+## Demo Commands
+
+`kply demo doctor` checks local prerequisites for the manual Kind demo without
+mutating a cluster.
+
+The command verifies that the ecommerce demo fixture files exist and that
+`kind`, `kubectl`, and one supported container runtime command are available on
+`PATH`. Supported runtime commands are `docker`, `podman`, and `nerdctl`.
+
+Doctor results use exit code `0` when every check passes and exit code `1` when
+one or more prerequisites are missing. Missing prerequisites are blocking
+results, not usage errors.
