@@ -1,0 +1,162 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 539
+expression: value
+---
+{
+  "id": "checkout-db-plan",
+  "image": "postgres:16",
+  "name": "checkout-db-session",
+  "planned_annotations": [
+    {
+      "key": "kply.dev/image",
+      "value": "postgres:16"
+    },
+    {
+      "key": "kply.dev/route-strategy",
+      "value": "preview"
+    },
+    {
+      "key": "kply.dev/workload",
+      "value": "shop/Deployment/checkout-postgres"
+    }
+  ],
+  "planned_checks": [
+    {
+      "name": "image_pull",
+      "target": "postgres:16"
+    },
+    {
+      "name": "route_ready",
+      "target": "preview"
+    },
+    {
+      "name": "service_endpoints",
+      "target": "shop/checkout-db-plan-service"
+    },
+    {
+      "name": "workload_ready",
+      "target": "shop/Deployment/checkout-postgres"
+    }
+  ],
+  "planned_cleanup_steps": [
+    {
+      "action": "delete_route",
+      "target": "shop/HTTPRoute/checkout-db-plan-route"
+    },
+    {
+      "action": "delete_service",
+      "target": "shop/Service/checkout-db-plan-service"
+    },
+    {
+      "action": "delete_workload",
+      "target": "shop/Deployment/checkout-db-plan-workload"
+    }
+  ],
+  "planned_labels": [
+    {
+      "key": "kply.dev/app",
+      "value": "checkout-db"
+    },
+    {
+      "key": "kply.dev/managed-by",
+      "value": "kply"
+    },
+    {
+      "key": "kply.dev/session-id",
+      "value": "checkout-db-plan"
+    },
+    {
+      "key": "kply.dev/session-name",
+      "value": "checkout-db-session"
+    }
+  ],
+  "planned_resources": [
+    {
+      "kind": "Deployment",
+      "name": "checkout-db-plan-workload",
+      "namespace": "shop"
+    },
+    {
+      "kind": "HTTPRoute",
+      "name": "checkout-db-plan-route",
+      "namespace": "shop"
+    },
+    {
+      "kind": "Service",
+      "name": "checkout-db-plan-service",
+      "namespace": "shop"
+    }
+  ],
+  "policy": {
+    "allowed_operations": [
+      "inspect",
+      "plan",
+      "prepare",
+      "route",
+      "verify",
+      "cleanup"
+    ]
+  },
+  "required_permissions": [
+    {
+      "api_group": "",
+      "resource": "pods",
+      "verbs": [
+        "get",
+        "list",
+        "watch"
+      ]
+    },
+    {
+      "api_group": "",
+      "resource": "services",
+      "verbs": [
+        "create",
+        "delete",
+        "get"
+      ]
+    },
+    {
+      "api_group": "apps",
+      "resource": "deployments",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch"
+      ]
+    },
+    {
+      "api_group": "gateway.networking.k8s.io",
+      "resource": "httproutes",
+      "verbs": [
+        "create",
+        "delete",
+        "get"
+      ]
+    }
+  ],
+  "risk_notes": [
+    {
+      "category": "database",
+      "reason": "database_reference_requires_manual_review",
+      "severity": "warning",
+      "target": "app:checkout-db"
+    }
+  ],
+  "route_selector": null,
+  "status": "planned",
+  "ttl": null,
+  "unsupported_feature_warnings": [
+    {
+      "feature": "preview_routing",
+      "reason": "route_strategy_preview_not_implemented"
+    }
+  ],
+  "workload": {
+    "kind": "Deployment",
+    "name": "checkout-postgres",
+    "namespace": "shop"
+  }
+}
