@@ -1,0 +1,12 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply session create checkout
+session_id: checkout-plan
+status: planned
+mutation: not_applied
+planned_resources: 3
+  resource: shop/Deployment/checkout-plan-workload
+  resource: shop/HTTPRoute/checkout-plan-route
+  resource: shop/Service/checkout-plan-service
