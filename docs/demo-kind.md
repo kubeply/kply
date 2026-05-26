@@ -44,6 +44,19 @@ Use the `kind-kply-demo` context for the rest of this guide.
 kubectl config use-context kind-kply-demo
 ```
 
+## Run Optional Live Kind Tests
+
+The live Kind mutation test is disabled unless explicitly requested. It creates
+an isolated namespace, creates Kply-labeled sandbox resources, patches session
+state annotations, lists cleanup candidates, deletes those resources, and then
+removes the namespace.
+
+```bash
+KPLY_LIVE_KIND_TESTS=1 \
+KPLY_LIVE_KIND_NAMESPACE=kply-live-kind \
+cargo test -p kply-k8s --test live_cluster live_kind_session_resources_create_patch_list_and_cleanup_when_enabled --locked
+```
+
 ## Install The Baseline Fixture
 
 Install the dedicated namespace, backing service, frontend, and baseline
@@ -119,8 +132,8 @@ cargo run --locked --bin kply -- demo reset
 
 ## Inspect With Kply
 
-The fixture includes a `kply.yaml` configuration file. Current `kply` commands
-are read-only or planning-oriented; session creation is not implemented yet.
+The fixture includes a `kply.yaml` configuration file. Mutation commands still
+require explicit `--apply` confirmation.
 
 ```bash
 cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml config validate
