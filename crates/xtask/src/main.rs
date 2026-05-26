@@ -202,15 +202,26 @@ fn check_future_session_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
     let docs = [
         DocExpectation {
             path: readme_path,
-            required_phrases: vec!["Sessions are not implemented yet.".into()],
+            required_phrases: vec![
+                "Implementation in progress".into(),
+                "early runtime check support".into(),
+                "Session mutation commands require explicit `--apply` confirmation.".into(),
+            ],
         },
         DocExpectation {
             path: architecture_path,
-            required_phrases: vec!["Sessions are not implemented yet.".into()],
+            required_phrases: vec![
+                "Real session planning and Kubernetes execution are now implemented".into(),
+                "routing remains placeholder-only".into(),
+            ],
         },
         DocExpectation {
             path: product_path,
-            required_phrases: vec!["Sessions are not implemented yet.".into()],
+            required_phrases: vec![
+                "roadmap hypothesis, partially implemented behavior".into(),
+                "runtime checks are landing".into(),
+                "routing remains placeholder-only".into(),
+            ],
         },
     ];
 
@@ -1009,11 +1020,8 @@ fn collect_crate_sources(root: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
 
 fn check_placeholders() -> Result<()> {
     // Product crates that have not reached their roadmap work remain placeholder-only.
-    // CLI, config, core, k8s, test, and xtask crates need real support code for active milestones.
-    let product_crates = [
-        "crates/kply-checks/src/lib.rs",
-        "crates/kply-routing/src/lib.rs",
-    ];
+    // CLI, config, core, checks, k8s, test, and xtask crates need real support code for active milestones.
+    let product_crates = ["crates/kply-routing/src/lib.rs"];
 
     check_placeholder_sources(product_crates)
 }
@@ -1058,20 +1066,23 @@ fn check_placeholder_docs() -> Result<()> {
     let docs = [
         DocExpectation {
             path: "README.md".into(),
-            required_phrases: vec!["placeholders only".into(), "future Kply session".into()],
+            required_phrases: vec![
+                "Implementation in progress".into(),
+                "routing remains placeholder-only".into(),
+            ],
         },
         DocExpectation {
             path: "docs/architecture.md".into(),
             required_phrases: vec![
-                "kply CLI placeholder".into(),
+                "kply CLI".into(),
                 "Real session planning and Kubernetes execution".into(),
             ],
         },
         DocExpectation {
             path: "docs/product.md".into(),
             required_phrases: vec![
-                "roadmap hypothesis, not implemented behavior".into(),
-                "placeholder-only".into(),
+                "roadmap hypothesis, partially implemented behavior".into(),
+                "routing remains placeholder-only".into(),
             ],
         },
     ];
@@ -1482,46 +1493,65 @@ pub fn
     }
 
     #[test]
-    fn accepts_future_session_docs_with_not_implemented_notes() {
+    fn accepts_future_session_docs_with_current_status_notes() {
         let temp = TempDir::new().expect("temp dir should be created");
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "Future sessions.\n\nSessions are not implemented yet.\n",
+            "\
+Implementation in progress.
+The workspace now includes early runtime check support.
+Session mutation commands require explicit `--apply` confirmation.
+",
         );
         let architecture_path = write_nested_source(
             temp.path(),
             "docs/architecture.md",
-            "Future session architecture.\n\nSessions are not implemented yet.\n",
+            "\
+Real session planning and Kubernetes execution are now implemented.
+routing remains placeholder-only.
+",
         );
         let product_path = write_nested_source(
             temp.path(),
             "docs/product.md",
-            "Future session product direction.\n\nSessions are not implemented yet.\n",
+            "\
+This is a roadmap hypothesis, partially implemented behavior.
+runtime checks are landing.
+routing remains placeholder-only.
+",
         );
 
         check_future_session_docs_inner([readme_path, architecture_path, product_path])
-            .expect("future session docs with notes should pass");
+            .expect("current session docs with notes should pass");
     }
 
     #[test]
-    fn rejects_future_session_docs_missing_not_implemented_note() {
+    fn rejects_future_session_docs_missing_current_status_note() {
         let temp = TempDir::new().expect("temp dir should be created");
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "Future sessions.\n\nSessions are not implemented yet.\n",
+            "\
+Implementation in progress.
+The workspace now includes early runtime check support.
+Session mutation commands require explicit `--apply` confirmation.
+",
         );
         let architecture_path =
             write_nested_source(temp.path(), "docs/architecture.md", "Future sessions.\n");
         let product_path = write_nested_source(
             temp.path(),
             "docs/product.md",
-            "Future sessions.\n\nSessions are not implemented yet.\n",
+            "\
+This is a roadmap hypothesis, partially implemented behavior.
+runtime checks are landing.
+routing remains placeholder-only.
+",
         );
 
         let error = check_future_session_docs_inner([readme_path, architecture_path, product_path])
-            .expect_err("future session docs missing note should fail");
+            .expect_err("future session docs missing current status should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
     }

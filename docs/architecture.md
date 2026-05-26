@@ -10,7 +10,7 @@ AI coding agent / human
         |
         | runs kply commands
         v
-kply CLI placeholder
+kply CLI
         |
         | creates scoped sessions and checks
         v
@@ -57,7 +57,9 @@ A session is the expected core primitive. It will represent a bounded attempt
 to test a change against Kubernetes-like reality without giving an agent direct
 production mutation access.
 
-Sessions are not implemented yet.
+Real session planning and Kubernetes execution are now implemented. Runtime
+checks are starting to land, while routing remains placeholder-only until its
+roadmap milestone starts.
 
 The current `kply-core` session domain model defines the first pre-`1.0.0`
 agent-readable JSON contract. This contract is provisional and may change
@@ -333,11 +335,13 @@ opt-out once discovery becomes active.
 
 ## Current Workflow
 
-The current workflow is intentionally minimal:
+The current workflow is intentionally bounded:
 
 1. Preserve crate boundaries.
-2. Print placeholder CLI output.
+2. Keep real session planning and Kubernetes execution guarded by explicit
+   `--apply` confirmation.
 3. Keep tests and CI green.
+4. Keep routing placeholder-only until its roadmap milestone starts.
 
-Real session planning and Kubernetes execution will be added only after the
-roadmap is defined.
+Runtime checks are starting to land on top of the implemented session
+planning/execution path.
