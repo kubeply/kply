@@ -126,6 +126,14 @@ pub enum SessionCommand {
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,
     },
+    /// Show one sandbox session recorded in cluster metadata.
+    Status {
+        /// Session id to inspect.
+        session: String,
+        /// Namespace to inspect for the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
     /// Plan creation of sandbox resources for one configured app.
     Create {
         /// Configured app name to create a session for.
@@ -190,6 +198,7 @@ impl SessionCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::List { .. } => "list",
+            Self::Status { .. } => "status",
             Self::Create { .. } => "create",
             Self::Plan { .. } => "plan",
             Self::Manifests { .. } => "manifests",

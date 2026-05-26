@@ -7,7 +7,7 @@ use http::{Method, Request, Response};
 use kply_core::WorkloadRef;
 use kube::Client;
 use kube::client::Body;
-use serde_json::json;
+use serde_json::{json, to_vec};
 use tokio::task::JoinHandle;
 use tower_test::mock::{self, Handle};
 
@@ -104,6 +104,37 @@ async fn lists_sessions_from_mocked_kubernetes_api() {
     kply_test::insta::assert_json_snapshot!("session_list_offline_discovery", sessions);
 }
 
+#[tokio::test]
+async fn gets_session_from_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_session_get_api(handle);
+
+    let session = kply_k8s::get_session(client, "shop", "checkout-plan")
+        .await
+        .expect("mocked session get should succeed")
+        .expect("mocked session should be found");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(session.id, "checkout-plan");
+    assert_eq!(session.status.as_deref(), Some("active"));
+    assert_eq!(session.workload_name, "checkout-plan-workload");
+}
+
+#[tokio::test]
+async fn returns_none_for_missing_session_from_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_missing_session_get_api(handle);
+
+    let session = kply_k8s::get_session(client, "shop", "missing-plan")
+        .await
+        .expect("mocked missing session get should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert!(session.is_none());
+}
+
 struct ExpectedListResponse {
     path: &'static str,
     fixture_path: &'static str,
@@ -137,42 +168,120 @@ fn spawn_mock_session_list_api(handle: MockKubeHandle) -> JoinHandle<()> {
         );
 
         send.send_response(Response::new(Body::from(
-            serde_json::to_vec(&json!({
-                "apiVersion": "apps/v1",
-                "kind": "DeploymentList",
-                "items": [
-                    {
-                        "apiVersion": "apps/v1",
-                        "kind": "Deployment",
-                        "metadata": {
-                            "name": "checkout-plan-workload",
-                            "namespace": "shop",
-                            "labels": {
-                                "kply.dev/app": "checkout",
-                                "kply.dev/managed-by": "kply",
-                                "kply.dev/session-id": "checkout-plan",
-                                "kply.dev/session-name": "checkout-plan"
-                            },
-                            "annotations": {
-                                "kply.dev/session-status": "active"
-                            }
-                        }
-                    },
-                    {
-                        "apiVersion": "apps/v1",
-                        "kind": "Deployment",
-                        "metadata": {
-                            "name": "ignored-workload",
-                            "namespace": "shop",
-                            "labels": {
-                                "app.kubernetes.io/managed-by": "kply"
-                            }
-                        }
-                    }
-                ]
-            }))
-            .expect("session list fixture should serialize"),
+            to_vec(&session_deployment_list_fixture())
+                .expect("session list fixture should serialize"),
         )));
+    })
+}
+
+fn spawn_mock_session_get_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive expected request");
+
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        let query = request
+            .uri()
+            .query()
+            .expect("session get should include a label selector");
+        assert!(
+            query.contains("kply.dev%2Fmanaged-by%3Dkply"),
+            "session get should filter by Kply ownership"
+        );
+        assert!(
+            query.contains("kply.dev%2Fsession-id%3Dcheckout-plan"),
+            "session get should filter by session id"
+        );
+
+        send.send_response(Response::new(Body::from(
+            to_vec(&session_deployment_list_fixture())
+                .expect("session get fixture should serialize"),
+        )));
+    })
+}
+
+fn spawn_mock_missing_session_get_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive expected request");
+
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        let query = request
+            .uri()
+            .query()
+            .expect("missing session get should include a label selector");
+        assert!(
+            query.contains("kply.dev%2Fmanaged-by%3Dkply"),
+            "missing session get should filter by Kply ownership"
+        );
+        assert!(
+            query.contains("kply.dev%2Fsession-id%3Dmissing-plan"),
+            "missing session get should filter by session id"
+        );
+
+        send.send_response(Response::new(Body::from(
+            to_vec(&empty_deployment_list_fixture())
+                .expect("empty deployment list fixture should serialize"),
+        )));
+    })
+}
+
+fn session_deployment_list_fixture() -> serde_json::Value {
+    json!({
+        "apiVersion": "apps/v1",
+        "kind": "DeploymentList",
+        "items": [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {
+                    "name": "checkout-plan-workload",
+                    "namespace": "shop",
+                    "labels": {
+                        "kply.dev/app": "checkout",
+                        "kply.dev/managed-by": "kply",
+                        "kply.dev/session-id": "checkout-plan",
+                        "kply.dev/session-name": "checkout-plan"
+                    },
+                    "annotations": {
+                        "kply.dev/session-status": "active"
+                    }
+                }
+            },
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {
+                    "name": "ignored-workload",
+                    "namespace": "shop",
+                    "labels": {
+                        "app.kubernetes.io/managed-by": "kply"
+                    }
+                }
+            }
+        ]
+    })
+}
+
+fn empty_deployment_list_fixture() -> serde_json::Value {
+    json!({
+        "apiVersion": "apps/v1",
+        "kind": "DeploymentList",
+        "items": []
     })
 }
 

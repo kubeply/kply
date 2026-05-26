@@ -1191,6 +1191,96 @@ fn rejects_session_list_without_kubeconfig_json() {
 }
 
 #[test]
+fn rejects_session_status_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["session", "status", "checkout-plan", "--namespace", "shop"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "session status errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!(
+        "session_status_missing_kubeconfig",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_session_status_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "session",
+            "status",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "session status JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_status_missing_kubeconfig_json", value);
+}
+
+#[test]
+fn rejects_invalid_session_status_id() {
+    let output = kply_cmd()
+        .args(["session", "status", "Checkout_Plan"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_status_invalid_id", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_invalid_session_status_id_json() {
+    let output = kply_cmd()
+        .args(["session", "status", "Checkout_Plan", "--json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_status_invalid_id_json", value);
+}
+
+#[test]
 fn prints_session_manifests_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -2456,7 +2546,7 @@ fn covers_every_session_command() {
 
     assert_eq!(
         command_names,
-        ["create", "list", "manifests", "plan"],
+        ["create", "list", "manifests", "plan", "status"],
         "update session command tests when the session command surface changes"
     );
 

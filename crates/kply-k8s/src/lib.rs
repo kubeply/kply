@@ -711,6 +711,32 @@ pub async fn list_sessions(
     Ok(summaries)
 }
 
+/// Get one Kply sandbox session in a namespace without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn get_session(
+    client: Client,
+    namespace: &str,
+    session_id: &str,
+) -> Result<Option<SessionSummary>, kube::Error> {
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    let selector = format!(
+        "{KPLY_MANAGED_BY_LABEL}={KPLY_MANAGED_BY_VALUE},{KPLY_SESSION_ID_LABEL}={session_id}"
+    );
+    let mut sessions = deployments
+        .list(&ListParams::default().labels(&selector))
+        .await?
+        .iter()
+        .filter_map(session_summary_from_deployment)
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| left.workload_name.cmp(&right.workload_name));
+    Ok(sessions
+        .into_iter()
+        .find(|session| session.id == session_id))
+}
+
 /// Create one Deployment in a namespace and return its observed summary.
 ///
 /// # Errors

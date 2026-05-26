@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_output(&stderr)
+---
+kply error: session status
+
+session id must start and end with a lowercase ASCII letter or digit

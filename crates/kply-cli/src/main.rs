@@ -95,6 +95,9 @@ fn run() -> Result<ExitCode> {
             command: Some(SessionCommand::List { namespace }),
         }) => return render_session_list(&cli, namespace.as_deref()),
         Some(Command::Session {
+            command: Some(SessionCommand::Status { session, namespace }),
+        }) => return render_session_status(&cli, session, namespace.as_deref()),
+        Some(Command::Session {
             command:
                 Some(SessionCommand::Create {
                     app,
@@ -384,7 +387,7 @@ fn render_session_list(cli: &Cli, namespace: Option<&str>) -> Result<ExitCode> {
     };
     let sessions = match runtime.block_on(list_sessions_in_namespace(&namespace)) {
         Ok(sessions) => sessions,
-        Err(error) => return render_session_list_error(&error, cli.json),
+        Err(error) => return render_discovery_error(&error, cli.json),
     };
 
     if cli.json {
@@ -412,6 +415,44 @@ fn render_session_list(cli: &Cli, namespace: Option<&str>) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Render one sandbox session recorded in cluster metadata.
+fn render_session_status(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_session_status_error(&error.to_string(), cli.json),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let namespace = match namespace {
+        Some(namespace) => namespace.to_owned(),
+        None => match runtime.block_on(kply_k8s::cluster_info()) {
+            Ok(info) => info.default_namespace,
+            Err(error) => return render_kubeconfig_error(&error, cli.json),
+        },
+    };
+    let session = match runtime.block_on(get_session_in_namespace(&namespace, session_id.as_str()))
+    {
+        Ok(session) => session,
+        Err(error) => return render_discovery_error(&error, cli.json),
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&session)?);
+    } else if !cli.quiet {
+        println!("kply session status {}", session.id);
+        println!("namespace: {}", session.namespace);
+        println!("status: {}", session.status.as_deref().unwrap_or("unknown"));
+        println!("app: {}", session.app.as_deref().unwrap_or("unknown"));
+        println!(
+            "workload: {}/{}",
+            session.workload_kind, session.workload_name
+        );
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 /// List sandbox sessions through the Kubernetes adapter.
 async fn list_sessions_in_namespace(
     namespace: &str,
@@ -421,6 +462,23 @@ async fn list_sessions_in_namespace(
     kply_k8s::list_sessions(client, namespace)
         .await
         .map_err(|error| DiscoveryError::from_kubernetes_api_error("list sessions", &error))
+}
+
+/// Get one sandbox session through the Kubernetes adapter.
+async fn get_session_in_namespace(
+    namespace: &str,
+    session_id: &str,
+) -> std::result::Result<SessionSummary, DiscoveryError> {
+    let client = kply_k8s::load_discovery_client().await?;
+    let session = kply_k8s::get_session(client, namespace, session_id)
+        .await
+        .map_err(|error| {
+            DiscoveryError::from_kubernetes_api_error("read session status", &error)
+        })?;
+    session.ok_or_else(|| DiscoveryError {
+        code: kply_k8s::DiscoveryErrorCode::MissingWorkload,
+        message: format!("session {session_id} was not found in namespace {namespace}"),
+    })
 }
 
 /// Result of applying session resources to Kubernetes.
@@ -1770,6 +1828,24 @@ fn render_session_plan_config_error(message: &str, wants_json: bool) -> Result<E
     Ok(exit_code(EXIT_BLOCKING))
 }
 
+/// Render session status input errors.
+fn render_session_status_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "session_status",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: session status\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
 /// Render session create apply errors while mutating Kubernetes resources.
 fn render_session_create_apply_error(error: &MutationError, wants_json: bool) -> Result<ExitCode> {
     if wants_json {
@@ -1838,8 +1914,8 @@ fn render_session_create_partial_apply_error(
     Ok(exit_code(EXIT_BLOCKING))
 }
 
-/// Render read-only session list errors.
-fn render_session_list_error(error: &DiscoveryError, wants_json: bool) -> Result<ExitCode> {
+/// Render read-only Kubernetes discovery errors.
+fn render_discovery_error(error: &DiscoveryError, wants_json: bool) -> Result<ExitCode> {
     let exit_code_value = match error.code {
         kply_k8s::DiscoveryErrorCode::ForbiddenAccess
         | kply_k8s::DiscoveryErrorCode::KubernetesApi => EXIT_BLOCKING,
