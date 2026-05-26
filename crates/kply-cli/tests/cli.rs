@@ -36,6 +36,18 @@ apps:
     route_strategy: preview
 "#;
 
+const SESSION_PLAN_STATEFULSET_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: cart
+    namespace: shop
+    workload: cart-store
+    workload_kind: StatefulSet
+    service: cart-store
+    default_image: ghcr.io/acme/cart:next
+    route_strategy: header
+"#;
+
 const SESSION_PLAN_NO_IMAGE_CONFIG: &str = r#"
 version: 1
 apps:
@@ -57,6 +69,14 @@ fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
 fn with_session_plan_risk_config<T>(run: impl FnOnce(&str) -> T) -> T {
     let workspace = temp_workspace();
     let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_RISK_CONFIG);
+    let config_path = config_path.to_str().expect("config path should be UTF-8");
+
+    run(config_path)
+}
+
+fn with_session_plan_statefulset_config<T>(run: impl FnOnce(&str) -> T) -> T {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_STATEFULSET_CONFIG);
     let config_path = config_path.to_str().expect("config path should be UTF-8");
 
     run(config_path)
@@ -1007,6 +1027,112 @@ fn prints_session_plan_placeholder_json_with_all_overrides() {
 }
 
 #[test]
+fn prints_session_manifests_text() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args(["--config", config_path, "session", "manifests", "checkout"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_manifests_text", output);
+}
+
+#[test]
+fn prints_session_manifests_json() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("session_manifests_json", value);
+}
+
+#[test]
+fn prints_session_manifests_text_without_route_selector() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
+                "--route-strategy",
+                "preview",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_manifests_text_without_route_selector", output);
+}
+
+#[test]
+fn prints_session_manifests_json_without_route_selector() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
+                "--route-strategy",
+                "preview",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("session_manifests_json_without_route_selector", value);
+}
+
+#[test]
+fn prints_session_manifests_text_for_statefulset_workload() {
+    let output = with_session_plan_statefulset_config(|config_path| {
+        kply_cmd()
+            .args(["--config", config_path, "session", "manifests", "cart"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_manifests_text_for_statefulset_workload", output);
+}
+
+#[test]
 fn suppresses_session_plan_placeholder_text_when_quiet() {
     with_session_plan_config(|config_path| {
         kply_cmd()
@@ -1052,6 +1178,24 @@ fn suppresses_session_plan_placeholder_text_when_quiet() {
                 "30m",
                 "--route-strategy",
                 "header",
+                "--quiet",
+            ])
+            .assert()
+            .success()
+            .stdout("");
+    });
+}
+
+#[test]
+fn suppresses_session_manifests_text_when_quiet() {
+    with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
                 "--quiet",
             ])
             .assert()
@@ -2018,7 +2162,7 @@ fn covers_every_session_command() {
 
     assert_eq!(
         command_names,
-        ["plan"],
+        ["manifests", "plan"],
         "update session command tests when the session command surface changes"
     );
 
@@ -2029,6 +2173,23 @@ fn covers_every_session_command() {
                 config_path,
                 "session",
                 SessionCommand::Plan {
+                    app: String::new(),
+                    image: None,
+                    namespace: None,
+                    time_to_live: None,
+                    route_strategy: None,
+                }
+                .name(),
+                "checkout",
+            ])
+            .assert()
+            .success();
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                SessionCommand::Manifests {
                     app: String::new(),
                     image: None,
                     namespace: None,

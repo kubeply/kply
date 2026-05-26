@@ -137,6 +137,23 @@ pub enum SessionCommand {
         #[arg(long, value_name = "STRATEGY")]
         route_strategy: Option<String>,
     },
+    /// Generate sandbox Kubernetes manifests for one configured app.
+    Manifests {
+        /// Configured app name to generate manifests for.
+        app: String,
+        /// Candidate image reference for the sandbox workload.
+        #[arg(long, value_name = "IMAGE")]
+        image: Option<String>,
+        /// Namespace override for the generated sandbox resources.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+        /// Lifetime for the generated sandbox session.
+        #[arg(long = "ttl", value_name = "DURATION")]
+        time_to_live: Option<String>,
+        /// Route strategy override for the generated sandbox session.
+        #[arg(long, value_name = "STRATEGY")]
+        route_strategy: Option<String>,
+    },
 }
 
 impl SessionCommand {
@@ -144,6 +161,7 @@ impl SessionCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Plan { .. } => "plan",
+            Self::Manifests { .. } => "manifests",
         }
     }
 }
