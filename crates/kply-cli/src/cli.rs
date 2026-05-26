@@ -120,6 +120,12 @@ impl Command {
 /// Sandbox session commands.
 #[derive(Clone, Debug, Subcommand)]
 pub enum SessionCommand {
+    /// List sandbox sessions recorded in cluster metadata.
+    List {
+        /// Namespace to inspect for Kply sandbox sessions.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
     /// Plan creation of sandbox resources for one configured app.
     Create {
         /// Configured app name to create a session for.
@@ -183,6 +189,7 @@ impl SessionCommand {
     /// Return the stable command name used in CLI output.
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::List { .. } => "list",
             Self::Create { .. } => "create",
             Self::Plan { .. } => "plan",
             Self::Manifests { .. } => "manifests",

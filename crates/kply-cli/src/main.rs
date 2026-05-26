@@ -21,8 +21,8 @@ use kply_core::{
     sandbox_deployment_manifest, sandbox_route_placeholder_manifest, sandbox_service_manifest,
 };
 use kply_k8s::{
-    DeploymentRolloutPhase, DeploymentSummary, KubeconfigError, MutationError, MutationErrorCode,
-    ServiceSummary,
+    DeploymentRolloutPhase, DeploymentSummary, DiscoveryError, KubeconfigError, MutationError,
+    MutationErrorCode, ServiceSummary, SessionSummary,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -91,6 +91,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::App {
             command: Some(AppCommand::Graph { app }),
         }) => return render_app_graph(&cli, app),
+        Some(Command::Session {
+            command: Some(SessionCommand::List { namespace }),
+        }) => return render_session_list(&cli, namespace.as_deref()),
         Some(Command::Session {
             command:
                 Some(SessionCommand::Create {
@@ -365,6 +368,59 @@ fn render_session_create(
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render sandbox sessions recorded in cluster metadata.
+fn render_session_list(cli: &Cli, namespace: Option<&str>) -> Result<ExitCode> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let namespace = match namespace {
+        Some(namespace) => namespace.to_owned(),
+        None => match runtime.block_on(kply_k8s::cluster_info()) {
+            Ok(info) => info.default_namespace,
+            Err(error) => return render_kubeconfig_error(&error, cli.json),
+        },
+    };
+    let sessions = match runtime.block_on(list_sessions_in_namespace(&namespace)) {
+        Ok(sessions) => sessions,
+        Err(error) => return render_session_list_error(&error, cli.json),
+    };
+
+    if cli.json {
+        let value = serde_json::json!({
+            "namespace": namespace,
+            "sessions": sessions,
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else if !cli.quiet {
+        println!("kply session list");
+        println!("namespace: {namespace}");
+        println!("sessions: {}", sessions.len());
+        for session in &sessions {
+            println!(
+                "  session: {} status={} app={} workload={}/{}",
+                session.id,
+                session.status.as_deref().unwrap_or("unknown"),
+                session.app.as_deref().unwrap_or("unknown"),
+                session.workload_kind,
+                session.workload_name
+            );
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// List sandbox sessions through the Kubernetes adapter.
+async fn list_sessions_in_namespace(
+    namespace: &str,
+) -> std::result::Result<Vec<SessionSummary>, DiscoveryError> {
+    let client = kply_k8s::load_discovery_client().await?;
+
+    kply_k8s::list_sessions(client, namespace)
+        .await
+        .map_err(|error| DiscoveryError::from_kubernetes_api_error("list sessions", &error))
 }
 
 /// Result of applying session resources to Kubernetes.
@@ -1782,6 +1838,30 @@ fn render_session_create_partial_apply_error(
     Ok(exit_code(EXIT_BLOCKING))
 }
 
+/// Render read-only session list errors.
+fn render_session_list_error(error: &DiscoveryError, wants_json: bool) -> Result<ExitCode> {
+    let exit_code_value = match error.code {
+        kply_k8s::DiscoveryErrorCode::ForbiddenAccess
+        | kply_k8s::DiscoveryErrorCode::KubernetesApi => EXIT_BLOCKING,
+        _ => EXIT_USAGE,
+    };
+
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": error.code.as_str(),
+                "exit_code": exit_code_value,
+                "message": error.message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: {}\n\n{}", error.code.as_str(), error.message);
+    }
+
+    Ok(exit_code(exit_code_value))
+}
+
 /// Render session manifest generation errors.
 fn render_session_manifest_error(
     error: &SessionManifestBuildError,
@@ -1926,7 +2006,7 @@ fn render_config_load_error(error: &ConfigLoadError, wants_json: bool) -> Result
 
 /// Render kubeconfig resolution errors as user-facing usage/auth errors.
 fn render_kubeconfig_error(error: &KubeconfigError, wants_json: bool) -> Result<ExitCode> {
-    let error = kply_k8s::DiscoveryError::from_kubeconfig_error(error);
+    let error = kply_k8s::DiscoveryError::from_kubeconfig_error_redacted(error);
     if wants_json {
         let value = serde_json::json!({
             "error": {

@@ -90,6 +90,20 @@ async fn discovers_read_only_app_from_mocked_kubernetes_api() {
     );
 }
 
+#[tokio::test]
+async fn lists_sessions_from_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_session_list_api(handle);
+
+    let sessions = kply_k8s::list_sessions(client, "shop")
+        .await
+        .expect("mocked session list should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    kply_test::insta::assert_json_snapshot!("session_list_offline_discovery", sessions);
+}
+
 struct ExpectedListResponse {
     path: &'static str,
     fixture_path: &'static str,
@@ -99,6 +113,67 @@ fn mock_client() -> (Client, MockKubeHandle) {
     let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
 
     (Client::new(mock_service, "default"), handle)
+}
+
+fn spawn_mock_session_list_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive expected request");
+
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        assert!(
+            request
+                .uri()
+                .query()
+                .is_some_and(|query| query.contains("labelSelector=kply.dev%2Fmanaged-by%3Dkply")),
+            "session list should include the Kply ownership label selector"
+        );
+
+        send.send_response(Response::new(Body::from(
+            serde_json::to_vec(&json!({
+                "apiVersion": "apps/v1",
+                "kind": "DeploymentList",
+                "items": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "metadata": {
+                            "name": "checkout-plan-workload",
+                            "namespace": "shop",
+                            "labels": {
+                                "kply.dev/app": "checkout",
+                                "kply.dev/managed-by": "kply",
+                                "kply.dev/session-id": "checkout-plan",
+                                "kply.dev/session-name": "checkout-plan"
+                            },
+                            "annotations": {
+                                "kply.dev/session-status": "active"
+                            }
+                        }
+                    },
+                    {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "metadata": {
+                            "name": "ignored-workload",
+                            "namespace": "shop",
+                            "labels": {
+                                "app.kubernetes.io/managed-by": "kply"
+                            }
+                        }
+                    }
+                ]
+            }))
+            .expect("session list fixture should serialize"),
+        )));
+    })
 }
 
 fn spawn_mock_kubernetes_api(

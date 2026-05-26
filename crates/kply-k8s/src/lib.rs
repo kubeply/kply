@@ -18,6 +18,13 @@ use kube::{
 use serde::Serialize;
 use serde_json::Value;
 
+const KPLY_MANAGED_BY_LABEL: &str = "kply.dev/managed-by";
+const KPLY_MANAGED_BY_VALUE: &str = "kply";
+const KPLY_SESSION_APP_LABEL: &str = "kply.dev/app";
+const KPLY_SESSION_ID_LABEL: &str = "kply.dev/session-id";
+const KPLY_SESSION_NAME_LABEL: &str = "kply.dev/session-name";
+const KPLY_SESSION_STATUS_ANNOTATION: &str = "kply.dev/session-status";
+
 /// Stable read-only Kubernetes discovery error for users and agents.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DiscoveryError {
@@ -75,6 +82,22 @@ impl DiscoveryError {
             _ => Self {
                 code: DiscoveryErrorCode::KubernetesConfig,
                 message: format!("kubeconfig could not be resolved: {error}"),
+            },
+        }
+    }
+
+    /// Classify kubeconfig errors without exposing local filesystem paths.
+    pub fn from_kubeconfig_error_redacted(error: &KubeconfigError) -> Self {
+        match error {
+            KubeconfigError::FindPath | KubeconfigError::ReadConfig(_, _) => Self {
+                code: DiscoveryErrorCode::MissingKubeconfig,
+                message: "kubeconfig could not be read at the configured path; set KUBECONFIG or create ~/.kube/config"
+                    .to_owned(),
+            },
+            _ => Self {
+                code: DiscoveryErrorCode::KubernetesConfig,
+                message: "kubeconfig could not be resolved; verify KUBECONFIG, context, cluster, and user configuration"
+                    .to_owned(),
             },
         }
     }
@@ -258,6 +281,25 @@ pub struct DeploymentSummary {
     pub resources: Vec<ContainerResourceSummary>,
     /// Basic rollout status derived from Deployment status.
     pub rollout: DeploymentRolloutSummary,
+}
+
+/// Read-only summary of one Kply sandbox session discovered from cluster metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SessionSummary {
+    /// Session id from `kply.dev/session-id`.
+    pub id: String,
+    /// Optional human-readable session name from `kply.dev/session-name`.
+    pub name: Option<String>,
+    /// Namespace containing the session workload.
+    pub namespace: String,
+    /// Optional configured app name from `kply.dev/app`.
+    pub app: Option<String>,
+    /// Optional session lifecycle status from `kply.dev/session-status`.
+    pub status: Option<String>,
+    /// Workload kind used as the session anchor.
+    pub workload_kind: String,
+    /// Workload name used as the session anchor.
+    pub workload_name: String,
 }
 
 /// Basic rollout status for a Kubernetes Deployment.
@@ -644,6 +686,31 @@ pub async fn list_deployments(
     Ok(summaries)
 }
 
+/// List Kply sandbox sessions in one namespace without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_sessions(
+    client: Client,
+    namespace: &str,
+) -> Result<Vec<SessionSummary>, kube::Error> {
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    let selector = format!("{KPLY_MANAGED_BY_LABEL}={KPLY_MANAGED_BY_VALUE}");
+    let mut summaries = deployments
+        .list(&ListParams::default().labels(&selector))
+        .await?
+        .iter()
+        .filter_map(session_summary_from_deployment)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        left.id
+            .cmp(&right.id)
+            .then_with(|| left.workload_name.cmp(&right.workload_name))
+    });
+    Ok(summaries)
+}
+
 /// Create one Deployment in a namespace and return its observed summary.
 ///
 /// # Errors
@@ -927,6 +994,28 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         resources,
         rollout: deployment_rollout_summary(deployment),
     }
+}
+
+/// Convert a Kply-managed [`Deployment`] into a session summary when labeled.
+pub fn session_summary_from_deployment(deployment: &Deployment) -> Option<SessionSummary> {
+    let labels = deployment.metadata.labels.as_ref()?;
+    if labels.get(KPLY_MANAGED_BY_LABEL).map(String::as_str) != Some(KPLY_MANAGED_BY_VALUE) {
+        return None;
+    }
+
+    let id = labels.get(KPLY_SESSION_ID_LABEL)?.clone();
+    let annotations = deployment.metadata.annotations.as_ref();
+
+    Some(SessionSummary {
+        id,
+        name: labels.get(KPLY_SESSION_NAME_LABEL).cloned(),
+        namespace: deployment.namespace().unwrap_or_default(),
+        app: labels.get(KPLY_SESSION_APP_LABEL).cloned(),
+        status: annotations
+            .and_then(|annotations| annotations.get(KPLY_SESSION_STATUS_ANNOTATION).cloned()),
+        workload_kind: "Deployment".to_owned(),
+        workload_name: deployment.name_any(),
+    })
 }
 
 /// Convert a Kubernetes [`Deployment`] into basic rollout status.
@@ -1446,6 +1535,21 @@ pub async fn load_kube_client() -> Result<Client, MutationError> {
         .await
         .map_err(|error| MutationError::from_kubeconfig_error(&error))?;
     Client::try_from(config).map_err(|error| MutationError::from_kubernetes_client_error(&error))
+}
+
+/// Load a Kubernetes client for read-only discovery operations.
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError`] when kubeconfig resolution or client construction fails.
+pub async fn load_discovery_client() -> Result<Client, DiscoveryError> {
+    let config = load_kube_config()
+        .await
+        .map_err(|error| DiscoveryError::from_kubeconfig_error_redacted(&error))?;
+    Client::try_from(config).map_err(|_error| DiscoveryError {
+        code: DiscoveryErrorCode::KubernetesConfig,
+        message: "Kubernetes client could not be constructed from kubeconfig".to_owned(),
+    })
 }
 
 /// Load Kubernetes client config using explicit kubeconfig selection options.
