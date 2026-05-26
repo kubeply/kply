@@ -9,14 +9,16 @@ It models a small ecommerce stack:
 - `catalog-api`: simple backing service used by the backend.
 
 All Kubernetes objects live in the dedicated `kply-demo` namespace and carry
-`app.kubernetes.io/part-of: kply-demo` labels so future demo install and cleanup
-commands can stay scoped.
+`app.kubernetes.io/part-of: kply-demo` labels so demo install, reset, and
+teardown commands can stay scoped.
 
-The manifests are fixtures only. Demo install, reset, teardown, and live Kind
-workflow commands are not implemented yet.
+The manifests are local demo fixtures. Session creation, sandbox routing,
+automated checks, and promotion are not implemented yet.
 
 See [../../../docs/demo-kind.md](../../../docs/demo-kind.md) for the current
-manual Kind setup guide.
+manual Kind setup guide and
+[../../../docs/demo-agent.md](../../../docs/demo-agent.md) for the coding agent
+workflow.
 
 ## Variants
 
