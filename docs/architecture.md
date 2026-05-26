@@ -340,7 +340,7 @@ The current workflow is intentionally bounded:
 2. Keep real session planning and Kubernetes execution guarded by explicit
    `--apply` confirmation.
 3. Keep tests and CI green.
-4. Keep routing placeholder-only until its roadmap milestone starts.
+4. Keep routing changes scoped to Gateway API adapter roadmap milestones.
 
 Runtime checks are starting to land on top of the implemented session
 planning/execution path. Routing changes are now scoped to Gateway API adapter

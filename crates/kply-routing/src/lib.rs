@@ -127,10 +127,12 @@ fn gateway_api_resource_detection(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let gateway_class_count = gateway_classes.len();
     let gateway_count = gateways.len();
 
     GatewayApiResourceDetection {
         status: gateway_api_resource_status(
+            gateway_class_count,
             gateway_count,
             gateway_class_api_detected,
             gateway_api_detected,
@@ -139,7 +141,7 @@ fn gateway_api_resource_detection(
         gateway_class_api_detected,
         gateway_api_detected,
         http_route_api_detected,
-        gateway_class_count: gateway_classes.len(),
+        gateway_class_count,
         gateway_count,
         http_route_count: http_routes.len(),
         controller_names,
@@ -150,6 +152,7 @@ fn gateway_api_resource_detection(
 }
 
 fn gateway_api_resource_status(
+    gateway_class_count: usize,
     gateway_count: usize,
     gateway_class_api_detected: bool,
     gateway_api_detected: bool,
@@ -162,6 +165,7 @@ fn gateway_api_resource_status(
     if gateway_class_api_detected
         && gateway_api_detected
         && http_route_api_detected
+        && gateway_class_count > 0
         && gateway_count > 0
     {
         return GatewayApiResourceStatus::Available;
@@ -233,6 +237,26 @@ mod tests {
         assert!(!detection.supports_temporary_http_routes());
         assert_eq!(detection.gateway_class_names, ["istio"]);
         assert_eq!(detection.controller_names, ["istio.io/gateway-controller"]);
+    }
+
+    #[test]
+    /// Detects Gateway inventory without GatewayClass objects as partial.
+    fn detects_partial_gateway_api_resources_without_gateway_classes() {
+        let gateway_classes: Vec<GatewayClassSummary> = Vec::new();
+        let gateways = vec![gateway("shop", "public", "istio")];
+        let http_routes: Vec<HttpRouteSummary> = Vec::new();
+
+        let detection = detect_gateway_api_resources(GatewayApiDiscoveryInput {
+            gateway_classes: Some(&gateway_classes),
+            gateways: Some(&gateways),
+            http_routes: Some(&http_routes),
+        });
+
+        assert_eq!(detection.status, GatewayApiResourceStatus::Partial);
+        assert!(detection.gateway_class_api_detected);
+        assert!(detection.gateway_api_detected);
+        assert!(detection.http_route_api_detected);
+        assert!(!detection.supports_temporary_http_routes());
     }
 
     #[test]
