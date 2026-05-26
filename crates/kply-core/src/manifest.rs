@@ -726,6 +726,35 @@ mod tests {
     }
 
     #[test]
+    fn generates_deterministic_sandbox_manifest_names() {
+        let plan = test_routed_session_plan();
+        let first_names = generated_sandbox_manifest_names(&plan);
+        let second_names = generated_sandbox_manifest_names(&plan);
+
+        assert_eq!(first_names, second_names);
+        assert_eq!(
+            first_names,
+            vec![
+                (
+                    "Deployment".to_owned(),
+                    "checkout".to_owned(),
+                    "session-123-workload".to_owned(),
+                ),
+                (
+                    "Service".to_owned(),
+                    "checkout".to_owned(),
+                    "session-123-service".to_owned(),
+                ),
+                (
+                    "ConfigMap".to_owned(),
+                    "checkout".to_owned(),
+                    "session-123-route".to_owned(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn generates_sandbox_route_placeholder_manifest_for_hostname_selector() {
         let plan = test_labeled_session_plan()
             .with_planned_resources([
@@ -1220,5 +1249,29 @@ mod tests {
             error.to_string(),
             "service targetPort must be between 1 and 65535, got 65536"
         );
+    }
+
+    fn generated_sandbox_manifest_names(plan: &SessionPlan) -> Vec<(String, String, String)> {
+        let deployment = sandbox_deployment_manifest(plan).expect("deployment manifest");
+        let service = sandbox_service_manifest(plan).expect("service manifest");
+        let route = sandbox_route_placeholder_manifest(plan).expect("route placeholder manifest");
+
+        vec![
+            (
+                deployment.kind.to_owned(),
+                deployment.metadata.namespace,
+                deployment.metadata.name,
+            ),
+            (
+                service.kind.to_owned(),
+                service.metadata.namespace,
+                service.metadata.name,
+            ),
+            (
+                route.kind.to_owned(),
+                route.metadata.namespace,
+                route.metadata.name,
+            ),
+        ]
     }
 }
