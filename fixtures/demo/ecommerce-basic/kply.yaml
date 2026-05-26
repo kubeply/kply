@@ -1,0 +1,23 @@
+version: 1
+apps:
+  - name: storefront
+    namespace: kply-demo
+    workload: storefront-web
+    service: storefront-web
+    default_image: nginx:1.27-alpine
+    route_strategy: header
+  - name: checkout
+    namespace: kply-demo
+    workload: checkout-api
+    service: checkout-api
+    default_image: hashicorp/http-echo:1.0
+    route_strategy: header
+  - name: catalog
+    namespace: kply-demo
+    workload: catalog-api
+    service: catalog-api
+    default_image: hashicorp/http-echo:1.0
+    route_strategy: header
+routing: {}
+checks: []
+policies: []
