@@ -308,6 +308,15 @@ pub struct LoadedMutationClient {
     pub default_namespace: String,
 }
 
+/// Kubernetes discovery client plus facts from the same kubeconfig resolution.
+#[derive(Clone)]
+pub struct LoadedDiscoveryClient {
+    /// Kubernetes client built from the resolved kubeconfig.
+    pub client: Client,
+    /// Default namespace selected by the active kubeconfig context.
+    pub default_namespace: String,
+}
+
 /// Read-only summary of a Kubernetes Deployment.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeploymentSummary {
@@ -783,6 +792,51 @@ pub async fn get_session(
     Ok(sessions
         .into_iter()
         .find(|session| session.id == session_id))
+}
+
+/// List Kply sandbox resources that cleanup would delete for one session.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when any Kubernetes list request fails.
+pub async fn list_session_cleanup_resources(
+    client: Client,
+    namespace: &str,
+    session_id: &str,
+) -> Result<Vec<ResourceDeletionSummary>, kube::Error> {
+    let selector = session_label_selector(session_id);
+    let list_params = ListParams::default().labels(&selector);
+    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+
+    let mut selected_services = services
+        .list(&list_params)
+        .await?
+        .iter()
+        .map(|service| ResourceDeletionSummary {
+            kind: "Service".to_owned(),
+            namespace: service.namespace().unwrap_or_else(|| namespace.to_owned()),
+            name: service.name_any(),
+        })
+        .collect::<Vec<_>>();
+    selected_services.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut selected_deployments = deployments
+        .list(&list_params)
+        .await?
+        .iter()
+        .map(|deployment| ResourceDeletionSummary {
+            kind: "Deployment".to_owned(),
+            namespace: deployment
+                .namespace()
+                .unwrap_or_else(|| namespace.to_owned()),
+            name: deployment.name_any(),
+        })
+        .collect::<Vec<_>>();
+    selected_deployments.sort_by(|left, right| left.name.cmp(&right.name));
+
+    selected_services.extend(selected_deployments);
+    Ok(selected_services)
 }
 
 /// Delete Kply sandbox resources for one session in one namespace.
@@ -1745,6 +1799,26 @@ pub async fn load_discovery_client() -> Result<Client, DiscoveryError> {
     Client::try_from(config).map_err(|_error| DiscoveryError {
         code: DiscoveryErrorCode::KubernetesConfig,
         message: "Kubernetes client could not be constructed from kubeconfig".to_owned(),
+    })
+}
+
+/// Load a Kubernetes discovery client and default namespace from one kubeconfig.
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError`] when kubeconfig resolution or client construction fails.
+pub async fn load_discovery_client_with_info() -> Result<LoadedDiscoveryClient, DiscoveryError> {
+    let config = load_kube_config()
+        .await
+        .map_err(|error| DiscoveryError::from_kubeconfig_error_redacted(&error))?;
+    let default_namespace = config.default_namespace.clone();
+    let client = Client::try_from(config).map_err(|_error| DiscoveryError {
+        code: DiscoveryErrorCode::KubernetesConfig,
+        message: "Kubernetes client could not be constructed from kubeconfig".to_owned(),
+    })?;
+    Ok(LoadedDiscoveryClient {
+        client,
+        default_namespace,
     })
 }
 

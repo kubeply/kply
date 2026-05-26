@@ -102,9 +102,10 @@ fn run() -> Result<ExitCode> {
                 Some(SessionCommand::Cleanup {
                     session,
                     apply,
+                    dry_run,
                     namespace,
                 }),
-        }) => return render_session_cleanup(&cli, session, *apply, namespace.as_deref()),
+        }) => return render_session_cleanup(&cli, session, *apply, *dry_run, namespace.as_deref()),
         Some(Command::Session {
             command:
                 Some(SessionCommand::Create {
@@ -466,6 +467,7 @@ fn render_session_cleanup(
     cli: &Cli,
     session: &str,
     apply: bool,
+    dry_run: bool,
     namespace: Option<&str>,
 ) -> Result<ExitCode> {
     let session_id = match SessionId::new(session) {
@@ -473,8 +475,12 @@ fn render_session_cleanup(
         Err(error) => return render_session_cleanup_error(&error.to_string(), cli.json),
     };
 
-    if !apply && namespace.is_some() {
-        return render_session_cleanup_error("--namespace requires --apply", cli.json);
+    if apply && dry_run {
+        return render_session_cleanup_error("--dry-run cannot be used with --apply", cli.json);
+    }
+
+    if !apply && !dry_run && namespace.is_some() {
+        return render_session_cleanup_error("--namespace requires --apply or --dry-run", cli.json);
     }
 
     if apply {
@@ -532,6 +538,67 @@ fn render_session_cleanup(
             for resource in &deletion_accepted_resources {
                 println!(
                     "  deletion_accepted: {} {}/{}",
+                    resource.kind, resource.namespace, resource.name
+                );
+            }
+        }
+
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if dry_run {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let loaded_client = match runtime.block_on(kply_k8s::load_discovery_client_with_info()) {
+            Ok(loaded_client) => loaded_client,
+            Err(error) => return render_discovery_error(&error, cli.json),
+        };
+        let namespace = match namespace {
+            Some(namespace) => namespace.to_owned(),
+            None => loaded_client.default_namespace.clone(),
+        };
+        let deletion_candidate_resources =
+            match runtime.block_on(kply_k8s::list_session_cleanup_resources(
+                loaded_client.client,
+                &namespace,
+                session_id.as_str(),
+            )) {
+                Ok(deletion_candidate_resources) => deletion_candidate_resources,
+                Err(error) => {
+                    let error = DiscoveryError::from_kubernetes_api_error(
+                        "list session cleanup resources",
+                        &error,
+                    );
+                    return render_discovery_error(&error, cli.json);
+                }
+            };
+
+        if cli.json {
+            let value = serde_json::json!({
+                "session_id": session_id.as_str(),
+                "namespace": namespace,
+                "status": "planned",
+                "mutation": "not_applied",
+                "apply": false,
+                "dry_run": true,
+                "deletion_candidate_resources": deletion_candidate_resources,
+            });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else if !cli.quiet {
+            println!("kply session cleanup {}", session_id.as_str());
+            println!("namespace: {namespace}");
+            println!("status: planned");
+            println!("mutation: not_applied");
+            println!("apply: false");
+            println!("dry_run: true");
+            println!(
+                "deletion_candidate_resources: {}",
+                deletion_candidate_resources.len()
+            );
+            for resource in &deletion_candidate_resources {
+                println!(
+                    "  deletion_candidate: {} {}/{}",
                     resource.kind, resource.namespace, resource.name
                 );
             }

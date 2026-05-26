@@ -127,6 +127,9 @@ pub enum SessionCommand {
         /// Delete matching sandbox resources from the cluster.
         #[arg(long)]
         apply: bool,
+        /// List matching sandbox resources without deleting them.
+        #[arg(long)]
+        dry_run: bool,
         /// Namespace containing the Kply sandbox session.
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,

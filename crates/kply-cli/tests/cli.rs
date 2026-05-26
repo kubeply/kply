@@ -1378,6 +1378,75 @@ fn rejects_session_cleanup_apply_default_namespace_without_kubeconfig() {
 }
 
 #[test]
+fn rejects_session_cleanup_dry_run_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--dry-run",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "cleanup dry-run errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!(
+        "session_cleanup_dry_run_missing_kubeconfig",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_session_cleanup_dry_run_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "cleanup dry-run JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_cleanup_dry_run_missing_kubeconfig_json", value);
+}
+
+#[test]
 fn rejects_invalid_session_status_id() {
     let output = kply_cmd()
         .args(["session", "status", "Checkout_Plan"])
@@ -1472,6 +1541,51 @@ fn rejects_session_cleanup_namespace_without_apply_json() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
     insta::assert_json_snapshot!("session_cleanup_namespace_without_apply_json", value);
+}
+
+#[test]
+fn rejects_session_cleanup_apply_with_dry_run() {
+    let output = kply_cmd()
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--apply",
+            "--dry-run",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!(
+        "session_cleanup_apply_with_dry_run",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_session_cleanup_apply_with_dry_run_json() {
+    let output = kply_cmd()
+        .args([
+            "session",
+            "cleanup",
+            "checkout-plan",
+            "--apply",
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_cleanup_apply_with_dry_run_json", value);
 }
 
 #[test]
@@ -2779,6 +2893,7 @@ fn covers_every_session_command() {
             SessionCommand::Cleanup {
                 session: String::new(),
                 apply: false,
+                dry_run: false,
                 namespace: None,
             }
             .name(),

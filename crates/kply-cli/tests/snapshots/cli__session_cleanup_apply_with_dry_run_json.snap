@@ -1,12 +1,12 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 1474
+assertion_line: 1588
 expression: value
 ---
 {
   "error": {
     "code": "session_cleanup",
     "exit_code": 2,
-    "message": "--namespace requires --apply or --dry-run"
+    "message": "--dry-run cannot be used with --apply"
   }
 }
