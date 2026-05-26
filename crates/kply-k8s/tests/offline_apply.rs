@@ -53,7 +53,7 @@ async fn gets_deployment_with_mocked_kubernetes_api() {
 async fn patches_deployment_annotations_with_mocked_kubernetes_api() {
     let (client, handle) = mock_client();
     let server = spawn_mock_deployment_annotation_patch_api(handle);
-    let annotations = session_state_annotations();
+    let annotations = session_state_annotations("active");
 
     let summary = kply_k8s::patch_deployment_annotations(
         client,
@@ -93,7 +93,7 @@ async fn creates_service_with_mocked_kubernetes_api() {
 async fn patches_service_annotations_with_mocked_kubernetes_api() {
     let (client, handle) = mock_client();
     let server = spawn_mock_service_annotation_patch_api(handle);
-    let annotations = session_state_annotations();
+    let annotations = session_state_annotations("active");
 
     let summary =
         kply_k8s::patch_service_annotations(client, "shop", "checkout-plan-service", &annotations)
@@ -104,6 +104,78 @@ async fn patches_service_annotations_with_mocked_kubernetes_api() {
 
     assert_eq!(summary.namespace, "shop");
     assert_eq!(summary.name, "checkout-plan-service");
+}
+
+#[tokio::test]
+async fn runs_session_create_lifecycle_with_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_session_create_lifecycle_api(handle);
+    let preparing_annotations = session_state_annotations("preparing");
+    let active_annotations = session_state_annotations("active");
+
+    let deployment = kply_k8s::create_deployment(client.clone(), "shop", &sandbox_deployment())
+        .await
+        .expect("mocked session Deployment create should succeed");
+    let service = kply_k8s::create_service(client.clone(), "shop", &sandbox_service())
+        .await
+        .expect("mocked session Service create should succeed");
+    let first_readiness =
+        kply_k8s::get_deployment(client.clone(), "shop", "checkout-plan-workload")
+            .await
+            .expect("mocked first readiness check should succeed");
+    let final_readiness =
+        kply_k8s::get_deployment(client.clone(), "shop", "checkout-plan-workload")
+            .await
+            .expect("mocked final readiness check should succeed");
+    let prepared_deployment = kply_k8s::patch_deployment_annotations(
+        client.clone(),
+        "shop",
+        "checkout-plan-workload",
+        &preparing_annotations,
+    )
+    .await
+    .expect("mocked preparing Deployment state patch should succeed");
+    let prepared_service = kply_k8s::patch_service_annotations(
+        client.clone(),
+        "shop",
+        "checkout-plan-service",
+        &preparing_annotations,
+    )
+    .await
+    .expect("mocked preparing Service state patch should succeed");
+    let active_deployment = kply_k8s::patch_deployment_annotations(
+        client.clone(),
+        "shop",
+        "checkout-plan-workload",
+        &active_annotations,
+    )
+    .await
+    .expect("mocked active Deployment state patch should succeed");
+    let active_service = kply_k8s::patch_service_annotations(
+        client,
+        "shop",
+        "checkout-plan-service",
+        &active_annotations,
+    )
+    .await
+    .expect("mocked active Service state patch should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(deployment.name, "checkout-plan-workload");
+    assert_eq!(service.name, "checkout-plan-service");
+    assert_eq!(
+        first_readiness.rollout.phase,
+        kply_k8s::DeploymentRolloutPhase::Progressing
+    );
+    assert_eq!(
+        final_readiness.rollout.phase,
+        kply_k8s::DeploymentRolloutPhase::Complete
+    );
+    assert_eq!(prepared_deployment.name, "checkout-plan-workload");
+    assert_eq!(prepared_service.name, "checkout-plan-service");
+    assert_eq!(active_deployment.name, "checkout-plan-workload");
+    assert_eq!(active_service.name, "checkout-plan-service");
 }
 
 #[tokio::test]
@@ -257,8 +329,41 @@ fn sandbox_service() -> Service {
     .expect("sandbox Service fixture should deserialize")
 }
 
-fn session_state_annotations() -> BTreeMap<String, String> {
-    BTreeMap::from([("kply.dev/session-status".to_owned(), "active".to_owned())])
+fn sandbox_progressing_deployment() -> Deployment {
+    sandbox_deployment_with_rollout(2, 1, 1, 1, 1, 0, 1)
+}
+
+fn sandbox_complete_deployment() -> Deployment {
+    sandbox_deployment_with_rollout(2, 2, 1, 1, 1, 1, 0)
+}
+
+fn sandbox_deployment_with_rollout(
+    generation: i64,
+    observed_generation: i64,
+    replicas: i32,
+    ready_replicas: i32,
+    available_replicas: i32,
+    updated_replicas: i32,
+    unavailable_replicas: i32,
+) -> Deployment {
+    let mut deployment = serde_json::to_value(sandbox_deployment())
+        .expect("sandbox Deployment fixture should serialize");
+    deployment["metadata"]["generation"] = json!(generation);
+    deployment["status"] = json!({
+        "observedGeneration": observed_generation,
+        "replicas": replicas,
+        "readyReplicas": ready_replicas,
+        "availableReplicas": available_replicas,
+        "updatedReplicas": updated_replicas,
+        "unavailableReplicas": unavailable_replicas
+    });
+
+    serde_json::from_value(deployment)
+        .expect("sandbox Deployment rollout fixture should deserialize")
+}
+
+fn session_state_annotations(status: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([("kply.dev/session-status".to_owned(), status.to_owned())])
 }
 
 fn spawn_mock_deployment_create_api(handle: MockKubeHandle) -> JoinHandle<()> {
@@ -337,7 +442,7 @@ fn spawn_mock_deployment_annotation_patch_api(handle: MockKubeHandle) -> JoinHan
             .collect_bytes()
             .await
             .expect("mock Deployment patch request body should be collectable");
-        assert_annotation_patch_body(&body);
+        assert_annotation_patch_body(&body, "active");
 
         send.send_response(
             Response::builder()
@@ -397,7 +502,7 @@ fn spawn_mock_service_annotation_patch_api(handle: MockKubeHandle) -> JoinHandle
             .collect_bytes()
             .await
             .expect("mock Service patch request body should be collectable");
-        assert_annotation_patch_body(&body);
+        assert_annotation_patch_body(&body, "active");
 
         send.send_response(
             Response::builder()
@@ -406,6 +511,194 @@ fn spawn_mock_service_annotation_patch_api(handle: MockKubeHandle) -> JoinHandle
                     to_vec(&sandbox_service()).expect("sandbox Service response should serialize"),
                 ))
                 .expect("mock Service patch response should build"),
+        );
+    })
+}
+
+fn spawn_mock_session_create_lifecycle_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Deployment create request");
+        assert_eq!(request.method(), Method::POST);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock Deployment request body should be collectable");
+        assert_deployment_request_body(&body);
+        send.send_response(
+            Response::builder()
+                .status(201)
+                .body(Body::from(
+                    to_vec(&sandbox_deployment())
+                        .expect("sandbox Deployment response should serialize"),
+                ))
+                .expect("mock Deployment create response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive Service create request");
+        assert_eq!(request.method(), Method::POST);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/shop/services");
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock Service request body should be collectable");
+        assert_service_request_body(&body);
+        send.send_response(
+            Response::builder()
+                .status(201)
+                .body(Body::from(
+                    to_vec(&sandbox_service()).expect("sandbox Service response should serialize"),
+                ))
+                .expect("mock Service create response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive first Deployment readiness request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&sandbox_progressing_deployment())
+                        .expect("progressing Deployment response should serialize"),
+                ))
+                .expect("mock first Deployment readiness response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive final Deployment readiness request");
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&sandbox_complete_deployment())
+                        .expect("complete Deployment response should serialize"),
+                ))
+                .expect("mock final Deployment readiness response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive preparing Deployment patch request");
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock preparing Deployment patch body should be collectable");
+        assert_annotation_patch_body(&body, "preparing");
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&sandbox_complete_deployment())
+                        .expect("prepared Deployment response should serialize"),
+                ))
+                .expect("mock preparing Deployment patch response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive preparing Service patch request");
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/shop/services/checkout-plan-service"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock preparing Service patch body should be collectable");
+        assert_annotation_patch_body(&body, "preparing");
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&sandbox_service()).expect("prepared Service response should serialize"),
+                ))
+                .expect("mock preparing Service patch response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive active Deployment patch request");
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/apps/v1/namespaces/shop/deployments/checkout-plan-workload"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock active Deployment patch body should be collectable");
+        assert_annotation_patch_body(&body, "active");
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&sandbox_complete_deployment())
+                        .expect("active Deployment response should serialize"),
+                ))
+                .expect("mock active Deployment patch response should build"),
+        );
+
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive active Service patch request");
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/shop/services/checkout-plan-service"
+        );
+        let body = request
+            .into_body()
+            .collect_bytes()
+            .await
+            .expect("mock active Service patch body should be collectable");
+        assert_annotation_patch_body(&body, "active");
+        send.send_response(
+            Response::builder()
+                .status(200)
+                .body(Body::from(
+                    to_vec(&sandbox_service()).expect("active Service response should serialize"),
+                ))
+                .expect("mock active Service patch response should build"),
         );
     })
 }
@@ -864,13 +1157,13 @@ fn assert_service_request_body(body: &[u8]) {
     );
 }
 
-fn assert_annotation_patch_body(body: &[u8]) {
+fn assert_annotation_patch_body(body: &[u8], status: &str) {
     let actual: serde_json::Value =
         serde_json::from_slice(body).expect("mock annotation patch body should deserialize");
 
     assert_eq!(
         actual["metadata"]["annotations"]["kply.dev/session-status"],
-        "active"
+        status
     );
 }
 
