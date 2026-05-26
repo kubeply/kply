@@ -297,6 +297,18 @@ pub enum DeploymentRolloutPhase {
     Complete,
 }
 
+impl DeploymentRolloutPhase {
+    /// Return the stable snake_case string form of this rollout phase.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Progressing => "progressing",
+            Self::Unavailable => "unavailable",
+            Self::Complete => "complete",
+        }
+    }
+}
+
 /// Read-only summary of one Deployment condition.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeploymentConditionSummary {
@@ -647,6 +659,21 @@ pub async fn create_deployment(
         .create(&PostParams::default(), deployment)
         .await?;
     Ok(deployment_summary(&created))
+}
+
+/// Get one Deployment in a namespace and return its observed summary.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API get request fails.
+pub async fn get_deployment(
+    client: Client,
+    namespace: &str,
+    name: &str,
+) -> Result<DeploymentSummary, kube::Error> {
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    let observed = deployments.get(name).await?;
+    Ok(deployment_summary(&observed))
 }
 
 /// Create one Service in a namespace and return its observed summary.
@@ -1595,6 +1622,14 @@ mod tests {
         assert_eq!(rollout.desired_replicas, Some(3));
         assert_eq!(rollout.available_replicas, Some(0));
         assert_eq!(rollout.unavailable_replicas, Some(3));
+    }
+
+    #[test]
+    fn renders_deployment_rollout_phase_strings() {
+        assert_eq!(DeploymentRolloutPhase::Unknown.as_str(), "unknown");
+        assert_eq!(DeploymentRolloutPhase::Progressing.as_str(), "progressing");
+        assert_eq!(DeploymentRolloutPhase::Unavailable.as_str(), "unavailable");
+        assert_eq!(DeploymentRolloutPhase::Complete.as_str(), "complete");
     }
 
     #[test]
