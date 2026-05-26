@@ -1,6 +1,6 @@
 //! Runtime checks for Kply verification workflows.
 
-use kply_core::CheckResultStatus;
+use kply_core::{CheckResultStatus, ProbeKind};
 use serde::Serialize;
 
 /// Input facts for evaluating one Kubernetes pod readiness check.
@@ -944,15 +944,206 @@ fn request_value_is_empty(request: Option<&str>) -> bool {
     request.is_some_and(|value| value.trim().is_empty())
 }
 
+/// Input facts for evaluating one container probe configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProbeExistenceInput {
+    workload: String,
+    container: String,
+    readiness_probe: bool,
+    liveness_probe: bool,
+    startup_probe: bool,
+}
+
+impl ProbeExistenceInput {
+    /// Create probe existence input from one container spec.
+    pub fn new(
+        workload: impl Into<String>,
+        container: impl Into<String>,
+        readiness_probe: bool,
+        liveness_probe: bool,
+        startup_probe: bool,
+    ) -> Self {
+        Self {
+            workload: workload.into(),
+            container: container.into(),
+            readiness_probe,
+            liveness_probe,
+            startup_probe,
+        }
+    }
+
+    /// Borrow the workload name.
+    pub fn workload(&self) -> &str {
+        &self.workload
+    }
+
+    /// Borrow the container name.
+    pub fn container(&self) -> &str {
+        &self.container
+    }
+
+    /// Return whether a readiness probe is configured.
+    pub const fn readiness_probe(&self) -> bool {
+        self.readiness_probe
+    }
+
+    /// Return whether a liveness probe is configured.
+    pub const fn liveness_probe(&self) -> bool {
+        self.liveness_probe
+    }
+
+    /// Return whether a startup probe is configured.
+    pub const fn startup_probe(&self) -> bool {
+        self.startup_probe
+    }
+}
+
+/// Summary produced by the probe existence check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProbeExistenceCheckResult {
+    status: CheckResultStatus,
+    required_probe_kinds: Vec<ProbeKind>,
+    total_containers: usize,
+    complete_probe_containers: usize,
+    missing_probe_containers: usize,
+    missing_readiness_probe_containers: usize,
+    missing_liveness_probe_containers: usize,
+    missing_startup_probe_containers: usize,
+}
+
+impl ProbeExistenceCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow the required probe kinds considered by the check.
+    pub fn required_probe_kinds(&self) -> &[ProbeKind] {
+        &self.required_probe_kinds
+    }
+
+    /// Return the number of containers considered by the check.
+    pub const fn total_containers(&self) -> usize {
+        self.total_containers
+    }
+
+    /// Return the number of containers with every required probe.
+    pub const fn complete_probe_containers(&self) -> usize {
+        self.complete_probe_containers
+    }
+
+    /// Return the number of containers missing at least one required probe.
+    pub const fn missing_probe_containers(&self) -> usize {
+        self.missing_probe_containers
+    }
+
+    /// Return the number of containers missing a required readiness probe.
+    pub const fn missing_readiness_probe_containers(&self) -> usize {
+        self.missing_readiness_probe_containers
+    }
+
+    /// Return the number of containers missing a required liveness probe.
+    pub const fn missing_liveness_probe_containers(&self) -> usize {
+        self.missing_liveness_probe_containers
+    }
+
+    /// Return the number of containers missing a required startup probe.
+    pub const fn missing_startup_probe_containers(&self) -> usize {
+        self.missing_startup_probe_containers
+    }
+}
+
+/// Evaluate whether containers declare required probes.
+pub fn check_probe_existence(
+    containers: &[ProbeExistenceInput],
+    required_probe_kinds: &[ProbeKind],
+) -> ProbeExistenceCheckResult {
+    let required_probe_kinds = normalized_probe_kinds(required_probe_kinds);
+    let total_containers = containers.len();
+    let complete_probe_containers = containers
+        .iter()
+        .filter(|container| container_has_required_probes(container, &required_probe_kinds))
+        .count();
+    let missing_probe_containers = total_containers.saturating_sub(complete_probe_containers);
+    let missing_readiness_probe_containers =
+        count_missing_probe_kind(containers, &required_probe_kinds, ProbeKind::Readiness);
+    let missing_liveness_probe_containers =
+        count_missing_probe_kind(containers, &required_probe_kinds, ProbeKind::Liveness);
+    let missing_startup_probe_containers =
+        count_missing_probe_kind(containers, &required_probe_kinds, ProbeKind::Startup);
+    let status = if total_containers == 0 || required_probe_kinds.is_empty() {
+        CheckResultStatus::Skipped
+    } else if missing_probe_containers > 0 {
+        CheckResultStatus::Warning
+    } else {
+        CheckResultStatus::Passed
+    };
+
+    ProbeExistenceCheckResult {
+        status,
+        required_probe_kinds,
+        total_containers,
+        complete_probe_containers,
+        missing_probe_containers,
+        missing_readiness_probe_containers,
+        missing_liveness_probe_containers,
+        missing_startup_probe_containers,
+    }
+}
+
+/// Return required probe kinds in deterministic order without duplicates.
+fn normalized_probe_kinds(required_probe_kinds: &[ProbeKind]) -> Vec<ProbeKind> {
+    let mut normalized_probe_kinds = required_probe_kinds.to_vec();
+    normalized_probe_kinds.sort_unstable();
+    normalized_probe_kinds.dedup();
+    normalized_probe_kinds
+}
+
+/// Return whether a container has every required probe.
+fn container_has_required_probes(
+    container: &ProbeExistenceInput,
+    required_probe_kinds: &[ProbeKind],
+) -> bool {
+    required_probe_kinds
+        .iter()
+        .all(|probe_kind| container_has_probe_kind(container, *probe_kind))
+}
+
+/// Count containers missing one required probe kind.
+fn count_missing_probe_kind(
+    containers: &[ProbeExistenceInput],
+    required_probe_kinds: &[ProbeKind],
+    probe_kind: ProbeKind,
+) -> usize {
+    if !required_probe_kinds.contains(&probe_kind) {
+        return 0;
+    }
+
+    containers
+        .iter()
+        .filter(|container| !container_has_probe_kind(container, probe_kind))
+        .count()
+}
+
+/// Return whether a container has one probe kind.
+fn container_has_probe_kind(container: &ProbeExistenceInput, probe_kind: ProbeKind) -> bool {
+    match probe_kind {
+        ProbeKind::Readiness => container.readiness_probe,
+        ProbeKind::Liveness => container.liveness_probe,
+        ProbeKind::Startup => container.startup_probe,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, ResourceRequestInput,
-        RestartCountInput, RolloutAvailabilityInput, ServiceEndpointInput, check_http_smoke,
-        check_log_fatal_patterns, check_pod_readiness, check_resource_request_sanity,
-        check_restart_counts, check_rollout_availability, check_service_endpoints,
+        HttpSmokeInput, LogFatalPatternInput, PodReadinessInput, ProbeExistenceInput,
+        ResourceRequestInput, RestartCountInput, RolloutAvailabilityInput, ServiceEndpointInput,
+        check_http_smoke, check_log_fatal_patterns, check_pod_readiness, check_probe_existence,
+        check_resource_request_sanity, check_restart_counts, check_rollout_availability,
+        check_service_endpoints,
     };
-    use kply_core::CheckResultStatus;
+    use kply_core::{CheckResultStatus, ProbeKind};
 
     /// Builds a pod readiness input fixture.
     fn pod(name: &str, phase: Option<&str>, ready: Option<bool>) -> PodReadinessInput {
@@ -1041,6 +1232,23 @@ mod tests {
             container,
             cpu_request.map(ToOwned::to_owned),
             memory_request.map(ToOwned::to_owned),
+        )
+    }
+
+    /// Builds a probe existence input fixture.
+    fn probe_existence(
+        workload: &str,
+        container: &str,
+        readiness_probe: bool,
+        liveness_probe: bool,
+        startup_probe: bool,
+    ) -> ProbeExistenceInput {
+        ProbeExistenceInput::new(
+            workload,
+            container,
+            readiness_probe,
+            liveness_probe,
+            startup_probe,
         )
     }
 
@@ -1447,5 +1655,95 @@ mod tests {
         assert_eq!(result.total_containers(), 0);
         assert_eq!(result.complete_request_containers(), 0);
         assert_eq!(result.empty_request_containers(), 0);
+    }
+
+    #[test]
+    /// Passes when every container has every required probe.
+    fn passes_when_required_probes_exist() {
+        let result = check_probe_existence(
+            &[
+                probe_existence("checkout-api", "api", true, true, false),
+                probe_existence("checkout-api", "worker", true, true, true),
+            ],
+            &[ProbeKind::Readiness, ProbeKind::Liveness],
+        );
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(
+            result.required_probe_kinds(),
+            &[ProbeKind::Readiness, ProbeKind::Liveness]
+        );
+        assert_eq!(result.total_containers(), 2);
+        assert_eq!(result.complete_probe_containers(), 2);
+        assert_eq!(result.missing_probe_containers(), 0);
+        assert_eq!(result.missing_readiness_probe_containers(), 0);
+        assert_eq!(result.missing_liveness_probe_containers(), 0);
+        assert_eq!(result.missing_startup_probe_containers(), 0);
+    }
+
+    #[test]
+    /// Warns when any container is missing a required probe.
+    fn warns_when_required_probes_are_missing() {
+        let result = check_probe_existence(
+            &[
+                probe_existence("checkout-api", "api", true, false, false),
+                probe_existence("checkout-api", "worker", false, true, false),
+            ],
+            &[ProbeKind::Readiness, ProbeKind::Liveness],
+        );
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.total_containers(), 2);
+        assert_eq!(result.complete_probe_containers(), 0);
+        assert_eq!(result.missing_probe_containers(), 2);
+        assert_eq!(result.missing_readiness_probe_containers(), 1);
+        assert_eq!(result.missing_liveness_probe_containers(), 1);
+        assert_eq!(result.missing_startup_probe_containers(), 0);
+    }
+
+    #[test]
+    /// Deduplicates required probe kinds before evaluating containers.
+    fn deduplicates_required_probe_kinds() {
+        let result = check_probe_existence(
+            &[probe_existence("checkout-api", "api", true, true, false)],
+            &[
+                ProbeKind::Liveness,
+                ProbeKind::Readiness,
+                ProbeKind::Liveness,
+            ],
+        );
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(
+            result.required_probe_kinds(),
+            &[ProbeKind::Readiness, ProbeKind::Liveness]
+        );
+    }
+
+    #[test]
+    /// Skips when no required probe kinds are configured.
+    fn skips_when_no_probe_kinds_are_required() {
+        let result = check_probe_existence(
+            &[probe_existence("checkout-api", "api", false, false, false)],
+            &[],
+        );
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert!(result.required_probe_kinds().is_empty());
+        assert_eq!(result.total_containers(), 1);
+        assert_eq!(result.missing_probe_containers(), 0);
+    }
+
+    #[test]
+    /// Skips when no containers are available for probe evaluation.
+    fn skips_when_no_probe_existence_inputs_are_available() {
+        let result = check_probe_existence(&[], &[ProbeKind::Readiness, ProbeKind::Startup]);
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.total_containers(), 0);
+        assert_eq!(result.complete_probe_containers(), 0);
+        assert_eq!(result.missing_probe_containers(), 0);
+        assert_eq!(result.missing_readiness_probe_containers(), 0);
+        assert_eq!(result.missing_startup_probe_containers(), 0);
     }
 }
