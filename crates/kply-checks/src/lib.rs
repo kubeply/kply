@@ -289,11 +289,146 @@ fn rollout_has_complete_availability(rollout: &RolloutAvailabilityInput) -> bool
         && unavailable_replicas == 0
 }
 
+/// Input facts for evaluating one Kubernetes Service endpoint check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ServiceEndpointInput {
+    service: String,
+    declared_ports: usize,
+    ready_endpoints: Option<usize>,
+    not_ready_endpoints: Option<usize>,
+    unknown_endpoints: Option<usize>,
+}
+
+impl ServiceEndpointInput {
+    /// Create service endpoint input from Service and EndpointSlice facts.
+    pub fn new(
+        service: impl Into<String>,
+        declared_ports: usize,
+        ready_endpoints: Option<usize>,
+        not_ready_endpoints: Option<usize>,
+        unknown_endpoints: Option<usize>,
+    ) -> Self {
+        Self {
+            service: service.into(),
+            declared_ports,
+            ready_endpoints,
+            not_ready_endpoints,
+            unknown_endpoints,
+        }
+    }
+
+    /// Borrow the service name.
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// Return the declared Service port count.
+    pub const fn declared_ports(&self) -> usize {
+        self.declared_ports
+    }
+
+    /// Return the ready endpoint count.
+    pub const fn ready_endpoints(&self) -> Option<usize> {
+        self.ready_endpoints
+    }
+
+    /// Return the not-ready endpoint count.
+    pub const fn not_ready_endpoints(&self) -> Option<usize> {
+        self.not_ready_endpoints
+    }
+
+    /// Return the endpoint count without known readiness.
+    pub const fn unknown_endpoints(&self) -> Option<usize> {
+        self.unknown_endpoints
+    }
+}
+
+/// Summary produced by the service endpoint check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ServiceEndpointCheckResult {
+    status: CheckResultStatus,
+    service: String,
+    declared_ports: usize,
+    ready_endpoints: Option<usize>,
+    not_ready_endpoints: Option<usize>,
+    unknown_endpoints: Option<usize>,
+}
+
+impl ServiceEndpointCheckResult {
+    /// Return the stable check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow the evaluated service name.
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// Return the declared Service port count.
+    pub const fn declared_ports(&self) -> usize {
+        self.declared_ports
+    }
+
+    /// Return the ready endpoint count.
+    pub const fn ready_endpoints(&self) -> Option<usize> {
+        self.ready_endpoints
+    }
+
+    /// Return the not-ready endpoint count.
+    pub const fn not_ready_endpoints(&self) -> Option<usize> {
+        self.not_ready_endpoints
+    }
+
+    /// Return the endpoint count without known readiness.
+    pub const fn unknown_endpoints(&self) -> Option<usize> {
+        self.unknown_endpoints
+    }
+}
+
+/// Evaluate whether a Service has usable ready endpoints.
+pub fn check_service_endpoints(service: &ServiceEndpointInput) -> ServiceEndpointCheckResult {
+    let status = if service.declared_ports == 0 {
+        CheckResultStatus::Skipped
+    } else if service_has_missing_endpoint_evidence(service) {
+        CheckResultStatus::Warning
+    } else if service.ready_endpoints == Some(0) {
+        CheckResultStatus::Failed
+    } else if service_has_mixed_endpoint_evidence(service) {
+        CheckResultStatus::Warning
+    } else {
+        CheckResultStatus::Passed
+    };
+
+    ServiceEndpointCheckResult {
+        status,
+        service: service.service.clone(),
+        declared_ports: service.declared_ports,
+        ready_endpoints: service.ready_endpoints,
+        not_ready_endpoints: service.not_ready_endpoints,
+        unknown_endpoints: service.unknown_endpoints,
+    }
+}
+
+/// Return whether endpoint readiness evidence is incomplete.
+fn service_has_missing_endpoint_evidence(service: &ServiceEndpointInput) -> bool {
+    service.ready_endpoints.is_none()
+        || service.not_ready_endpoints.is_none()
+        || service.unknown_endpoints.is_none()
+}
+
+/// Return whether a Service has both usable and non-usable endpoints.
+fn service_has_mixed_endpoint_evidence(service: &ServiceEndpointInput) -> bool {
+    service.ready_endpoints.unwrap_or_default() > 0
+        && (service.not_ready_endpoints.unwrap_or_default() > 0
+            || service.unknown_endpoints.unwrap_or_default() > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        PodReadinessInput, RolloutAvailabilityInput, check_pod_readiness,
-        check_rollout_availability,
+        PodReadinessInput, RolloutAvailabilityInput, ServiceEndpointInput, check_pod_readiness,
+        check_rollout_availability, check_service_endpoints,
     };
     use kply_core::CheckResultStatus;
 
@@ -317,6 +452,22 @@ mod tests {
             available_replicas,
             updated_replicas,
             unavailable_replicas,
+        )
+    }
+
+    /// Builds a service endpoint input fixture.
+    fn service(
+        declared_ports: usize,
+        ready_endpoints: Option<usize>,
+        not_ready_endpoints: Option<usize>,
+        unknown_endpoints: Option<usize>,
+    ) -> ServiceEndpointInput {
+        ServiceEndpointInput::new(
+            "checkout-api",
+            declared_ports,
+            ready_endpoints,
+            not_ready_endpoints,
+            unknown_endpoints,
         )
     }
 
@@ -437,5 +588,56 @@ mod tests {
 
         assert_eq!(result.status(), CheckResultStatus::Skipped);
         assert_eq!(result.desired_replicas(), Some(0));
+    }
+
+    #[test]
+    /// Passes when every observed service endpoint is ready.
+    fn passes_when_service_has_ready_endpoints() {
+        let result = check_service_endpoints(&service(1, Some(2), Some(0), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.service(), "checkout-api");
+        assert_eq!(result.declared_ports(), 1);
+        assert_eq!(result.ready_endpoints(), Some(2));
+        assert_eq!(result.not_ready_endpoints(), Some(0));
+        assert_eq!(result.unknown_endpoints(), Some(0));
+    }
+
+    #[test]
+    /// Fails when a service has no ready endpoints.
+    fn fails_when_service_has_no_ready_endpoints() {
+        let result = check_service_endpoints(&service(1, Some(0), Some(2), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Failed);
+        assert_eq!(result.ready_endpoints(), Some(0));
+        assert_eq!(result.not_ready_endpoints(), Some(2));
+    }
+
+    #[test]
+    /// Warns when service endpoint readiness evidence is incomplete.
+    fn warns_when_service_endpoint_evidence_is_missing() {
+        let result = check_service_endpoints(&service(1, Some(2), None, Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.not_ready_endpoints(), None);
+    }
+
+    #[test]
+    /// Warns when service endpoints mix ready and non-ready evidence.
+    fn warns_when_service_has_mixed_endpoint_evidence() {
+        let result = check_service_endpoints(&service(1, Some(2), Some(1), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Warning);
+        assert_eq!(result.ready_endpoints(), Some(2));
+        assert_eq!(result.not_ready_endpoints(), Some(1));
+    }
+
+    #[test]
+    /// Skips when a service has no declared ports.
+    fn skips_when_service_has_no_declared_ports() {
+        let result = check_service_endpoints(&service(0, Some(0), Some(0), Some(0)));
+
+        assert_eq!(result.status(), CheckResultStatus::Skipped);
+        assert_eq!(result.declared_ports(), 0);
     }
 }
