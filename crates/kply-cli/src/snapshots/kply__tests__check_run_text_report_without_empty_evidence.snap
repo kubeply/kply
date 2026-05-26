@@ -1,0 +1,13 @@
+---
+source: crates/kply-cli/src/main.rs
+assertion_line: 2770
+expression: render_check_run_text_report(&report)
+---
+kply check run checkout-plan
+namespace: shop
+status: warning
+summary: passed=0 failed=0 warning=1 skipped=0
+checks: 1
+  check: session_state
+    target: shop/Deployment/checkout-plan-workload
+    status: warning

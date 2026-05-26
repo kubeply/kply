@@ -498,16 +498,7 @@ fn render_check_run(cli: &Cli, session: &str, namespace: Option<&str>) -> Result
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if !cli.quiet {
-        println!("kply check run {}", report.session_id);
-        println!("namespace: {}", report.namespace);
-        println!("status: {}", report.status);
-        println!("checks: {}", report.checks.len());
-        for check in &report.checks {
-            println!(
-                "  check: {} target={} status={}",
-                check.name, check.target, check.status
-            );
-        }
+        print!("{}", render_check_run_text_report(&report));
     }
 
     Ok(exit_code(exit_code_value))
@@ -754,6 +745,74 @@ fn session_state_check_status(status: Option<&str>) -> CheckResultStatus {
     }
 }
 
+/// Render a deterministic human-readable check report.
+fn render_check_run_text_report(report: &CheckRunReport) -> String {
+    use std::fmt::Write as _;
+
+    let counts = CheckRunStatusCounts::from_checks(&report.checks);
+    let mut output = String::new();
+
+    writeln!(output, "kply check run {}", report.session_id)
+        .expect("writing check report to a string should not fail");
+    writeln!(output, "namespace: {}", report.namespace)
+        .expect("writing check report to a string should not fail");
+    writeln!(output, "status: {}", report.status)
+        .expect("writing check report to a string should not fail");
+    writeln!(
+        output,
+        "summary: passed={} failed={} warning={} skipped={}",
+        counts.passed, counts.failed, counts.warning, counts.skipped
+    )
+    .expect("writing check report to a string should not fail");
+    writeln!(output, "checks: {}", report.checks.len())
+        .expect("writing check report to a string should not fail");
+
+    for check in &report.checks {
+        writeln!(output, "  check: {}", check.name)
+            .expect("writing check report to a string should not fail");
+        writeln!(output, "    target: {}", check.target)
+            .expect("writing check report to a string should not fail");
+        writeln!(output, "    status: {}", check.status)
+            .expect("writing check report to a string should not fail");
+        if let Some(evidence) = render_check_evidence(&check.evidence) {
+            writeln!(output, "    evidence: {evidence}")
+                .expect("writing check report to a string should not fail");
+        }
+    }
+
+    output
+}
+
+/// Render compact key-value evidence for text check reports.
+fn render_check_evidence(evidence: &serde_json::Value) -> Option<String> {
+    match evidence {
+        serde_json::Value::Object(fields) if fields.is_empty() => None,
+        serde_json::Value::Object(fields) => {
+            let mut rendered_fields = fields
+                .iter()
+                .map(|(key, value)| format!("{key}={}", render_evidence_value(value)))
+                .collect::<Vec<_>>();
+            rendered_fields.sort_unstable();
+            Some(rendered_fields.join(" "))
+        }
+        serde_json::Value::Null => None,
+        value => Some(render_evidence_value(value)),
+    }
+}
+
+/// Render one evidence value without pretty-printing nested JSON.
+fn render_evidence_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_owned(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            serde_json::to_string(value).expect("serializing evidence JSON should not fail")
+        }
+    }
+}
+
 /// Result of applying session resources to Kubernetes.
 #[derive(Debug, Serialize)]
 struct SessionCreateApplyResult {
@@ -793,6 +852,32 @@ struct CheckRunItem {
     target: String,
     status: CheckResultStatus,
     evidence: serde_json::Value,
+}
+
+/// Status totals for text check reports.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CheckRunStatusCounts {
+    passed: usize,
+    failed: usize,
+    warning: usize,
+    skipped: usize,
+}
+
+impl CheckRunStatusCounts {
+    /// Count check result statuses in declaration order.
+    fn from_checks(checks: &[CheckRunItem]) -> Self {
+        let mut counts = Self::default();
+        for check in checks {
+            match check.status {
+                CheckResultStatus::Passed => counts.passed += 1,
+                CheckResultStatus::Failed => counts.failed += 1,
+                CheckResultStatus::Warning => counts.warning += 1,
+                CheckResultStatus::Skipped => counts.skipped += 1,
+                _ => counts.warning += 1,
+            }
+        }
+        counts
+    }
 }
 
 /// Error raised after one or more state metadata writes may have completed.
@@ -2544,12 +2629,14 @@ fn print_verbose_trace(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionCreateApplyError, SessionStateRecordError, apply_session_resources,
-        check_run_report_from_session, planned_resource_token, planned_session_annotations,
-        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
-        planned_session_resources, planned_session_risk_notes, required_session_permissions,
-        session_plan_from_config, session_state_annotations, session_state_check_status,
-        session_token, unsupported_session_feature_warnings, workload_permission_resource,
+        CheckRunItem, CheckRunReport, CheckRunStatusCounts, SessionCreateApplyError,
+        SessionStateRecordError, apply_session_resources, check_run_report_from_session,
+        planned_resource_token, planned_session_annotations, planned_session_checks,
+        planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
+        planned_session_risk_notes, render_check_evidence, render_check_run_text_report,
+        required_session_permissions, session_plan_from_config, session_state_annotations,
+        session_state_check_status, session_token, unsupported_session_feature_warnings,
+        workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{CheckResultStatus, ImageRef, SessionStatus, WorkloadRef};
@@ -2631,6 +2718,115 @@ mod tests {
             "shop/Deployment/checkout-plan-workload"
         );
         assert_eq!(report.checks[0].status, CheckResultStatus::Passed);
+    }
+
+    #[test]
+    fn renders_check_run_text_report_with_summary_and_evidence() {
+        let report = CheckRunReport {
+            session_id: "checkout-plan".to_owned(),
+            namespace: "shop".to_owned(),
+            status: CheckResultStatus::Failed,
+            checks: vec![
+                CheckRunItem {
+                    name: "session_state",
+                    target: "shop/Deployment/checkout-plan-workload".to_owned(),
+                    status: CheckResultStatus::Passed,
+                    evidence: serde_json::json!({
+                        "observed_status": "active",
+                        "expected_status": "active",
+                    }),
+                },
+                CheckRunItem {
+                    name: "smoke_http",
+                    target: "http://checkout-plan.shop.svc.cluster.local/healthz".to_owned(),
+                    status: CheckResultStatus::Failed,
+                    evidence: serde_json::json!({
+                        "status_code": 503,
+                        "expected_status_code": 200,
+                    }),
+                },
+            ],
+        };
+
+        insta::assert_snapshot!(
+            "check_run_text_report",
+            render_check_run_text_report(&report)
+        );
+    }
+
+    #[test]
+    fn renders_check_run_text_report_without_empty_evidence() {
+        let report = CheckRunReport {
+            session_id: "checkout-plan".to_owned(),
+            namespace: "shop".to_owned(),
+            status: CheckResultStatus::Warning,
+            checks: vec![CheckRunItem {
+                name: "session_state",
+                target: "shop/Deployment/checkout-plan-workload".to_owned(),
+                status: CheckResultStatus::Warning,
+                evidence: serde_json::json!({}),
+            }],
+        };
+
+        insta::assert_snapshot!(
+            "check_run_text_report_without_empty_evidence",
+            render_check_run_text_report(&report)
+        );
+    }
+
+    #[test]
+    fn counts_check_result_statuses_for_text_reports() {
+        let checks = [
+            CheckRunItem {
+                name: "passed",
+                target: "target".to_owned(),
+                status: CheckResultStatus::Passed,
+                evidence: serde_json::json!({}),
+            },
+            CheckRunItem {
+                name: "failed",
+                target: "target".to_owned(),
+                status: CheckResultStatus::Failed,
+                evidence: serde_json::json!({}),
+            },
+            CheckRunItem {
+                name: "warning",
+                target: "target".to_owned(),
+                status: CheckResultStatus::Warning,
+                evidence: serde_json::json!({}),
+            },
+            CheckRunItem {
+                name: "skipped",
+                target: "target".to_owned(),
+                status: CheckResultStatus::Skipped,
+                evidence: serde_json::json!({}),
+            },
+        ];
+
+        assert_eq!(
+            CheckRunStatusCounts::from_checks(&checks),
+            CheckRunStatusCounts {
+                passed: 1,
+                failed: 1,
+                warning: 1,
+                skipped: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn renders_scalar_and_nested_check_evidence() {
+        let evidence = serde_json::json!({
+            "attempts": 2,
+            "healthy": false,
+            "messages": ["ready", "degraded"],
+        });
+
+        assert_eq!(
+            render_check_evidence(&evidence).as_deref(),
+            Some("attempts=2 healthy=false messages=[\"ready\",\"degraded\"]")
+        );
+        assert_eq!(render_check_evidence(&serde_json::Value::Null), None);
     }
 
     #[test]
