@@ -198,6 +198,8 @@ impl ClusterCommand {
 pub enum DemoCommand {
     /// Check local prerequisites for the demo.
     Doctor,
+    /// Install the baseline local demo resources.
+    Install,
 }
 
 impl DemoCommand {
@@ -205,6 +207,7 @@ impl DemoCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Doctor => "doctor",
+            Self::Install => "install",
         }
     }
 }

@@ -61,3 +61,12 @@ The command verifies that the ecommerce demo fixture files exist and that
 Doctor results use exit code `0` when every check passes and exit code `1` when
 one or more prerequisites are missing. Missing prerequisites are blocking
 results, not usage errors.
+
+`kply demo install` installs the baseline ecommerce fixture into the current
+Kubernetes context. It applies only the local demo manifests in this order:
+namespace, catalog backing service, frontend, and baseline backend.
+
+After applying manifests, the command waits for the `catalog-api`,
+`storefront-web`, and `checkout-api` deployments in the `kply-demo` namespace
+to become available. Kubectl failures exit with code `1` because they are
+blocking demo readiness results.

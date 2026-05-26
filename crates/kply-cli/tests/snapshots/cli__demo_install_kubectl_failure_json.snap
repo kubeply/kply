@@ -1,0 +1,19 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 362
+expression: value
+---
+{
+  "error": {
+    "code": "kubectl_failed",
+    "command": [
+      "kubectl",
+      "apply",
+      "-f",
+      "<absolute-path>"
+    ],
+    "exit_code": 1,
+    "message": "kubectl exited with status 7",
+    "stderr": "fake kubectl"
+  }
+}

@@ -2,20 +2,14 @@
 
 use anyhow::Result;
 use kply_cli::cli::Cli;
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use crate::demo::{
+    CONTAINER_RUNTIME_COMMANDS, DEMO_CONFIG_PATH, DEMO_MANIFEST_PATHS, find_command_in_path,
+    repository_path,
+};
+
 const EXIT_BLOCKING: u8 = 1;
-const DEMO_CONFIG_PATH: &str = "fixtures/demo/ecommerce-basic/kply.yaml";
-const DEMO_MANIFEST_PATHS: [&str; 6] = [
-    "fixtures/demo/ecommerce-basic/manifests/namespace.yaml",
-    "fixtures/demo/ecommerce-basic/manifests/frontend.yaml",
-    "fixtures/demo/ecommerce-basic/manifests/backend.yaml",
-    "fixtures/demo/ecommerce-basic/manifests/backend-broken.yaml",
-    "fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml",
-    "fixtures/demo/ecommerce-basic/manifests/catalog.yaml",
-];
-const CONTAINER_RUNTIME_COMMANDS: [&str; 3] = ["docker", "podman", "nerdctl"];
 
 /// Render local demo prerequisite checks.
 pub(crate) fn render_demo_doctor(cli: &Cli) -> Result<ExitCode> {
@@ -123,61 +117,4 @@ fn command_check(name: &'static str, candidates: &[&str]) -> DemoDoctorCheck {
     }
 
     DemoDoctorCheck::missing(name, format!("missing one of: {}", candidates.join(", ")))
-}
-
-fn repository_path(relative_path: &str) -> PathBuf {
-    let current_dir_path = std::env::current_dir()
-        .map(|current_dir| current_dir.join(relative_path))
-        .unwrap_or_else(|_| PathBuf::from(relative_path));
-    if current_dir_path.exists() {
-        return current_dir_path;
-    }
-
-    workspace_root_from_manifest_dir()
-        .map(|root| root.join(relative_path))
-        .unwrap_or_else(|| PathBuf::from(relative_path))
-}
-
-fn workspace_root_from_manifest_dir() -> Option<PathBuf> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .find(|ancestor| {
-            let manifest = ancestor.join("Cargo.toml");
-            std::fs::read_to_string(manifest)
-                .is_ok_and(|contents| contents.lines().any(|line| line.trim() == "[workspace]"))
-        })
-        .map(Path::to_path_buf)
-}
-
-fn find_command_in_path(command: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|directory| {
-        command_path_candidates(&directory, command)
-            .into_iter()
-            .find(|candidate| is_executable_file(candidate))
-    })
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::metadata(path)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-    }
-
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
-}
-
-fn command_path_candidates(directory: &Path, command: &str) -> Vec<PathBuf> {
-    let mut candidates = vec![directory.join(command)];
-    let executable_suffix = std::env::consts::EXE_SUFFIX;
-    if !executable_suffix.is_empty() && !command.ends_with(executable_suffix) {
-        candidates.push(directory.join(format!("{command}{executable_suffix}")));
-    }
-    candidates
 }

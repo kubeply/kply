@@ -612,6 +612,7 @@ dependencies = [
  "kply-core",
  "kply-k8s",
  "kply-test",
+ "serde",
  "serde_json",
  "tokio",
 ]

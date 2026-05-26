@@ -2,9 +2,9 @@
 
 This guide sets up the ecommerce demo fixture in a local Kind cluster.
 
-The current flow uses `kind` and `kubectl` directly. `kply demo install`,
-`kply demo reset`, and `kply demo teardown` are not implemented yet. Use
-`kply demo doctor` to validate local prerequisites first.
+Use `kply demo doctor` to validate local prerequisites first. `kply demo
+install` can install the baseline fixture after the cluster exists. `kply demo
+reset` and `kply demo teardown` are not implemented yet.
 
 ## Prerequisites
 
@@ -34,8 +34,15 @@ kubectl config use-context kind-kply-demo
 
 ## Install The Baseline Fixture
 
-Apply the dedicated namespace first, then the backing service, frontend, and
-baseline backend.
+Install the dedicated namespace, backing service, frontend, and baseline
+backend with Kply:
+
+```bash
+cargo run --locked --bin kply -- demo install
+```
+
+The command applies the baseline manifests and waits for the demo deployments
+to roll out. The equivalent manual commands are:
 
 ```bash
 kubectl apply -f fixtures/demo/ecommerce-basic/manifests/namespace.yaml
@@ -47,9 +54,9 @@ kubectl apply -f fixtures/demo/ecommerce-basic/manifests/backend.yaml
 Wait for the workloads to become available.
 
 ```bash
-kubectl -n kply-demo rollout status deployment/catalog-api
-kubectl -n kply-demo rollout status deployment/storefront-web
-kubectl -n kply-demo rollout status deployment/checkout-api
+kubectl -n kply-demo rollout status --timeout=5m deployment/catalog-api
+kubectl -n kply-demo rollout status --timeout=5m deployment/storefront-web
+kubectl -n kply-demo rollout status --timeout=5m deployment/checkout-api
 ```
 
 ## Check The Backend Response
@@ -78,7 +85,7 @@ To switch from the baseline backend to the broken backend:
 ```bash
 kubectl delete -f fixtures/demo/ecommerce-basic/manifests/backend.yaml --ignore-not-found
 kubectl apply -f fixtures/demo/ecommerce-basic/manifests/backend-broken.yaml
-kubectl -n kply-demo rollout status deployment/checkout-api
+kubectl -n kply-demo rollout status --timeout=5m deployment/checkout-api
 ```
 
 To switch from the broken backend to the fixed backend:
@@ -86,7 +93,7 @@ To switch from the broken backend to the fixed backend:
 ```bash
 kubectl delete -f fixtures/demo/ecommerce-basic/manifests/backend-broken.yaml --ignore-not-found
 kubectl apply -f fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml
-kubectl -n kply-demo rollout status deployment/checkout-api
+kubectl -n kply-demo rollout status --timeout=5m deployment/checkout-api
 ```
 
 The broken variant returns an error-shaped checkout response. The fixed variant
