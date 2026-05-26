@@ -8,17 +8,19 @@ use clap::{CommandFactory, Parser};
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Service;
 use kply_cli::cli::{
-    AppCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand, SessionCommand,
+    AppCommand, CheckCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand,
+    SessionCommand,
 };
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
 };
 use kply_core::{
-    AppGraph, ConfidenceLevel, GraphRelationship, ImageRef, KubernetesResourceRef, MetadataEntry,
-    PlannedCheck, PlannedCleanupStep, RelationshipConfidence, RequiredPermission, RiskNote,
-    RouteSelector, SandboxManifestError, ServiceRef, SessionId, SessionName, SessionPlan,
-    SessionPolicy, SessionStatus, TimeToLive, UnsupportedFeatureWarning, WorkloadRef,
-    sandbox_deployment_manifest, sandbox_route_placeholder_manifest, sandbox_service_manifest,
+    AppGraph, CheckResultStatus, ConfidenceLevel, GraphRelationship, ImageRef,
+    KubernetesResourceRef, MetadataEntry, PlannedCheck, PlannedCleanupStep, RelationshipConfidence,
+    RequiredPermission, RiskNote, RouteSelector, SandboxManifestError, ServiceRef, SessionId,
+    SessionName, SessionPlan, SessionPolicy, SessionStatus, TimeToLive, UnsupportedFeatureWarning,
+    WorkloadRef, sandbox_deployment_manifest, sandbox_route_placeholder_manifest,
+    sandbox_service_manifest,
 };
 use kply_k8s::{
     DeploymentRolloutPhase, DeploymentSummary, DiscoveryError, KubeconfigError, MutationError,
@@ -170,6 +172,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Cluster {
             command: Some(ClusterCommand::Info),
         }) => return render_cluster_info(&cli),
+        Some(Command::Check {
+            command: Some(CheckCommand::Run { session, namespace }),
+        }) => return render_check_run(&cli, session, namespace.as_deref()),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -462,6 +467,52 @@ fn render_session_status(cli: &Cli, session: &str, namespace: Option<&str>) -> R
     Ok(ExitCode::SUCCESS)
 }
 
+/// Render verification checks for one sandbox session.
+fn render_check_run(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_check_run_error(&error.to_string(), cli.json),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let namespace = match namespace {
+        Some(namespace) => namespace.to_owned(),
+        None => match runtime.block_on(kply_k8s::cluster_info()) {
+            Ok(info) => info.default_namespace,
+            Err(error) => return render_kubeconfig_error(&error, cli.json),
+        },
+    };
+    let session = match runtime.block_on(get_session_in_namespace(&namespace, session_id.as_str()))
+    {
+        Ok(session) => session,
+        Err(error) => return render_discovery_error(&error, cli.json),
+    };
+    let report = check_run_report_from_session(&session);
+    let exit_code_value = if report.status.is_blocking() {
+        EXIT_BLOCKING
+    } else {
+        0
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if !cli.quiet {
+        println!("kply check run {}", report.session_id);
+        println!("namespace: {}", report.namespace);
+        println!("status: {}", report.status);
+        println!("checks: {}", report.checks.len());
+        for check in &report.checks {
+            println!(
+                "  check: {} target={} status={}",
+                check.name, check.target, check.status
+            );
+        }
+    }
+
+    Ok(exit_code(exit_code_value))
+}
+
 /// Render a non-mutating sandbox session cleanup plan.
 fn render_session_cleanup(
     cli: &Cli,
@@ -667,6 +718,42 @@ async fn get_session_in_namespace(
     })
 }
 
+/// Build the current non-mutating check report from discovered session metadata.
+fn check_run_report_from_session(session: &SessionSummary) -> CheckRunReport {
+    let status = session_state_check_status(session.status.as_deref());
+    let target = format!(
+        "{}/{}/{}",
+        session.namespace, session.workload_kind, session.workload_name
+    );
+    let check = CheckRunItem {
+        name: "session_state",
+        target,
+        status,
+        evidence: serde_json::json!({
+            "observed_status": session.status,
+            "expected_status": "active",
+            "workload_kind": session.workload_kind,
+            "workload_name": session.workload_name,
+        }),
+    };
+
+    CheckRunReport {
+        session_id: session.id.clone(),
+        namespace: session.namespace.clone(),
+        status: check.status,
+        checks: vec![check],
+    }
+}
+
+/// Return the check status for discovered session lifecycle metadata.
+fn session_state_check_status(status: Option<&str>) -> CheckResultStatus {
+    match status {
+        Some("active") => CheckResultStatus::Passed,
+        Some(_) => CheckResultStatus::Failed,
+        None => CheckResultStatus::Warning,
+    }
+}
+
 /// Result of applying session resources to Kubernetes.
 #[derive(Debug, Serialize)]
 struct SessionCreateApplyResult {
@@ -688,6 +775,24 @@ struct SessionReadinessSummary {
 struct SessionStateRecordSummary {
     status: SessionStatus,
     resources: Vec<SessionManifestSummary>,
+}
+
+/// Machine-readable report emitted by `kply check run`.
+#[derive(Debug, Serialize)]
+struct CheckRunReport {
+    session_id: String,
+    namespace: String,
+    status: CheckResultStatus,
+    checks: Vec<CheckRunItem>,
+}
+
+/// One check result emitted by `kply check run`.
+#[derive(Debug, Serialize)]
+struct CheckRunItem {
+    name: &'static str,
+    target: String,
+    status: CheckResultStatus,
+    evidence: serde_json::Value,
 }
 
 /// Error raised after one or more state metadata writes may have completed.
@@ -2054,6 +2159,24 @@ fn render_session_status_error(message: &str, wants_json: bool) -> Result<ExitCo
     Ok(exit_code(EXIT_USAGE))
 }
 
+/// Render check run input errors.
+fn render_check_run_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "check_run",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: check run\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
 /// Render session cleanup input errors.
 fn render_session_cleanup_error(message: &str, wants_json: bool) -> Result<ExitCode> {
     if wants_json {
@@ -2422,17 +2545,17 @@ fn print_verbose_trace(cli: &Cli) {
 mod tests {
     use super::{
         SessionCreateApplyError, SessionStateRecordError, apply_session_resources,
-        planned_resource_token, planned_session_annotations, planned_session_checks,
-        planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        planned_session_risk_notes, required_session_permissions, session_plan_from_config,
-        session_state_annotations, session_token, unsupported_session_feature_warnings,
-        workload_permission_resource,
+        check_run_report_from_session, planned_resource_token, planned_session_annotations,
+        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
+        planned_session_resources, planned_session_risk_notes, required_session_permissions,
+        session_plan_from_config, session_state_annotations, session_state_check_status,
+        session_token, unsupported_session_feature_warnings, workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
-    use kply_core::{ImageRef, SessionStatus, WorkloadRef};
+    use kply_core::{CheckResultStatus, ImageRef, SessionStatus, WorkloadRef};
     use kply_k8s::{
         DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, MutationError,
-        MutationErrorCode, ServiceSummary,
+        MutationErrorCode, ServiceSummary, SessionSummary,
     };
 
     #[test]
@@ -2463,6 +2586,51 @@ mod tests {
         assert!(second_token.ends_with("-plan"));
         assert!(first_token.len() <= 63);
         assert!(second_token.len() <= 63);
+    }
+
+    #[test]
+    fn classifies_active_session_state_check_as_passed() {
+        assert_eq!(
+            session_state_check_status(Some("active")),
+            CheckResultStatus::Passed
+        );
+    }
+
+    #[test]
+    fn classifies_missing_session_state_check_as_warning() {
+        assert_eq!(session_state_check_status(None), CheckResultStatus::Warning);
+    }
+
+    #[test]
+    fn classifies_non_active_session_state_check_as_failed() {
+        assert_eq!(
+            session_state_check_status(Some("preparing")),
+            CheckResultStatus::Failed
+        );
+    }
+
+    #[test]
+    fn builds_check_run_report_from_session_metadata() {
+        let report = check_run_report_from_session(&SessionSummary {
+            id: "checkout-plan".to_owned(),
+            name: Some("checkout-session".to_owned()),
+            namespace: "shop".to_owned(),
+            app: Some("checkout".to_owned()),
+            status: Some("active".to_owned()),
+            workload_kind: "Deployment".to_owned(),
+            workload_name: "checkout-plan-workload".to_owned(),
+        });
+
+        assert_eq!(report.session_id, "checkout-plan");
+        assert_eq!(report.namespace, "shop");
+        assert_eq!(report.status, CheckResultStatus::Passed);
+        assert_eq!(report.checks.len(), 1);
+        assert_eq!(report.checks[0].name, "session_state");
+        assert_eq!(
+            report.checks[0].target,
+            "shop/Deployment/checkout-plan-workload"
+        );
+        assert_eq!(report.checks[0].status, CheckResultStatus::Passed);
     }
 
     #[test]

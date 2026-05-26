@@ -79,6 +79,12 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<ClusterCommand>,
     },
+    /// Run verification checks for sandbox sessions.
+    Check {
+        /// Optional check command.
+        #[command(subcommand)]
+        command: Option<CheckCommand>,
+    },
     /// Manage the local Kply demo.
     Demo {
         /// Required demo command.
@@ -98,6 +104,7 @@ impl Command {
         Self::App { command: None },
         Self::Config { command: None },
         Self::Cluster { command: None },
+        Self::Check { command: None },
         Self::Completion,
         Self::Report,
     ];
@@ -110,9 +117,32 @@ impl Command {
             Self::App { .. } => "app",
             Self::Config { .. } => "config",
             Self::Cluster { .. } => "cluster",
+            Self::Check { .. } => "check",
             Self::Demo { .. } => "demo",
             Self::Completion => "completion",
             Self::Report => "report",
+        }
+    }
+}
+
+/// Verification check commands.
+#[derive(Clone, Debug, Subcommand)]
+pub enum CheckCommand {
+    /// Run verification checks for one sandbox session.
+    Run {
+        /// Session id to verify.
+        session: String,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
+}
+
+impl CheckCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Run { .. } => "run",
         }
     }
 }
