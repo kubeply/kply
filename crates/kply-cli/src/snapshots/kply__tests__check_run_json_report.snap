@@ -1,0 +1,36 @@
+---
+source: crates/kply-cli/src/main.rs
+assertion_line: 2810
+expression: value
+---
+{
+  "checks": [
+    {
+      "evidence": {
+        "expected_status": "active",
+        "observed_status": "active"
+      },
+      "name": "session_state",
+      "status": "passed",
+      "target": "shop/Deployment/checkout-plan-workload"
+    },
+    {
+      "evidence": {
+        "expected_status_code": 200,
+        "status_code": 503
+      },
+      "name": "smoke_http",
+      "status": "failed",
+      "target": "http://checkout-plan.shop.svc.cluster.local/healthz"
+    }
+  ],
+  "namespace": "shop",
+  "session_id": "checkout-plan",
+  "status": "failed",
+  "summary": {
+    "failed": 1,
+    "passed": 1,
+    "skipped": 0,
+    "warning": 0
+  }
+}
