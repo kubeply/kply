@@ -10,3 +10,6 @@ authors.workspace = true
 kply-core.workspace = true
 kply-k8s.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
