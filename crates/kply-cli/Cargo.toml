@@ -19,10 +19,10 @@ kply-config.workspace = true
 kply-core.workspace = true
 kply-k8s.workspace = true
 serde.workspace = true
+serde_norway.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 kply-test.workspace = true
-serde_norway.workspace = true

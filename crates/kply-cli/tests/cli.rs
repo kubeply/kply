@@ -1067,6 +1067,29 @@ fn prints_session_manifests_json() {
 }
 
 #[test]
+fn prints_session_manifests_yaml() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
+                "--yaml",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_manifests_yaml", output);
+}
+
+#[test]
 fn prints_session_manifests_text_without_route_selector() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -1114,6 +1137,31 @@ fn prints_session_manifests_json_without_route_selector() {
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("session_manifests_json_without_route_selector", value);
+}
+
+#[test]
+fn prints_session_manifests_yaml_without_route_selector() {
+    let output = with_session_plan_config(|config_path| {
+        kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
+                "--route-strategy",
+                "preview",
+                "--yaml",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    });
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_manifests_yaml_without_route_selector", output);
 }
 
 #[test]
@@ -1202,6 +1250,46 @@ fn suppresses_session_manifests_text_when_quiet() {
             .success()
             .stdout("");
     });
+}
+
+#[test]
+fn keeps_session_manifests_yaml_when_quiet() {
+    with_session_plan_config(|config_path| {
+        let output = kply_cmd()
+            .args([
+                "--config",
+                config_path,
+                "session",
+                "manifests",
+                "checkout",
+                "--yaml",
+                "--quiet",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+
+        let output = String::from_utf8(output).expect("stdout should be UTF-8");
+        assert!(output.contains("---\napiVersion: apps/v1\n"));
+    });
+}
+
+#[test]
+fn rejects_session_manifests_yaml_with_json() {
+    let output = assert_kply_exit_code(
+        &["session", "manifests", "checkout", "--yaml", "--json"],
+        EXIT_USAGE,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "usage errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_manifests_yaml_with_json", value);
 }
 
 #[test]
@@ -2191,6 +2279,7 @@ fn covers_every_session_command() {
                 "session",
                 SessionCommand::Manifests {
                     app: String::new(),
+                    yaml: false,
                     image: None,
                     namespace: None,
                     time_to_live: None,

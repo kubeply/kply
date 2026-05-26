@@ -1,0 +1,89 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kply.dev/image: ghcr.io/acme/checkout:next
+    kply.dev/route-strategy: header
+    kply.dev/workload: shop/Deployment/checkout-api
+  labels:
+    kply.dev/app: checkout
+    kply.dev/managed-by: kply
+    kply.dev/session-id: checkout-plan
+    kply.dev/session-name: checkout-session
+  name: checkout-plan-workload
+  namespace: shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kply.dev/app: checkout
+      kply.dev/managed-by: kply
+      kply.dev/session-id: checkout-plan
+      kply.dev/session-name: checkout-session
+  template:
+    metadata:
+      annotations:
+        kply.dev/image: ghcr.io/acme/checkout:next
+        kply.dev/route-strategy: header
+        kply.dev/workload: shop/Deployment/checkout-api
+      labels:
+        kply.dev/app: checkout
+        kply.dev/managed-by: kply
+        kply.dev/session-id: checkout-plan
+        kply.dev/session-name: checkout-session
+    spec:
+      containers:
+      - image: ghcr.io/acme/checkout:next
+        name: checkout-session
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    kply.dev/image: ghcr.io/acme/checkout:next
+    kply.dev/route-strategy: header
+    kply.dev/workload: shop/Deployment/checkout-api
+  labels:
+    kply.dev/app: checkout
+    kply.dev/managed-by: kply
+    kply.dev/session-id: checkout-plan
+    kply.dev/session-name: checkout-session
+  name: checkout-plan-service
+  namespace: shop
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  selector:
+    kply.dev/app: checkout
+    kply.dev/managed-by: kply
+    kply.dev/session-id: checkout-plan
+    kply.dev/session-name: checkout-session
+---
+apiVersion: v1
+data:
+  kply.dev/header-name: x-kply-session
+  kply.dev/header-value: checkout-plan
+  kply.dev/placeholder-kind: HTTPRoute
+  kply.dev/route-resource: shop/HTTPRoute/checkout-plan-route
+  kply.dev/selector-kind: header
+  kply.dev/service-resource: shop/Service/checkout-plan-service
+kind: ConfigMap
+metadata:
+  annotations:
+    kply.dev/image: ghcr.io/acme/checkout:next
+    kply.dev/route-strategy: header
+    kply.dev/workload: shop/Deployment/checkout-api
+  labels:
+    kply.dev/app: checkout
+    kply.dev/managed-by: kply
+    kply.dev/session-id: checkout-plan
+    kply.dev/session-name: checkout-session
+  name: checkout-plan-route
+  namespace: shop
