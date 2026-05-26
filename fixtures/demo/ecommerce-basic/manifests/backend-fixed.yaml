@@ -9,14 +9,14 @@ metadata:
     app.kubernetes.io/name: checkout-api
     app.kubernetes.io/component: backend
     app.kubernetes.io/part-of: kply-demo
-    app.kubernetes.io/version: baseline
+    app.kubernetes.io/version: fixed
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: checkout-api
       app.kubernetes.io/part-of: kply-demo
-      app.kubernetes.io/version: baseline
+      app.kubernetes.io/version: fixed
   template:
     metadata:
       annotations:
@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: checkout-api
         app.kubernetes.io/component: backend
         app.kubernetes.io/part-of: kply-demo
-        app.kubernetes.io/version: baseline
+        app.kubernetes.io/version: fixed
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -41,7 +41,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - -listen=:8080
-            - -text={"status":"ok","service":"checkout-api"}
+            - -text={"status":"ok","service":"checkout-api","catalog":"reachable"}
           ports:
             - name: http
               containerPort: 8080
@@ -87,12 +87,12 @@ metadata:
     app.kubernetes.io/name: checkout-api
     app.kubernetes.io/component: backend
     app.kubernetes.io/part-of: kply-demo
-    app.kubernetes.io/version: baseline
+    app.kubernetes.io/version: fixed
 spec:
   selector:
     app.kubernetes.io/name: checkout-api
     app.kubernetes.io/part-of: kply-demo
-    app.kubernetes.io/version: baseline
+    app.kubernetes.io/version: fixed
   ports:
     - name: http
       port: 8080

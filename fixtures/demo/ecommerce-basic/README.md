@@ -17,6 +17,11 @@ workflow commands are not implemented yet.
 
 ## Variants
 
+Backend variant manifests are mutually exclusive fixture inputs for future demo
+reset and repair flows.
+
 - `manifests/backend.yaml`: baseline backend fixture.
 - `manifests/backend-broken.yaml`: intentionally broken backend response for
   future agent repair and verification flows.
+- `manifests/backend-fixed.yaml`: repaired backend response for future agent
+  verification and promotion flows.
