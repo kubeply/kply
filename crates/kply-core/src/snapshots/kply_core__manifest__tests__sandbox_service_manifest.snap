@@ -13,7 +13,8 @@ expression: value
     "labels": {
       "kply.dev/app": "checkout",
       "kply.dev/managed-by": "kply",
-      "kply.dev/session-id": "session-123"
+      "kply.dev/session-id": "session-123",
+      "kply.dev/session-name": "checkout-test"
     },
     "name": "session-123-service",
     "namespace": "checkout"
@@ -29,7 +30,8 @@ expression: value
     "selector": {
       "kply.dev/app": "checkout",
       "kply.dev/managed-by": "kply",
-      "kply.dev/session-id": "session-123"
+      "kply.dev/session-id": "session-123",
+      "kply.dev/session-name": "checkout-test"
     }
   }
 }

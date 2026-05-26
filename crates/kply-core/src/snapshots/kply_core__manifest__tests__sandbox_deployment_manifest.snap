@@ -13,7 +13,8 @@ expression: value
     "labels": {
       "kply.dev/app": "checkout",
       "kply.dev/managed-by": "kply",
-      "kply.dev/session-id": "session-123"
+      "kply.dev/session-id": "session-123",
+      "kply.dev/session-name": "checkout-test"
     },
     "name": "session-123-workload",
     "namespace": "checkout"
@@ -24,7 +25,8 @@ expression: value
       "matchLabels": {
         "kply.dev/app": "checkout",
         "kply.dev/managed-by": "kply",
-        "kply.dev/session-id": "session-123"
+        "kply.dev/session-id": "session-123",
+        "kply.dev/session-name": "checkout-test"
       }
     },
     "template": {
@@ -36,7 +38,8 @@ expression: value
         "labels": {
           "kply.dev/app": "checkout",
           "kply.dev/managed-by": "kply",
-          "kply.dev/session-id": "session-123"
+          "kply.dev/session-id": "session-123",
+          "kply.dev/session-name": "checkout-test"
         }
       },
       "spec": {
