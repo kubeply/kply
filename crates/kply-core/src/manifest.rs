@@ -16,6 +16,7 @@ const REQUIRED_AUDIT_ANNOTATIONS: [&str; 3] = [
     "kply.dev/route-strategy",
     "kply.dev/workload",
 ];
+const TTL_ANNOTATION: &str = "kply.dev/ttl";
 
 /// Stable application identity labels safe to preserve in sandbox manifests.
 ///
@@ -39,7 +40,7 @@ pub fn sandbox_deployment_manifest(
     let labels = sandbox_labels(&planned_labels);
     let planned_annotations = metadata_entries_to_map(plan.planned_annotations());
     ensure_audit_annotations(&planned_annotations)?;
-    let annotations = sandbox_annotations(&planned_annotations);
+    let annotations = sandbox_annotations(plan, &planned_annotations);
 
     Ok(SandboxDeploymentManifest {
         api_version: "apps/v1",
@@ -89,7 +90,7 @@ pub fn sandbox_service_manifest_with_port(
     let labels = sandbox_labels(&planned_labels);
     let planned_annotations = metadata_entries_to_map(plan.planned_annotations());
     ensure_audit_annotations(&planned_annotations)?;
-    let annotations = sandbox_annotations(&planned_annotations);
+    let annotations = sandbox_annotations(plan, &planned_annotations);
 
     Ok(SandboxServiceManifest {
         api_version: "v1",
@@ -384,12 +385,21 @@ fn should_preserve_label(key: &str) -> bool {
 ///
 /// Production annotations often control ingress, sidecars, policy, or external
 /// integrations. They are intentionally not copied unless Kply owns the key.
-fn sandbox_annotations(planned_annotations: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    planned_annotations
+fn sandbox_annotations(
+    plan: &SessionPlan,
+    planned_annotations: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut annotations = planned_annotations
         .iter()
         .filter(|(key, _)| should_preserve_annotation(key))
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .collect()
+        .collect::<BTreeMap<_, _>>();
+
+    if let Some(time_to_live) = plan.time_to_live() {
+        annotations.insert(TTL_ANNOTATION.to_owned(), time_to_live.as_str().to_owned());
+    }
+
+    annotations
 }
 
 /// Check whether a planned annotation belongs in generated sandbox manifests.
@@ -440,7 +450,7 @@ mod tests {
     };
     use crate::{
         ImageRef, KubernetesResourceRef, MetadataEntry, SessionId, SessionName, SessionPlan,
-        SessionPolicy, WorkloadRef,
+        SessionPolicy, TimeToLive, WorkloadRef,
     };
 
     fn test_session_plan() -> SessionPlan {
@@ -479,6 +489,10 @@ mod tests {
                 MetadataEntry::new("nginx.ingress.kubernetes.io/rewrite-target", "/")
                     .expect("annotation"),
             ])
+    }
+
+    fn test_labeled_session_plan_with_ttl() -> SessionPlan {
+        test_labeled_session_plan().with_time_to_live(TimeToLive::new("30m").expect("time to live"))
     }
 
     fn test_ownership_labels() -> Vec<MetadataEntry> {
@@ -610,6 +624,28 @@ mod tests {
                 .get("nginx.ingress.kubernetes.io/rewrite-target")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn adds_ttl_metadata_to_sandbox_deployment_manifest() {
+        let plan = test_labeled_session_plan_with_ttl();
+        let manifest = sandbox_deployment_manifest(&plan).expect("deployment manifest");
+        let value = serde_json::to_value(manifest).expect("manifest should serialize");
+
+        assert_eq!(value["metadata"]["annotations"]["kply.dev/ttl"], "30m");
+        assert_eq!(
+            value["spec"]["template"]["metadata"]["annotations"]["kply.dev/ttl"],
+            "30m"
+        );
+    }
+
+    #[test]
+    fn adds_ttl_metadata_to_sandbox_service_manifest() {
+        let plan = test_labeled_session_plan_with_ttl();
+        let manifest = sandbox_service_manifest(&plan).expect("service manifest");
+        let value = serde_json::to_value(manifest).expect("manifest should serialize");
+
+        assert_eq!(value["metadata"]["annotations"]["kply.dev/ttl"], "30m");
     }
 
     #[test]
