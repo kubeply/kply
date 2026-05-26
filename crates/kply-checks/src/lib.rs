@@ -1217,7 +1217,10 @@ impl CheckTimeoutResult {
         self.completed
     }
 
-    /// Return whether timeout evidence exceeded or reached the budget.
+    /// Return whether timeout evidence breached the budget.
+    ///
+    /// Completed checks time out when `elapsed_millis > timeout_millis`; incomplete checks time out
+    /// when `elapsed_millis >= timeout_millis`.
     pub const fn timed_out(&self) -> bool {
         self.timed_out
     }
@@ -1895,6 +1898,17 @@ mod tests {
         assert_eq!(result.check_name(), "http_smoke");
         assert_eq!(result.timeout_millis(), 5_000);
         assert_eq!(result.elapsed_millis(), Some(4_999));
+        assert!(result.completed());
+        assert!(!result.timed_out());
+    }
+
+    #[test]
+    /// Passes when a completed check lands exactly on its timeout budget.
+    fn passes_when_completed_check_at_timeout_boundary() {
+        let result = check_timeout(&timeout("http_smoke", 5_000, Some(5_000), true));
+
+        assert_eq!(result.status(), CheckResultStatus::Passed);
+        assert_eq!(result.elapsed_millis(), Some(5_000));
         assert!(result.completed());
         assert!(!result.timed_out());
     }
