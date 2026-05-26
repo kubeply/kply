@@ -11,8 +11,8 @@ promoted.
 ## Status
 
 Implementation in progress. The workspace now includes real session planning,
-Kubernetes discovery, sandbox create/cleanup, and early runtime check support;
-routing remains placeholder-only until its roadmap milestone starts.
+Kubernetes discovery, sandbox create/cleanup, early runtime check support, and
+Gateway API routing groundwork.
 
 Session mutation commands require explicit `--apply` confirmation.
 

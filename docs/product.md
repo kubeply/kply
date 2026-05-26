@@ -12,8 +12,8 @@ Kply focuses on the Kubeply agent boundary:
 Kply CLI should let a developer or coding agent create a sandbox session for
 one Kubernetes workload and get a clear report about what happened. This is a
 roadmap hypothesis, partially implemented behavior: session create/cleanup has
-started, runtime checks are landing, and routing remains placeholder-only until
-its roadmap milestone starts.
+started, runtime checks are landing, and Gateway API routing groundwork has
+started.
 
 ## Expansion
 

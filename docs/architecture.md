@@ -58,8 +58,7 @@ to test a change against Kubernetes-like reality without giving an agent direct
 production mutation access.
 
 Real session planning and Kubernetes execution are now implemented. Runtime
-checks are starting to land, while routing remains placeholder-only until its
-roadmap milestone starts.
+checks are starting to land, and Gateway API routing groundwork has started.
 
 The current `kply-core` session domain model defines the first pre-`1.0.0`
 agent-readable JSON contract. This contract is provisional and may change
@@ -344,4 +343,5 @@ The current workflow is intentionally bounded:
 4. Keep routing placeholder-only until its roadmap milestone starts.
 
 Runtime checks are starting to land on top of the implemented session
-planning/execution path.
+planning/execution path. Routing changes are now scoped to Gateway API adapter
+roadmap milestones.

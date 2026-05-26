@@ -661,6 +661,8 @@ name = "kply-routing"
 version = "0.1.0"
 dependencies = [
  "kply-core",
+ "kply-k8s",
+ "serde",
 ]
 
 [[package]]
