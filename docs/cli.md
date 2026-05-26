@@ -79,6 +79,7 @@ blocking demo readiness results.
 the same demo deployments. Use it to return the local demo to the known-good
 baseline after switching backend variants.
 
-`kply demo teardown` deletes the dedicated `kply-demo` namespace with
-`--ignore-not-found`, waits for deletion, and uses a timeout. It does not delete
-the Kind cluster itself.
+`kply demo teardown` deletes only labeled demo `Deployment` and `Service`
+resources in the dedicated `kply-demo` namespace with `--ignore-not-found`,
+waits for deletion, and uses a timeout. It does not delete the namespace or the
+Kind cluster itself.

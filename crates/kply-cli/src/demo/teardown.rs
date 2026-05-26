@@ -1,4 +1,4 @@
-//! Local demo namespace teardown.
+//! Local demo labeled-resource teardown.
 
 use anyhow::Result;
 use kply_cli::cli::Cli;
@@ -10,8 +10,10 @@ use crate::demo::{DEMO_NAMESPACE, find_command_in_path};
 const EXIT_BLOCKING: u8 = 1;
 const KUBECTL_COMMAND: &str = "kubectl";
 const KUBECTL_DELETE_TIMEOUT: &str = "5m";
+const DEMO_RESOURCE_SELECTOR: &str = "app.kubernetes.io/part-of=kply-demo";
+const DEMO_RESOURCE_TYPES: &str = "deployment,service";
 
-/// Tear down the local demo namespace in the current Kubernetes context.
+/// Tear down labeled local demo resources in the current Kubernetes context.
 pub(crate) fn render_demo_teardown(cli: &Cli) -> Result<ExitCode> {
     let result = teardown_demo();
 
@@ -64,9 +66,12 @@ fn teardown_demo() -> std::result::Result<DemoTeardownReport, DemoTeardownError>
     }
 
     run_kubectl(&[
-        "delete",
-        "namespace",
+        "-n",
         DEMO_NAMESPACE,
+        "delete",
+        DEMO_RESOURCE_TYPES,
+        "--selector",
+        DEMO_RESOURCE_SELECTOR,
         "--ignore-not-found",
         "--wait=true",
         "--timeout",
@@ -77,7 +82,9 @@ fn teardown_demo() -> std::result::Result<DemoTeardownReport, DemoTeardownError>
         command: "demo teardown",
         status: "torn_down",
         namespace: DEMO_NAMESPACE,
-        deleted_resources: vec![format!("namespace/{DEMO_NAMESPACE}")],
+        deleted_resources: vec![format!(
+            "{DEMO_RESOURCE_TYPES} --selector {DEMO_RESOURCE_SELECTOR}"
+        )],
     })
 }
 

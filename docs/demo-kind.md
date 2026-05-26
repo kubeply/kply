@@ -5,7 +5,7 @@ This guide sets up the ecommerce demo fixture in a local Kind cluster.
 Use `kply demo doctor` to validate local prerequisites first. `kply demo
 install` can install the baseline fixture after the cluster exists. `kply demo
 reset` can restore the baseline fixture after variant testing. `kply demo
-teardown` removes the dedicated demo namespace.
+teardown` removes only labeled demo workloads and services.
 
 Every demo action is an explicit subcommand. Commands operate against the
 current Kubernetes context and keep their resources in the `kply-demo`
@@ -130,7 +130,7 @@ cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yam
 
 ## Cleanup
 
-Remove only the demo namespace resources:
+Remove only the labeled demo resources:
 
 ```bash
 cargo run --locked --bin kply -- demo teardown
@@ -139,7 +139,7 @@ cargo run --locked --bin kply -- demo teardown
 The equivalent manual command is:
 
 ```bash
-kubectl delete namespace kply-demo --ignore-not-found --wait=true --timeout=5m
+kubectl -n kply-demo delete deployment,service --selector app.kubernetes.io/part-of=kply-demo --ignore-not-found --wait=true --timeout=5m
 ```
 
 Or remove the whole local Kind cluster:
