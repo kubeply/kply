@@ -1,0 +1,17 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 411
+expression: normalize_output(&output)
+---
+kply demo reset
+status: reset
+namespace: kply-demo
+applied_manifests: 4
+  applied: fixtures/demo/ecommerce-basic/manifests/namespace.yaml
+  applied: fixtures/demo/ecommerce-basic/manifests/catalog.yaml
+  applied: fixtures/demo/ecommerce-basic/manifests/frontend.yaml
+  applied: fixtures/demo/ecommerce-basic/manifests/backend.yaml
+rollouts: 3
+  ready: deployment/catalog-api
+  ready: deployment/storefront-web
+  ready: deployment/checkout-api

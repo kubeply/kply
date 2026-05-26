@@ -200,6 +200,8 @@ pub enum DemoCommand {
     Doctor,
     /// Install the baseline local demo resources.
     Install,
+    /// Reset the local demo resources to the baseline state.
+    Reset,
 }
 
 impl DemoCommand {
@@ -208,6 +210,7 @@ impl DemoCommand {
         match self {
             Self::Doctor => "doctor",
             Self::Install => "install",
+            Self::Reset => "reset",
         }
     }
 }

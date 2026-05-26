@@ -1,0 +1,21 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 433
+expression: value
+---
+{
+  "applied_manifests": [
+    "fixtures/demo/ecommerce-basic/manifests/namespace.yaml",
+    "fixtures/demo/ecommerce-basic/manifests/catalog.yaml",
+    "fixtures/demo/ecommerce-basic/manifests/frontend.yaml",
+    "fixtures/demo/ecommerce-basic/manifests/backend.yaml"
+  ],
+  "command": "demo reset",
+  "namespace": "kply-demo",
+  "ready_deployments": [
+    "catalog-api",
+    "storefront-web",
+    "checkout-api"
+  ],
+  "status": "reset"
+}

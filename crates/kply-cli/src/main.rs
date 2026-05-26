@@ -107,6 +107,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Demo {
             command: Some(DemoCommand::Install),
         }) => return demo::install::render_demo_install(&cli),
+        Some(Command::Demo {
+            command: Some(DemoCommand::Reset),
+        }) => return demo::reset::render_demo_reset(&cli),
         Some(command) => {
             if cli.json {
                 let value = serde_json::json!({

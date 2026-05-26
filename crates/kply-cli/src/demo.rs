@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) mod doctor;
 pub(crate) mod install;
+pub(crate) mod reset;
 
 /// Namespace that contains every local demo Kubernetes resource.
 pub(crate) const DEMO_NAMESPACE: &str = "kply-demo";

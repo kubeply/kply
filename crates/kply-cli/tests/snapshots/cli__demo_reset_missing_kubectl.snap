@@ -1,0 +1,9 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 466
+expression: normalize_output(&output)
+---
+kply error: demo reset
+
+kubectl was not found on PATH
+command: kubectl
