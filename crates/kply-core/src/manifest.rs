@@ -711,6 +711,21 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_generated_sandbox_manifest_bundle() {
+        let plan = test_routed_session_plan();
+        let deployment = sandbox_deployment_manifest(&plan).expect("deployment manifest");
+        let service = sandbox_service_manifest(&plan).expect("service manifest");
+        let route = sandbox_route_placeholder_manifest(&plan).expect("route placeholder manifest");
+        let manifests = vec![
+            serde_json::to_value(deployment).expect("deployment should serialize"),
+            serde_json::to_value(service).expect("service should serialize"),
+            serde_json::to_value(route).expect("route placeholder should serialize"),
+        ];
+
+        insta::assert_json_snapshot!("generated_sandbox_manifest_bundle", manifests);
+    }
+
+    #[test]
     fn generates_sandbox_route_placeholder_manifest_for_hostname_selector() {
         let plan = test_labeled_session_plan()
             .with_planned_resources([
