@@ -1,7 +1,0 @@
----
-source: crates/kply-cli/tests/cli.rs
-expression: stderr
----
-kply error: session create
-
-session create --apply is not implemented yet

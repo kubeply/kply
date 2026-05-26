@@ -11,7 +11,7 @@ use kply_core::WorkloadRef;
 pub use kube::config::KubeconfigError;
 use kube::{
     Api, Client, Config, ResourceExt,
-    api::ListParams,
+    api::{ListParams, PostParams},
     config::{KubeConfigOptions, Kubeconfig},
     core::{ApiResource, DynamicObject, GroupVersionKind},
 };
@@ -126,6 +126,105 @@ impl fmt::Display for DiscoveryError {
 }
 
 impl Error for DiscoveryError {}
+
+/// Stable Kubernetes mutation error for users and agents.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MutationError {
+    /// Machine-readable error code.
+    pub code: MutationErrorCode,
+    /// Human-readable remediation-oriented message.
+    pub message: String,
+}
+
+/// Machine-readable Kubernetes mutation error code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationErrorCode {
+    /// Kubeconfig could not be found or read.
+    MissingKubeconfig,
+    /// Kubernetes denied a mutating API request.
+    ForbiddenAccess,
+    /// Kubeconfig was present but invalid or incomplete.
+    KubernetesConfig,
+    /// Kubernetes returned a non-RBAC API error.
+    KubernetesApi,
+}
+
+impl MutationErrorCode {
+    /// Return the stable snake_case string form of this code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingKubeconfig => "missing_kubeconfig",
+            Self::ForbiddenAccess => "forbidden_access",
+            Self::KubernetesConfig => "kubernetes_config",
+            Self::KubernetesApi => "kubernetes_api",
+        }
+    }
+}
+
+impl MutationError {
+    /// Classify kubeconfig resolution errors into user-facing mutation errors.
+    pub fn from_kubeconfig_error(error: &KubeconfigError) -> Self {
+        match error {
+            KubeconfigError::FindPath => Self {
+                code: MutationErrorCode::MissingKubeconfig,
+                message: "kubeconfig was not found; set KUBECONFIG or create ~/.kube/config"
+                    .to_owned(),
+            },
+            KubeconfigError::ReadConfig(_, _) => Self {
+                code: MutationErrorCode::MissingKubeconfig,
+                message: "kubeconfig could not be read at the configured path; set KUBECONFIG or create ~/.kube/config"
+                    .to_owned(),
+            },
+            _ => Self {
+                code: MutationErrorCode::KubernetesConfig,
+                message: format!("kubeconfig could not be resolved: {error}"),
+            },
+        }
+    }
+
+    /// Classify Kubernetes API errors from mutating requests.
+    pub fn from_kubernetes_api_error(operation: &str, error: &kube::Error) -> Self {
+        if let kube::Error::Api(status) = error
+            && (status.code == 401
+                || status.code == 403
+                || status.reason == "Unauthorized"
+                || status.reason == "Forbidden")
+        {
+            let detail = if status.message.is_empty() {
+                "Kubernetes RBAC denied the request".to_owned()
+            } else {
+                status.message.clone()
+            };
+
+            return Self {
+                code: MutationErrorCode::ForbiddenAccess,
+                message: format!("{operation} was forbidden by Kubernetes: {detail}"),
+            };
+        }
+
+        Self {
+            code: MutationErrorCode::KubernetesApi,
+            message: format!("{operation} failed: {error}"),
+        }
+    }
+
+    /// Classify Kubernetes client construction errors from resolved config.
+    pub fn from_kubernetes_client_error(error: &kube::Error) -> Self {
+        Self {
+            code: MutationErrorCode::KubernetesConfig,
+            message: format!("kubernetes client could not be created: {error}"),
+        }
+    }
+}
+
+impl fmt::Display for MutationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.message)
+    }
+}
+
+impl Error for MutationError {}
 
 /// Read-only Kubernetes cluster facts resolved from kubeconfig.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -531,6 +630,23 @@ pub async fn list_deployments(
         .collect::<Vec<_>>();
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(summaries)
+}
+
+/// Create one Deployment in a namespace and return its observed summary.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API create request fails.
+pub async fn create_deployment(
+    client: Client,
+    namespace: &str,
+    deployment: &Deployment,
+) -> Result<DeploymentSummary, kube::Error> {
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    let created = deployments
+        .create(&PostParams::default(), deployment)
+        .await?;
+    Ok(deployment_summary(&created))
 }
 
 /// Return a discovered Deployment summary matching a requested workload.
@@ -1231,6 +1347,19 @@ pub async fn load_kube_config() -> Result<Config, KubeconfigError> {
     load_kube_config_with_options(&KubeConfigOptions::default()).await
 }
 
+/// Load a Kubernetes client using standard kubeconfig conventions.
+///
+/// # Errors
+///
+/// Returns [`MutationError`] when kubeconfig resolution or client construction
+/// fails.
+pub async fn load_kube_client() -> Result<Client, MutationError> {
+    let config = load_kube_config()
+        .await
+        .map_err(|error| MutationError::from_kubeconfig_error(&error))?;
+    Client::try_from(config).map_err(|error| MutationError::from_kubernetes_client_error(&error))
+}
+
 /// Load Kubernetes client config using explicit kubeconfig selection options.
 ///
 /// This keeps context, cluster, and user selection aligned with kube-rs and
@@ -1269,12 +1398,12 @@ mod tests {
         DiscoveryErrorCode, GatewayClassSummary, GatewayListenerSummary, GatewaySummary,
         HttpRouteBackendRefSummary, HttpRouteRuleSummary, HttpRouteSummary, IngressBackendSummary,
         IngressPathSummary, IngressRuleSummary, IngressSummary, IngressTlsSummary,
-        LabelSelectorEntry, OwnerReferenceSummary, PodSummary, ProbeHandlerSummary, ProbeSummary,
-        ResourceQuantitySummary, RouteParentRefSummary, ServicePortSummary, ServiceSummary,
-        deployment_rollout_summary, deployment_summary, gateway_api_resource,
-        gateway_class_summary, gateway_summary, http_route_summary, ingress_summary,
-        load_kube_config_path, load_kube_config_with_options, pod_is_owned_by_workload,
-        pod_summary, require_deployment_workload, service_summary,
+        LabelSelectorEntry, MutationError, MutationErrorCode, OwnerReferenceSummary, PodSummary,
+        ProbeHandlerSummary, ProbeSummary, ResourceQuantitySummary, RouteParentRefSummary,
+        ServicePortSummary, ServiceSummary, deployment_rollout_summary, deployment_summary,
+        gateway_api_resource, gateway_class_summary, gateway_summary, http_route_summary,
+        ingress_summary, load_kube_config_path, load_kube_config_with_options,
+        pod_is_owned_by_workload, pod_summary, require_deployment_workload, service_summary,
     };
     use k8s_openapi::api::apps::v1::{
         Deployment, DeploymentCondition, DeploymentSpec, DeploymentStatus,
@@ -2147,6 +2276,139 @@ current-context: context-a
             DiscoveryErrorCode::MissingWorkload,
             DiscoveryErrorCode::KubernetesConfig,
             DiscoveryErrorCode::KubernetesApi,
+        ];
+
+        for code in codes {
+            let value = serde_json::to_value(code).expect("error code should serialize");
+
+            assert_eq!(value, json!(code.as_str()));
+        }
+    }
+
+    #[tokio::test]
+    async fn classifies_kubeconfig_errors_for_mutations_without_path_leaks() {
+        let workspace = kply_test::temp_workspace();
+        let missing_path = workspace.path().join("missing").join("kubeconfig.yaml");
+
+        let error = load_kube_config_path(&missing_path)
+            .await
+            .expect_err("missing kubeconfig should fail");
+        let mutation_error = MutationError::from_kubeconfig_error(&error);
+
+        assert_eq!(mutation_error.code, MutationErrorCode::MissingKubeconfig);
+        assert_eq!(
+            mutation_error.message,
+            "kubeconfig could not be read at the configured path; set KUBECONFIG or create ~/.kube/config"
+        );
+        assert!(
+            !mutation_error
+                .message
+                .contains(&missing_path.display().to_string()),
+            "mutation errors should not leak local kubeconfig paths"
+        );
+    }
+
+    #[test]
+    fn classifies_forbidden_kubernetes_api_errors_for_mutations() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 403,
+                reason: "Forbidden".to_owned(),
+                message: "deployments.apps is forbidden".to_owned(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let mutation_error = MutationError::from_kubernetes_api_error("create Deployment", &error);
+
+        assert_eq!(mutation_error.code, MutationErrorCode::ForbiddenAccess);
+        assert_eq!(
+            mutation_error.message,
+            "create Deployment was forbidden by Kubernetes: deployments.apps is forbidden"
+        );
+    }
+
+    #[test]
+    fn classifies_empty_forbidden_kubernetes_api_errors_for_mutations() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 401,
+                reason: "Unauthorized".to_owned(),
+                message: String::new(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let mutation_error = MutationError::from_kubernetes_api_error("create Deployment", &error);
+
+        assert_eq!(mutation_error.code, MutationErrorCode::ForbiddenAccess);
+        assert_eq!(
+            mutation_error.message,
+            "create Deployment was forbidden by Kubernetes: Kubernetes RBAC denied the request"
+        );
+    }
+
+    #[test]
+    fn classifies_non_rbac_kubernetes_api_errors_for_mutations() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 500,
+                reason: "InternalError".to_owned(),
+                message: "internal server error".to_owned(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let mutation_error = MutationError::from_kubernetes_api_error("create Deployment", &error);
+
+        assert_eq!(mutation_error.code, MutationErrorCode::KubernetesApi);
+        assert!(
+            mutation_error.message.contains("create Deployment failed"),
+            "non-RBAC mutation API errors should include the operation"
+        );
+    }
+
+    #[test]
+    fn classifies_kubernetes_client_errors_for_mutations() {
+        let error = kube::Error::Api(
+            Status {
+                status: None,
+                code: 400,
+                reason: "BadRequest".to_owned(),
+                message: "client construction failed".to_owned(),
+                metadata: None,
+                details: None,
+            }
+            .boxed(),
+        );
+
+        let mutation_error = MutationError::from_kubernetes_client_error(&error);
+
+        assert_eq!(mutation_error.code, MutationErrorCode::KubernetesConfig);
+        assert!(
+            mutation_error
+                .message
+                .starts_with("kubernetes client could not be created:"),
+            "client construction errors should include a stable prefix"
+        );
+    }
+
+    #[test]
+    fn serializes_mutation_error_codes_like_as_str() {
+        let codes = [
+            MutationErrorCode::MissingKubeconfig,
+            MutationErrorCode::ForbiddenAccess,
+            MutationErrorCode::KubernetesConfig,
+            MutationErrorCode::KubernetesApi,
         ];
 
         for code in codes {

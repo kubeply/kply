@@ -1067,9 +1067,16 @@ fn prints_session_create_json() {
 }
 
 #[test]
-fn rejects_session_create_apply_until_supported() {
+fn rejects_session_create_apply_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
+            .env("KUBECONFIG", missing_kubeconfig)
             .args([
                 "--config",
                 config_path,
@@ -1079,20 +1086,34 @@ fn rejects_session_create_apply_until_supported() {
                 "--apply",
             ])
             .assert()
-            .code(EXIT_BLOCKING)
+            .code(EXIT_USAGE)
             .get_output()
             .clone()
     });
 
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
-    insta::assert_snapshot!("session_create_apply_not_implemented", stderr);
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "mutation errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!(
+        "session_create_apply_missing_kubeconfig",
+        normalize_output(&stderr)
+    );
 }
 
 #[test]
-fn rejects_session_create_apply_until_supported_json() {
+fn rejects_session_create_apply_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
+            .env("KUBECONFIG", missing_kubeconfig)
             .args([
                 "--config",
                 config_path,
@@ -1103,15 +1124,19 @@ fn rejects_session_create_apply_until_supported_json() {
                 "--json",
             ])
             .assert()
-            .code(EXIT_BLOCKING)
+            .code(EXIT_USAGE)
             .get_output()
             .clone()
     });
 
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "mutation JSON errors should not leak the configured kubeconfig path"
+    );
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
-    insta::assert_json_snapshot!("session_create_apply_not_implemented_json", value);
+    insta::assert_json_snapshot!("session_create_apply_missing_kubeconfig_json", value);
 }
 
 #[test]
