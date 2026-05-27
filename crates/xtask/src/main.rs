@@ -48,6 +48,7 @@ fn main() -> Result<()> {
             );
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
+            println!("  check-report-language verify reports do not overclaim deployment safety");
             println!("  check-readme-roadmap-link verify README links the roadmap");
             println!("  check-release-planning verify cargo-dist planning stays non-publishing");
             println!("  check-toolchain-pin verify Rust toolchain pinning");
@@ -87,6 +88,9 @@ fn main() -> Result<()> {
         "check-placeholders" => {
             check_placeholders()?;
         }
+        "check-report-language" => {
+            check_report_language()?;
+        }
         "check-readme-roadmap-link" => {
             check_readme_roadmap_link()?;
         }
@@ -112,6 +116,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-no-secret-content-reads");
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
+            println!("cargo xtask check-report-language");
             println!("cargo xtask check-readme-roadmap-link");
             println!("cargo xtask check-release-planning");
             println!("cargo xtask check-toolchain-pin");
@@ -156,6 +161,13 @@ fn check_module_docs() -> Result<()> {
 fn check_no_secret_content_reads() -> Result<()> {
     let source_paths = collect_crate_sources("crates/kply-k8s/src")?;
     check_no_secret_content_reads_inner(source_paths, forbidden_secret_content_patterns())
+}
+
+fn check_report_language() -> Result<()> {
+    check_report_language_inner(
+        report_language_paths(),
+        forbidden_report_overclaim_phrases(),
+    )
 }
 
 fn check_crate_inventory_docs() -> Result<()> {
@@ -273,6 +285,28 @@ fn forbidden_secret_content_patterns() -> &'static [&'static str] {
         "Api<Secret",
         "Api::<Secret",
         "Secret::",
+    ]
+}
+
+fn forbidden_report_overclaim_phrases() -> &'static [&'static str] {
+    &[
+        "safe to deploy",
+        "production ready",
+        "approved for promotion",
+        "ready for promotion",
+        "ready for approval or promotion",
+    ]
+}
+
+fn report_language_paths() -> &'static [&'static str] {
+    &[
+        "README.md",
+        "docs/architecture.md",
+        "docs/cli.md",
+        "docs/product.md",
+        "docs/report-agent.md",
+        "crates/kply-cli/src/main.rs",
+        "crates/kply-core/src/lib.rs",
     ]
 }
 
@@ -798,6 +832,47 @@ fn check_no_secret_content_reads_inner(
     Ok(())
 }
 
+fn check_report_language_inner(
+    source_paths: impl IntoIterator<Item = impl AsRef<Path>>,
+    forbidden_phrases: &[&str],
+) -> Result<()> {
+    let mut violations = Vec::new();
+
+    for source_path in source_paths {
+        let source_path = source_path.as_ref();
+        let source = std::fs::read_to_string(source_path)
+            .with_context(|| format!("reading report language source {}", source_path.display()))?;
+
+        for (line_index, source_line) in source.lines().enumerate() {
+            let line = line_index + 1;
+            let normalized_line = source_line.to_ascii_lowercase();
+
+            for phrase in forbidden_phrases {
+                if normalized_line.contains(phrase) {
+                    violations.push((
+                        source_path.to_path_buf(),
+                        line,
+                        (*phrase).to_owned(),
+                        source_line.trim().to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        for (source_path, line, phrase, source_line) in &violations {
+            eprintln!(
+                "report language overclaim in {}:{line}: {phrase}: {source_line}",
+                source_path.display()
+            );
+        }
+        bail!("{} report language overclaim(s) found", violations.len());
+    }
+
+    Ok(())
+}
+
 fn strip_rust_comments_and_strings(source: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut sanitized = String::new();
@@ -1285,8 +1360,9 @@ mod tests {
         check_docs_contain, check_fixture_directories_inner, check_fixture_naming_docs_inner,
         check_fixture_testing_docs_inner, check_future_session_docs_inner,
         check_license_files_inner, check_no_secret_content_reads_inner, check_placeholder_sources,
-        check_readme_roadmap_link_inner, check_release_planning_inner, check_toolchain_pin_inner,
-        collect_workspace_members, contains_crate_name, forbidden_secret_content_patterns,
+        check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
+        check_toolchain_pin_inner, collect_workspace_members, contains_crate_name,
+        forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
         has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
     };
 
@@ -1726,6 +1802,38 @@ secret.string_data
 
         check_no_secret_content_reads_inner([&source_path], forbidden_secret_content_patterns())
             .expect("block comments and raw strings should be ignored");
+    }
+
+    #[test]
+    fn accepts_conservative_report_language() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "report.md",
+            "\
+Kply did not report a blocking condition in the available evidence.
+A human still needs to review and promote outside Kply.
+",
+        );
+
+        check_report_language_inner([&source_path], forbidden_report_overclaim_phrases())
+            .expect("conservative report language should pass");
+    }
+
+    #[test]
+    fn rejects_report_overclaim_language() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let source_path = write_source(
+            temp.path(),
+            "report.md",
+            "This change is safe to deploy after the Kply session.\n",
+        );
+
+        let error =
+            check_report_language_inner([&source_path], forbidden_report_overclaim_phrases())
+                .expect_err("deployment approval language should fail");
+
+        assert!(error.to_string().contains("report language overclaim"));
     }
 
     #[test]

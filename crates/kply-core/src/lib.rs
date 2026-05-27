@@ -162,7 +162,7 @@ pub enum SessionStatus {
     Verifying,
     /// The session cannot proceed until an explicit issue is resolved.
     Blocked,
-    /// The session passed checks and is ready for promotion or human approval.
+    /// The session passed available checks and is ready for human review.
     Ready,
     /// Kply has removed the temporary session resources.
     CleanedUp,
@@ -2592,7 +2592,7 @@ impl fmt::Display for SessionReportCleanupStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionReportRecommendedAction {
-    /// Promote outside Kply after human or external promotion approval.
+    /// Start a human-owned promotion path outside Kply.
     PromoteOutsideKply,
     /// Fix the attempted change and retry the session.
     FixAndRetry,
@@ -2975,7 +2975,7 @@ pub enum SessionEventKind {
     Verifying,
     /// The session became blocked.
     Blocked,
-    /// The session became ready for approval or promotion.
+    /// The session passed available checks and became ready for review.
     Ready,
     /// Temporary session resources were cleaned up.
     CleanedUp,
