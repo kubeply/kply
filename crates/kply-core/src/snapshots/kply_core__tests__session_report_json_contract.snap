@@ -3,6 +3,91 @@ source: crates/kply-core/src/lib.rs
 expression: value
 ---
 {
+  "app_graph_summary": {
+    "owned_pod_count": 2,
+    "selecting_services": [
+      {
+        "name": "checkout-api",
+        "namespace": "checkout"
+      },
+      {
+        "name": "checkout-api-private",
+        "namespace": "checkout"
+      }
+    ],
+    "service_routes": [
+      {
+        "route": {
+          "kind": "Ingress",
+          "name": "checkout",
+          "namespace": "checkout"
+        },
+        "service": {
+          "name": "checkout-api",
+          "namespace": "checkout"
+        }
+      },
+      {
+        "route": {
+          "kind": "HTTPRoute",
+          "name": "checkout-api-private",
+          "namespace": "checkout"
+        },
+        "service": {
+          "name": "checkout-api-private",
+          "namespace": "checkout"
+        }
+      }
+    ],
+    "warnings": [
+      {
+        "candidate_workloads": [
+          {
+            "kind": "Deployment",
+            "name": "checkout-api",
+            "namespace": "checkout"
+          },
+          {
+            "kind": "Deployment",
+            "name": "checkout-worker",
+            "namespace": "checkout"
+          }
+        ],
+        "kind": "ambiguous_service_selector",
+        "service": {
+          "name": "checkout-api",
+          "namespace": "checkout"
+        }
+      },
+      {
+        "kind": "missing_route",
+        "service": {
+          "name": "checkout-api-private",
+          "namespace": "checkout"
+        }
+      },
+      {
+        "container": {
+          "name": "worker",
+          "workload": {
+            "kind": "Deployment",
+            "name": "checkout-api",
+            "namespace": "checkout"
+          }
+        },
+        "kind": "missing_probes",
+        "missing_probes": [
+          "readiness",
+          "startup"
+        ]
+      }
+    ],
+    "workload": {
+      "kind": "Deployment",
+      "name": "checkout-api",
+      "namespace": "checkout"
+    }
+  },
   "metadata": {
     "session_id": "session-123",
     "session_name": "checkout-test",

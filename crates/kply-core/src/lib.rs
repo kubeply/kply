@@ -2357,6 +2357,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionReport {
     metadata: SessionReportMetadata,
+    app_graph_summary: Option<SessionReportAppGraphSummary>,
     plan: SessionPlan,
     status: SessionStatus,
 }
@@ -2372,14 +2373,37 @@ impl SessionReport {
 
         Ok(Self {
             metadata,
+            app_graph_summary: None,
             plan,
             status,
         })
     }
 
+    fn with_app_graph_summary_value(
+        mut self,
+        app_graph_summary: SessionReportAppGraphSummary,
+    ) -> Result<Self, SessionReportError> {
+        if app_graph_summary.workload() != self.metadata.workload() {
+            return Err(SessionReportError::AppGraphSummaryMismatch);
+        }
+
+        self.app_graph_summary = Some(app_graph_summary);
+        Ok(self)
+    }
+
+    /// Return a copy of this report with a summarized [`AppGraph`].
+    pub fn with_app_graph_summary(self, app_graph: &AppGraph) -> Result<Self, SessionReportError> {
+        self.with_app_graph_summary_value(SessionReportAppGraphSummary::from_app_graph(app_graph))
+    }
+
     /// Borrow the top-level [`SessionReportMetadata`].
     pub fn metadata(&self) -> &SessionReportMetadata {
         &self.metadata
+    }
+
+    /// Borrow the optional summarized [`AppGraph`].
+    pub fn app_graph_summary(&self) -> Option<&SessionReportAppGraphSummary> {
+        self.app_graph_summary.as_ref()
     }
 
     /// Borrow the original [`SessionPlan`].
@@ -2428,6 +2452,99 @@ impl SessionReportMetadata {
     }
 }
 
+/// Agent-facing summary of the app graph included in a [`SessionReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct SessionReportAppGraphSummary {
+    workload: WorkloadRef,
+    owned_pod_count: usize,
+    selecting_services: Vec<ServiceRef>,
+    service_routes: Vec<ServiceRouteRef>,
+    warnings: Vec<AppGraphWarning>,
+}
+
+impl SessionReportAppGraphSummary {
+    /// Create a [`SessionReportAppGraphSummary`] from deterministic graph parts.
+    pub fn new(
+        workload: WorkloadRef,
+        owned_pod_count: usize,
+        selecting_services: impl IntoIterator<Item = ServiceRef>,
+        service_routes: impl IntoIterator<Item = ServiceRouteRef>,
+        warnings: impl IntoIterator<Item = AppGraphWarning>,
+    ) -> Self {
+        let mut selecting_services = selecting_services.into_iter().collect::<Vec<_>>();
+        selecting_services.sort_unstable();
+        selecting_services.dedup();
+
+        let mut service_routes = service_routes.into_iter().collect::<Vec<_>>();
+        service_routes.sort_unstable();
+        service_routes.dedup();
+
+        let mut warnings = warnings.into_iter().collect::<Vec<_>>();
+        warnings.sort_unstable();
+        warnings.dedup();
+
+        Self {
+            workload,
+            owned_pod_count,
+            selecting_services,
+            service_routes,
+            warnings,
+        }
+    }
+
+    /// Build a [`SessionReportAppGraphSummary`] from an [`AppGraph`].
+    pub fn from_app_graph(app_graph: &AppGraph) -> Self {
+        Self::new(
+            app_graph.workload().clone(),
+            app_graph.owned_pods().len(),
+            app_graph.selecting_services().iter().cloned(),
+            app_graph.service_routes().iter().cloned(),
+            app_graph.warnings().iter().cloned(),
+        )
+    }
+
+    /// Borrow the workload summarized from the app graph.
+    pub fn workload(&self) -> &WorkloadRef {
+        &self.workload
+    }
+
+    /// Return the number of Pods owned by the app graph workload.
+    pub const fn owned_pod_count(&self) -> usize {
+        self.owned_pod_count
+    }
+
+    /// Borrow Services selecting the workload.
+    pub fn selecting_services(&self) -> &[ServiceRef] {
+        &self.selecting_services
+    }
+
+    /// Borrow route references for selected Services.
+    pub fn service_routes(&self) -> &[ServiceRouteRef] {
+        &self.service_routes
+    }
+
+    /// Borrow graph warnings relevant to agent interpretation.
+    pub fn warnings(&self) -> &[AppGraphWarning] {
+        &self.warnings
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionReportAppGraphSummary {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SessionReportAppGraphSummaryFields::deserialize(deserializer)?;
+        Ok(Self::new(
+            fields.workload,
+            fields.owned_pod_count,
+            fields.selecting_services,
+            fields.service_routes,
+            fields.warnings,
+        ))
+    }
+}
+
 /// Error returned when a [`SessionReport`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionReportError {
@@ -2435,6 +2552,8 @@ pub enum SessionReportError {
     NonReportableStatus { status: SessionStatus },
     /// Top-level report metadata must match the nested session plan.
     MetadataMismatch,
+    /// App graph summary must describe the same workload as the session plan.
+    AppGraphSummaryMismatch,
 }
 
 impl fmt::Display for SessionReportError {
@@ -2448,6 +2567,12 @@ impl fmt::Display for SessionReportError {
             }
             Self::MetadataMismatch => {
                 write!(formatter, "session report metadata does not match plan")
+            }
+            Self::AppGraphSummaryMismatch => {
+                write!(
+                    formatter,
+                    "session report app graph summary does not match plan"
+                )
             }
         }
     }
@@ -2493,7 +2618,13 @@ impl<'de> Deserialize<'de> for SessionReport {
             return Err(D::Error::custom(SessionReportError::MetadataMismatch));
         }
 
-        Self::new(fields.plan, fields.status).map_err(D::Error::custom)
+        let report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
+        match fields.app_graph_summary {
+            Some(app_graph_summary) => report
+                .with_app_graph_summary_value(app_graph_summary)
+                .map_err(D::Error::custom),
+            None => Ok(report),
+        }
     }
 }
 
@@ -4077,8 +4208,23 @@ struct RiskNoteFields {
 #[derive(Deserialize)]
 struct SessionReportFields {
     metadata: SessionReportMetadata,
+    #[serde(default)]
+    app_graph_summary: Option<SessionReportAppGraphSummary>,
     plan: SessionPlan,
     status: SessionStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionReportAppGraphSummaryFields {
+    workload: WorkloadRef,
+    owned_pod_count: usize,
+    #[serde(default)]
+    selecting_services: Vec<ServiceRef>,
+    #[serde(default)]
+    service_routes: Vec<ServiceRouteRef>,
+    #[serde(default)]
+    warnings: Vec<AppGraphWarning>,
 }
 
 #[derive(Deserialize)]
@@ -5103,12 +5249,12 @@ mod tests {
         SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
         SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportError, SessionReportMetadata, SessionStatus, SessionTransitionError,
-        TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
-        UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
-        UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        SessionReportAppGraphSummary, SessionReportError, SessionReportMetadata, SessionStatus,
+        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
+        UNSUPPORTED_FEATURE_NAME_MAX_LEN, UNSUPPORTED_FEATURE_REASON_MAX_LEN,
+        UnsupportedFeatureNameError, UnsupportedFeatureReasonError, UnsupportedFeatureWarning,
+        UnsupportedFeatureWarningError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -7621,8 +7767,10 @@ mod tests {
 
     #[test]
     fn round_trips_session_report_json() {
-        let report =
-            SessionReport::new(test_session_plan(), SessionStatus::Ready).expect("session report");
+        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report")
+            .with_app_graph_summary(&test_app_graph())
+            .expect("app graph summary");
         let value = serde_json::to_value(&report).expect("session report should serialize");
         let deserialized: SessionReport =
             serde_json::from_value(value).expect("session report should deserialize");
@@ -7632,11 +7780,59 @@ mod tests {
 
     #[test]
     fn snapshots_session_report_json_contract() {
-        let report =
-            SessionReport::new(test_session_plan(), SessionStatus::Ready).expect("session report");
+        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report")
+            .with_app_graph_summary(&test_app_graph())
+            .expect("app graph summary");
         let value = serde_json::to_value(report).expect("session report should serialize");
 
         insta::assert_json_snapshot!("session_report_json_contract", value);
+    }
+
+    #[test]
+    fn deserializes_session_report_without_app_graph_summary_field() {
+        let report = serde_json::from_value::<SessionReport>(json!({
+            "metadata": {
+                "session_id": "session-123",
+                "session_name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                }
+            },
+            "plan": {
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": null,
+                "policy": {
+                    "allowed_operations": ["inspect"]
+                },
+                "status": "planned"
+            },
+            "status": "ready"
+        }))
+        .expect("legacy session report should deserialize");
+        let expected_plan = SessionPlan::new(
+            SessionId::new("session-123").expect("session id"),
+            SessionName::new("checkout-test").expect("session name"),
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+            SessionPolicy::new([SessionOperation::Inspect]).expect("session policy"),
+        );
+
+        assert_eq!(
+            report,
+            SessionReport::new(expected_plan, SessionStatus::Ready)
+                .expect("session report should be valid")
+        );
+        assert_eq!(report.app_graph_summary(), None);
     }
 
     #[test]
@@ -7651,6 +7847,7 @@ mod tests {
                     "name": "checkout-api"
                 }
             },
+            "app_graph_summary": null,
             "plan": {
                 "id": "session-123",
                 "name": "checkout-test",
@@ -7685,6 +7882,7 @@ mod tests {
                     "name": "checkout-api"
                 }
             },
+            "app_graph_summary": null,
             "plan": {
                 "id": "session-123",
                 "name": "checkout-test",
@@ -7705,6 +7903,55 @@ mod tests {
         .expect_err("mismatched report metadata should be rejected");
 
         assert!(error.to_string().contains("metadata does not match"));
+    }
+
+    #[test]
+    fn rejects_session_report_json_with_mismatched_app_graph_summary() {
+        let error = serde_json::from_value::<SessionReport>(json!({
+            "metadata": {
+                "session_id": "session-123",
+                "session_name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                }
+            },
+            "app_graph_summary": {
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-worker"
+                },
+                "owned_pod_count": 0,
+                "selecting_services": [],
+                "service_routes": [],
+                "warnings": []
+            },
+            "plan": {
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": null,
+                "policy": {
+                    "allowed_operations": ["inspect"]
+                },
+                "status": "planned"
+            },
+            "status": "ready"
+        }))
+        .expect_err("mismatched app graph summary should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("app graph summary does not match")
+        );
     }
 
     #[test]
@@ -8055,9 +8302,45 @@ mod tests {
                 SessionReport::new(plan.clone(), status).expect("session report should be valid");
 
             assert_eq!(report.metadata(), &SessionReportMetadata::from_plan(&plan));
+            assert_eq!(report.app_graph_summary(), None);
             assert_eq!(report.plan(), &plan);
             assert_eq!(report.status(), status);
         }
+    }
+
+    #[test]
+    fn creates_session_report_with_app_graph_summary() {
+        let app_graph = test_app_graph();
+        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report should be valid")
+            .with_app_graph_summary(&app_graph)
+            .expect("matching app graph summary should be valid");
+        let summary = report
+            .app_graph_summary()
+            .expect("app graph summary should be present");
+
+        assert_eq!(
+            summary,
+            &SessionReportAppGraphSummary::from_app_graph(&app_graph)
+        );
+        assert_eq!(summary.workload(), app_graph.workload());
+        assert_eq!(summary.owned_pod_count(), app_graph.owned_pods().len());
+        assert_eq!(summary.selecting_services(), app_graph.selecting_services());
+        assert_eq!(summary.service_routes(), app_graph.service_routes());
+        assert_eq!(summary.warnings(), app_graph.warnings());
+    }
+
+    #[test]
+    fn rejects_session_report_app_graph_summary_for_other_workload() {
+        let app_graph = AppGraph::new(
+            WorkloadRef::new("checkout", "Deployment", "checkout-worker").expect("workload ref"),
+        );
+        let error = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report should be valid")
+            .with_app_graph_summary(&app_graph)
+            .expect_err("app graph summary workload should match session plan");
+
+        assert_eq!(error, SessionReportError::AppGraphSummaryMismatch);
     }
 
     #[test]
