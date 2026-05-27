@@ -3090,10 +3090,11 @@ mod tests {
         planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
         planned_session_resources, planned_session_risk_notes, render_check_evidence,
         render_check_run_json_report, render_check_run_text_report, required_session_permissions,
-        resolve_session_route_strategy, route_strategy_creates_route_object,
-        route_strategy_has_route_check, route_strategy_uses_preview_service,
-        session_plan_from_config, session_state_annotations, session_state_check_status,
-        session_token, unsupported_session_feature_warnings, workload_permission_resource,
+        resolve_session_route_strategy, route_cleanup_from_session,
+        route_strategy_creates_route_object, route_strategy_has_route_check,
+        route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
+        session_state_check_status, session_token, unsupported_session_feature_warnings,
+        workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{CheckResultStatus, ImageRef, SessionPlan, SessionStatus, WorkloadRef};
@@ -3101,6 +3102,7 @@ mod tests {
         DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, MutationError,
         MutationErrorCode, ServiceSummary, SessionSummary,
     };
+    use std::collections::BTreeMap;
 
     #[test]
     fn preserves_session_token_suffix_for_long_app_names() {
@@ -4051,6 +4053,50 @@ mod tests {
         assert_eq!(none_steps.len(), 2);
         assert_eq!(none_steps[0].action(), "delete_service");
         assert_eq!(none_steps[1].action(), "delete_workload");
+    }
+
+    #[test]
+    fn builds_route_cleanup_for_session_route_object() {
+        let cleanup = route_cleanup_from_session("checkout-plan", Some("shop"))
+            .expect("route cleanup should be planned");
+
+        assert_eq!(cleanup.session_id, "checkout-plan");
+        assert_eq!(cleanup.status, "planned");
+        assert_eq!(cleanup.mutation, "not_applied");
+        assert!(!cleanup.cleanup);
+        assert_eq!(cleanup.route_kind, "HTTPRoute");
+        let target = cleanup
+            .cleanup_target
+            .expect("namespaced cleanup should include a route target");
+        assert_eq!(target.api_version, "gateway.networking.k8s.io/v1");
+        assert_eq!(target.kind, "HTTPRoute");
+        assert_eq!(target.namespace, "shop");
+        assert_eq!(target.name, "checkout-plan-route");
+        assert_eq!(
+            target.selector.match_labels,
+            BTreeMap::from([
+                ("kply.dev/managed-by".to_owned(), "kply".to_owned()),
+                ("kply.dev/session-id".to_owned(), "checkout-plan".to_owned()),
+            ])
+        );
+        assert_eq!(cleanup.cleanup_selector, target.selector);
+    }
+
+    #[test]
+    fn builds_route_cleanup_selector_without_namespace_target() {
+        let cleanup = route_cleanup_from_session("checkout-plan", None)
+            .expect("route cleanup should be planned without namespace");
+
+        assert_eq!(cleanup.session_id, "checkout-plan");
+        assert_eq!(cleanup.route_kind, "HTTPRoute");
+        assert!(cleanup.cleanup_target.is_none());
+        assert_eq!(
+            cleanup.cleanup_selector.match_labels,
+            BTreeMap::from([
+                ("kply.dev/managed-by".to_owned(), "kply".to_owned()),
+                ("kply.dev/session-id".to_owned(), "checkout-plan".to_owned()),
+            ])
+        );
     }
 
     #[test]
