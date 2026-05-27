@@ -199,7 +199,8 @@ Current provisional pre-`1.0.0` routing capability detection fields:
 - `ingress`: Ingress inventory detected in the target namespace, including
   Ingress names, class names, hostnames, and backend Service names. Ingress
   planning is provisionally implemented for ingress-nginx header canary routes
-  when the source Ingress class is `nginx`, `ingress-nginx`, or `nginx-ingress`.
+  and Traefik `IngressRoute` manifests when the source Ingress class is
+  explicitly supported.
 - `preview_service_available`: boolean indicating that direct preview Service
   checks can be considered as an explicit fallback.
 - `candidate_strategies`: deterministic list of route strategies with enough
@@ -218,6 +219,16 @@ Current provisional pre-`1.0.0` NGINX Ingress planning behavior:
   `ingress-nginx`, or `nginx-ingress`.
 - Only header-selected sandbox traffic is planned. The generated manifest adds
   ingress-nginx canary annotations for the configured header name and value.
+- Host/path rules are mirrored from the source `Ingress`, but backends point to
+  the sandbox Service. Production `Ingress` resources are not patched.
+
+Current provisional pre-`1.0.0` Traefik IngressRoute planning behavior:
+
+- `kply-routing` can generate a session-owned Traefik `IngressRoute` manifest
+  from an existing source `Ingress`.
+- The source `Ingress` must declare an IngressClass name of `traefik`.
+- Only header-selected sandbox traffic is planned. The generated route match
+  combines the mirrored host/path rule with Traefik's `Header` matcher.
 - Host/path rules are mirrored from the source `Ingress`, but backends point to
   the sandbox Service. Production `Ingress` resources are not patched.
 

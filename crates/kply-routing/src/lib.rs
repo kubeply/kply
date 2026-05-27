@@ -19,6 +19,9 @@ const GATEWAY_KIND: &str = "Gateway";
 const INGRESS_API_VERSION: &str = "networking.k8s.io/v1";
 const INGRESS_KIND: &str = "Ingress";
 const SERVICE_KIND: &str = "Service";
+const TRAEFIK_API_VERSION: &str = "traefik.io/v1alpha1";
+const TRAEFIK_INGRESS_ROUTE_KIND: &str = "IngressRoute";
+const TRAEFIK_RULE_KIND: &str = "Rule";
 const NGINX_CANARY_ANNOTATION: &str = "nginx.ingress.kubernetes.io/canary";
 const NGINX_CANARY_BY_HEADER_ANNOTATION: &str = "nginx.ingress.kubernetes.io/canary-by-header";
 const NGINX_CANARY_BY_HEADER_VALUE_ANNOTATION: &str =
@@ -280,6 +283,25 @@ pub struct NginxIngressRoutePlanInput<'a> {
     pub annotations: &'a [MetadataEntry],
 }
 
+/// Input for planning a temporary Traefik IngressRoute.
+#[derive(Clone, Copy, Debug)]
+pub struct TraefikIngressRoutePlanInput<'a> {
+    /// Existing Traefik Ingress whose HTTP rules should be mirrored.
+    pub source_ingress: &'a IngressSummary,
+    /// Planned IngressRoute resource to create for the sandbox session.
+    pub route: &'a KubernetesResourceRef,
+    /// Service backend that should receive matching sandbox traffic.
+    pub backend_service: &'a KubernetesResourceRef,
+    /// Backend Service port used by the temporary route.
+    pub backend_port: &'a str,
+    /// Request selector that isolates sandbox traffic from normal users.
+    pub selector: &'a RouteSelector,
+    /// Metadata labels to attach to the temporary IngressRoute.
+    pub labels: &'a [MetadataEntry],
+    /// Metadata annotations to attach to the temporary IngressRoute.
+    pub annotations: &'a [MetadataEntry],
+}
+
 /// Temporary Gateway API HTTPRoute manifest for a sandbox session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -306,6 +328,20 @@ pub struct NginxIngressCanaryManifest {
     pub metadata: NginxIngressCanaryMetadata,
     /// Kubernetes Ingress specification for mirrored canary routing.
     pub spec: NginxIngressCanarySpec,
+}
+
+/// Temporary Traefik IngressRoute manifest for a sandbox session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraefikIngressRouteManifest {
+    /// Traefik CRD API version for the IngressRoute resource.
+    pub api_version: &'static str,
+    /// Kubernetes resource kind for this manifest.
+    pub kind: &'static str,
+    /// Kubernetes metadata for the generated IngressRoute.
+    pub metadata: TraefikIngressRouteMetadata,
+    /// Traefik IngressRoute specification for mirrored sandbox routing.
+    pub spec: TraefikIngressRouteSpec,
 }
 
 /// Kubernetes metadata for a temporary Gateway API HTTPRoute.
@@ -338,6 +374,21 @@ pub struct NginxIngressCanaryMetadata {
     pub annotations: BTreeMap<String, String>,
 }
 
+/// Kubernetes metadata for a temporary Traefik IngressRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TraefikIngressRouteMetadata {
+    /// Namespace that contains the temporary IngressRoute.
+    pub namespace: String,
+    /// Name of the temporary IngressRoute.
+    pub name: String,
+    /// Labels attached to the temporary IngressRoute.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// Annotations attached to the temporary IngressRoute.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub annotations: BTreeMap<String, String>,
+}
+
 /// Gateway API HTTPRoute spec for a sandbox session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -359,6 +410,16 @@ pub struct NginxIngressCanarySpec {
     pub ingress_class_name: String,
     /// HTTP host/path rules mirrored from the source Ingress.
     pub rules: Vec<NginxIngressCanaryRule>,
+}
+
+/// Traefik IngressRoute spec for sandbox traffic.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraefikIngressRouteSpec {
+    /// IngressClass copied from the source Traefik Ingress.
+    pub ingress_class_name: String,
+    /// Routing rules that forward matching traffic to the sandbox backend.
+    pub routes: Vec<TraefikIngressRouteRule>,
 }
 
 /// Gateway API parent reference for a temporary HTTPRoute.
@@ -434,6 +495,37 @@ pub enum NginxIngressCanaryServicePort {
         /// Service port name.
         name: String,
     },
+}
+
+/// Traefik IngressRoute rule for sandbox traffic.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TraefikIngressRouteRule {
+    /// Traefik rule kind.
+    pub kind: &'static str,
+    /// Traefik router match expression.
+    #[serde(rename = "match")]
+    pub match_rule: String,
+    /// Service backends receiving the matched traffic.
+    pub services: Vec<TraefikIngressRouteService>,
+}
+
+/// Service backend for a temporary Traefik IngressRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TraefikIngressRouteService {
+    /// Backend Service name.
+    pub name: String,
+    /// Backend Service port.
+    pub port: TraefikIngressRouteServicePort,
+}
+
+/// Service port for a temporary Traefik IngressRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum TraefikIngressRouteServicePort {
+    /// Numeric Service port.
+    Number(u16),
+    /// Named Service port.
+    Name(String),
 }
 
 /// Gateway API HTTPRoute rule for sandbox traffic.
@@ -549,6 +641,32 @@ pub enum NginxIngressRoutePlanError {
     MissingHttpPaths,
     /// The backend Service port is empty or invalid.
     BackendPort { port: String },
+    /// A required route ownership label is missing.
+    MissingOwnershipLabel { key: &'static str },
+}
+
+/// Error returned while planning a temporary Traefik IngressRoute.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TraefikIngressRoutePlanError {
+    /// The planned route resource is not an IngressRoute.
+    RouteKind { kind: String },
+    /// The backend resource is not a Service.
+    BackendKind { kind: String },
+    /// The backend Service requires unsupported cross-namespace routing.
+    BackendNamespace {
+        route_namespace: String,
+        backend_namespace: String,
+    },
+    /// The source Ingress is not explicitly owned by Traefik.
+    UnsupportedIngressClass { class_name: Option<String> },
+    /// The route selector is not a header selector.
+    HeaderSelectorRequired { kind: String },
+    /// The source Ingress does not have HTTP paths to mirror.
+    MissingHttpPaths,
+    /// The backend Service port is empty or invalid.
+    BackendPort { port: String },
+    /// A Traefik rule literal cannot be represented safely.
+    UnsafeRuleLiteral { value: String },
     /// A required route ownership label is missing.
     MissingOwnershipLabel { key: &'static str },
 }
@@ -672,6 +790,65 @@ impl fmt::Display for NginxIngressRoutePlanError {
 }
 
 impl Error for NginxIngressRoutePlanError {}
+
+impl fmt::Display for TraefikIngressRoutePlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RouteKind { kind } => {
+                write!(
+                    formatter,
+                    "expected IngressRoute route resource, found {kind}"
+                )
+            }
+            Self::BackendKind { kind } => {
+                write!(formatter, "expected Service backend resource, found {kind}")
+            }
+            Self::BackendNamespace {
+                route_namespace,
+                backend_namespace,
+            } => write!(
+                formatter,
+                "IngressRoute backend service must be in route namespace {route_namespace}, found {backend_namespace}"
+            ),
+            Self::UnsupportedIngressClass { class_name } => match class_name {
+                Some(class_name) => {
+                    write!(
+                        formatter,
+                        "expected Traefik IngressClass, found {class_name}"
+                    )
+                }
+                None => write!(
+                    formatter,
+                    "expected explicit Traefik IngressClass, found none"
+                ),
+            },
+            Self::HeaderSelectorRequired { kind } => {
+                write!(formatter, "expected header route selector, found {kind}")
+            }
+            Self::MissingHttpPaths => write!(
+                formatter,
+                "source Ingress has no HTTP paths to mirror for Traefik routing"
+            ),
+            Self::BackendPort { port } => {
+                write!(formatter, "backend Service port is invalid: {port}")
+            }
+            Self::UnsafeRuleLiteral { value } => {
+                write!(
+                    formatter,
+                    "Traefik rule literal cannot be represented safely: {value}"
+                )
+            }
+            Self::MissingOwnershipLabel { key } => {
+                write!(
+                    formatter,
+                    "Traefik IngressRoute is missing ownership label `{key}`"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TraefikIngressRoutePlanError {}
 
 /// Detect Gateway API routing inventory from Kubernetes discovery summaries.
 pub fn detect_gateway_api_resources(
@@ -836,6 +1013,39 @@ pub fn generate_nginx_ingress_canary_manifest(
     })
 }
 
+/// Generate a temporary Traefik IngressRoute manifest for sandbox traffic.
+///
+/// The generated manifest mirrors source Ingress host/path rules and adds a
+/// Traefik `Header` matcher so only matching agent traffic reaches the sandbox
+/// backend.
+pub fn generate_traefik_ingress_route_manifest(
+    input: TraefikIngressRoutePlanInput<'_>,
+) -> Result<TraefikIngressRouteManifest, TraefikIngressRoutePlanError> {
+    validate_traefik_ingress_route_plan_input(input)?;
+
+    Ok(TraefikIngressRouteManifest {
+        api_version: TRAEFIK_API_VERSION,
+        kind: TRAEFIK_INGRESS_ROUTE_KIND,
+        metadata: TraefikIngressRouteMetadata {
+            namespace: input.route.namespace().to_owned(),
+            name: input.route.name().to_owned(),
+            labels: traefik_ingress_route_labels(input.labels)?,
+            annotations: metadata_entries_to_map(input.annotations),
+        },
+        spec: TraefikIngressRouteSpec {
+            ingress_class_name: input.source_ingress.ingress_class_name.clone().ok_or(
+                TraefikIngressRoutePlanError::UnsupportedIngressClass { class_name: None },
+            )?,
+            routes: traefik_ingress_route_rules(
+                input.source_ingress,
+                input.backend_service,
+                input.backend_port,
+                input.selector,
+            )?,
+        },
+    })
+}
+
 /// Generate a [`GatewayHttpRouteCleanupTarget`] for a temporary Gateway API HTTPRoute.
 ///
 /// The cleanup target is derived from a [`KubernetesResourceRef`] and ownership
@@ -944,6 +1154,51 @@ fn validate_nginx_ingress_route_plan_input(
     Ok(())
 }
 
+/// Validate typed inputs used to plan a Traefik IngressRoute.
+fn validate_traefik_ingress_route_plan_input(
+    input: TraefikIngressRoutePlanInput<'_>,
+) -> Result<(), TraefikIngressRoutePlanError> {
+    if input.route.kind() != TRAEFIK_INGRESS_ROUTE_KIND {
+        return Err(TraefikIngressRoutePlanError::RouteKind {
+            kind: input.route.kind().to_owned(),
+        });
+    }
+    if input.backend_service.kind() != SERVICE_KIND {
+        return Err(TraefikIngressRoutePlanError::BackendKind {
+            kind: input.backend_service.kind().to_owned(),
+        });
+    }
+    if input.route.namespace() != input.backend_service.namespace() {
+        return Err(TraefikIngressRoutePlanError::BackendNamespace {
+            route_namespace: input.route.namespace().to_owned(),
+            backend_namespace: input.backend_service.namespace().to_owned(),
+        });
+    }
+    if !is_traefik_ingress_class(input.source_ingress.ingress_class_name.as_deref()) {
+        return Err(TraefikIngressRoutePlanError::UnsupportedIngressClass {
+            class_name: input.source_ingress.ingress_class_name.clone(),
+        });
+    }
+    if let Some((header_name, header_value)) = input.selector.header_parts() {
+        validate_traefik_rule_literal(header_name)?;
+        validate_traefik_rule_literal(header_value)?;
+    } else {
+        return Err(TraefikIngressRoutePlanError::HeaderSelectorRequired {
+            kind: input.selector.kind().to_owned(),
+        });
+    }
+    if traefik_service_port(input.backend_port).is_none() {
+        return Err(TraefikIngressRoutePlanError::BackendPort {
+            port: input.backend_port.to_owned(),
+        });
+    }
+    if !ingress_has_http_paths(input.source_ingress) {
+        return Err(TraefikIngressRoutePlanError::MissingHttpPaths);
+    }
+
+    Ok(())
+}
+
 /// Return the safe label set for generated Gateway API routes.
 fn route_labels(
     labels: &[MetadataEntry],
@@ -963,6 +1218,19 @@ fn nginx_ingress_labels(
 ) -> Result<BTreeMap<String, String>, NginxIngressRoutePlanError> {
     let labels = metadata_entries_to_map(labels);
     ensure_nginx_ingress_ownership_labels(&labels)?;
+
+    Ok(labels
+        .into_iter()
+        .filter(|(key, _)| should_preserve_route_label(key))
+        .collect())
+}
+
+/// Return the safe label set for generated Traefik IngressRoutes.
+fn traefik_ingress_route_labels(
+    labels: &[MetadataEntry],
+) -> Result<BTreeMap<String, String>, TraefikIngressRoutePlanError> {
+    let labels = metadata_entries_to_map(labels);
+    ensure_traefik_ingress_route_ownership_labels(&labels)?;
 
     Ok(labels
         .into_iter()
@@ -990,6 +1258,19 @@ fn ensure_nginx_ingress_ownership_labels(
     for key in REQUIRED_OWNERSHIP_LABELS {
         if !labels.contains_key(key) {
             return Err(NginxIngressRoutePlanError::MissingOwnershipLabel { key });
+        }
+    }
+
+    Ok(())
+}
+
+/// Ensure all Traefik IngressRoute ownership labels are present.
+fn ensure_traefik_ingress_route_ownership_labels(
+    labels: &BTreeMap<String, String>,
+) -> Result<(), TraefikIngressRoutePlanError> {
+    for key in REQUIRED_OWNERSHIP_LABELS {
+        if !labels.contains_key(key) {
+            return Err(TraefikIngressRoutePlanError::MissingOwnershipLabel { key });
         }
     }
 
@@ -1118,6 +1399,100 @@ fn nginx_canary_rules(
     Ok(rules)
 }
 
+/// Return Traefik IngressRoute rules from a source Ingress.
+fn traefik_ingress_route_rules(
+    source_ingress: &IngressSummary,
+    backend_service: &KubernetesResourceRef,
+    backend_port: &str,
+    selector: &RouteSelector,
+) -> Result<Vec<TraefikIngressRouteRule>, TraefikIngressRoutePlanError> {
+    let (header_name, header_value) = selector.header_parts().ok_or_else(|| {
+        TraefikIngressRoutePlanError::HeaderSelectorRequired {
+            kind: selector.kind().to_owned(),
+        }
+    })?;
+    let port = traefik_service_port(backend_port).ok_or_else(|| {
+        TraefikIngressRoutePlanError::BackendPort {
+            port: backend_port.to_owned(),
+        }
+    })?;
+
+    let mut routes = Vec::new();
+    for rule in &source_ingress.rules {
+        if let Some(host) = rule.host.as_deref() {
+            validate_traefik_rule_literal(host)?;
+        }
+
+        for path in rule.paths.iter().filter(|path| path.backend.is_some()) {
+            if let Some(path_value) = path.path.as_deref() {
+                validate_traefik_rule_literal(path_value)?;
+            }
+
+            routes.push(TraefikIngressRouteRule {
+                kind: TRAEFIK_RULE_KIND,
+                match_rule: traefik_match_rule(
+                    rule.host.as_deref(),
+                    path.path.as_deref(),
+                    path.path_type.as_deref(),
+                    header_name,
+                    header_value,
+                ),
+                services: vec![TraefikIngressRouteService {
+                    name: backend_service.name().to_owned(),
+                    port: port.clone(),
+                }],
+            });
+        }
+    }
+
+    if routes.is_empty() {
+        return Err(TraefikIngressRoutePlanError::MissingHttpPaths);
+    }
+
+    Ok(routes)
+}
+
+/// Return a Traefik match expression for a mirrored Ingress path.
+fn traefik_match_rule(
+    host: Option<&str>,
+    path: Option<&str>,
+    path_type: Option<&str>,
+    header_name: &str,
+    header_value: &str,
+) -> String {
+    let mut matchers = Vec::new();
+    if let Some(host) = host {
+        matchers.push(format!("Host(`{host}`)"));
+    }
+    if let Some(path) = path {
+        let matcher = if path_type.is_some_and(|path_type| path_type.eq_ignore_ascii_case("Exact"))
+        {
+            "Path"
+        } else {
+            "PathPrefix"
+        };
+        matchers.push(format!("{matcher}(`{path}`)"));
+    }
+    matchers.push(format!("Header(`{header_name}`, `{header_value}`)"));
+
+    matchers.join(" && ")
+}
+
+/// Validate a value before embedding it in a Traefik backtick rule literal.
+fn validate_traefik_rule_literal(value: &str) -> Result<(), TraefikIngressRoutePlanError> {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|character| character == '`' || character == '\\' || character.is_control())
+    {
+        return Err(TraefikIngressRoutePlanError::UnsafeRuleLiteral {
+            value: value.to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
 /// Return true when the source Ingress has at least one HTTP path backend.
 fn ingress_has_http_paths(source_ingress: &IngressSummary) -> bool {
     source_ingress
@@ -1135,6 +1510,11 @@ fn is_nginx_ingress_class(class_name: Option<&str>) -> bool {
     })
 }
 
+/// Return true when the Ingress class clearly belongs to Traefik.
+fn is_traefik_ingress_class(class_name: Option<&str>) -> bool {
+    class_name.is_some_and(|class_name| class_name.eq_ignore_ascii_case("traefik"))
+}
+
 /// Convert a Service port string into a Kubernetes Ingress backend port.
 fn service_port(port: &str) -> Option<NginxIngressCanaryServicePort> {
     if port.is_empty() {
@@ -1147,6 +1527,19 @@ fn service_port(port: &str) -> Option<NginxIngressCanaryServicePort> {
         Err(_) => Some(NginxIngressCanaryServicePort::Name {
             name: port.to_owned(),
         }),
+    }
+}
+
+/// Convert a Service port string into a Traefik IngressRoute backend port.
+fn traefik_service_port(port: &str) -> Option<TraefikIngressRouteServicePort> {
+    if port.is_empty() {
+        return None;
+    }
+
+    match port.parse::<u16>() {
+        Ok(number) if number > 0 => Some(TraefikIngressRouteServicePort::Number(number)),
+        Ok(_) => None,
+        Err(_) => Some(TraefikIngressRouteServicePort::Name(port.to_owned())),
     }
 }
 
@@ -1502,10 +1895,11 @@ mod tests {
         GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus, IngressRouteDetection,
         NginxIngressRoutePlanError, NginxIngressRoutePlanInput, RouteStrategy,
         RoutingCapabilityDetection, RoutingCapabilityInput, RoutingCapabilityLimitation,
-        detect_gateway_api_resources, detect_routing_capabilities,
-        gateway_http_route_cleanup_target, gateway_route_cleanup_selector,
-        generate_gateway_header_http_route_manifest, generate_gateway_host_http_route_manifest,
-        generate_gateway_http_route_manifest, generate_nginx_ingress_canary_manifest,
+        TraefikIngressRoutePlanError, TraefikIngressRoutePlanInput, detect_gateway_api_resources,
+        detect_routing_capabilities, gateway_http_route_cleanup_target,
+        gateway_route_cleanup_selector, generate_gateway_header_http_route_manifest,
+        generate_gateway_host_http_route_manifest, generate_gateway_http_route_manifest,
+        generate_nginx_ingress_canary_manifest, generate_traefik_ingress_route_manifest,
         model_gateway_route_capabilities,
     };
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
@@ -2078,6 +2472,179 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, NginxIngressRoutePlanError::MissingHttpPaths);
+    }
+
+    #[test]
+    /// Generates a Traefik IngressRoute manifest with header-selected sandbox routing.
+    fn generates_traefik_ingress_route_manifest() {
+        let source = ingress("shop", "checkout", Some("traefik"));
+        let route = resource("shop", "IngressRoute", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+        let labels = ownership_labels();
+        let annotations = vec![MetadataEntry::new("kply.dev/route-strategy", "traefik").unwrap()];
+
+        let manifest = generate_traefik_ingress_route_manifest(TraefikIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &labels,
+            annotations: &annotations,
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(manifest).unwrap(),
+            json!({
+                "apiVersion": "traefik.io/v1alpha1",
+                "kind": "IngressRoute",
+                "metadata": {
+                    "namespace": "shop",
+                    "name": "checkout-session-123",
+                    "labels": {
+                        "kply.dev/app": "checkout",
+                        "kply.dev/managed-by": "kply",
+                        "kply.dev/session-id": "session-123",
+                        "kply.dev/session-name": "checkout-test"
+                    },
+                    "annotations": {
+                        "kply.dev/route-strategy": "traefik"
+                    }
+                },
+                "spec": {
+                    "ingressClassName": "traefik",
+                    "routes": [
+                        {
+                            "kind": "Rule",
+                            "match": "Host(`checkout.example.com`) && PathPrefix(`/`) && Header(`x-kply-session`, `session-123`)",
+                            "services": [
+                                {
+                                    "name": "checkout-sandbox",
+                                    "port": 8080
+                                }
+                            ]
+                        }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[test]
+    /// Generates a Traefik IngressRoute manifest with a named Service port.
+    fn generates_traefik_ingress_route_manifest_with_named_port() {
+        let source = ingress("shop", "checkout", Some("traefik"));
+        let route = resource("shop", "IngressRoute", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let manifest = generate_traefik_ingress_route_manifest(TraefikIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "http",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&manifest.spec.routes[0].services[0].port).unwrap(),
+            json!("http")
+        );
+    }
+
+    #[test]
+    /// Rejects Traefik IngressRoute planning for non-Traefik Ingress classes.
+    fn rejects_traefik_ingress_route_manifest_for_non_traefik_class() {
+        let source = ingress("shop", "checkout", Some("nginx"));
+        let route = resource("shop", "IngressRoute", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_traefik_ingress_route_manifest(TraefikIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            TraefikIngressRoutePlanError::UnsupportedIngressClass {
+                class_name: Some("nginx".to_owned())
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected Traefik IngressClass, found nginx"
+        );
+    }
+
+    #[test]
+    /// Rejects Traefik IngressRoute planning for non-header selectors.
+    fn rejects_traefik_ingress_route_manifest_for_host_selector() {
+        let source = ingress("shop", "checkout", Some("traefik"));
+        let route = resource("shop", "IngressRoute", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+
+        let error = generate_traefik_ingress_route_manifest(TraefikIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            TraefikIngressRoutePlanError::HeaderSelectorRequired {
+                kind: "host".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected header route selector, found host"
+        );
+    }
+
+    #[test]
+    /// Rejects Traefik IngressRoute planning when a rule literal is unsafe.
+    fn rejects_traefik_ingress_route_manifest_for_unsafe_rule_literal() {
+        let mut source = ingress("shop", "checkout", Some("traefik"));
+        source.rules[0].host = Some("checkout`bad.example.com".to_owned());
+        let route = resource("shop", "IngressRoute", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_traefik_ingress_route_manifest(TraefikIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            TraefikIngressRoutePlanError::UnsafeRuleLiteral {
+                value: "checkout`bad.example.com".to_owned()
+            }
+        );
     }
 
     #[test]
