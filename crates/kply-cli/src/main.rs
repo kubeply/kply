@@ -9,7 +9,7 @@ use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Service;
 use kply_cli::cli::{
     AppCommand, CheckCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand,
-    ReportCommand, RouteCommand, SessionCommand,
+    ReportCommand, ReportExportFormat, RouteCommand, SessionCommand,
 };
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
@@ -214,9 +214,9 @@ fn run() -> Result<ExitCode> {
                 Some(ReportCommand::Export {
                     session,
                     namespace,
-                    format: _,
+                    format,
                 }),
-        }) => return render_report_export(&cli, session, namespace.as_deref()),
+        }) => return render_report_export(session, namespace.as_deref(), *format),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -546,7 +546,11 @@ fn render_report_show(cli: &Cli, session: &str, namespace: Option<&str>) -> Resu
 }
 
 /// Render the JSON report export surface for one sandbox session.
-fn render_report_export(_cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+fn render_report_export(
+    session: &str,
+    namespace: Option<&str>,
+    format: ReportExportFormat,
+) -> Result<ExitCode> {
     let session_id = match SessionId::new(session) {
         Ok(session_id) => session_id,
         Err(error) => return render_report_export_error(&error.to_string()),
@@ -568,7 +572,12 @@ fn render_report_export(_cli: &Cli, session: &str, namespace: Option<&str>) -> R
     };
     let unavailable = report_show_unavailable_from_session(&session);
 
-    println!("{}", serde_json::to_string_pretty(&unavailable)?);
+    match format {
+        ReportExportFormat::Json => println!("{}", serde_json::to_string_pretty(&unavailable)?),
+        ReportExportFormat::Markdown => {
+            println!("{}", render_report_unavailable_markdown(&unavailable))
+        }
+    }
 
     Ok(ExitCode::SUCCESS)
 }
@@ -986,6 +995,27 @@ fn report_show_unavailable_from_session(session: &SessionSummary) -> ReportShowU
         report: "not_available",
         reason: "session_report_persistence_not_implemented",
     }
+}
+
+/// Render a deterministic Markdown report availability response.
+fn render_report_unavailable_markdown(report: &ReportShowUnavailable) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::new();
+    writeln!(output, "# Kply Session Report").expect("writing report markdown should not fail");
+    writeln!(output).expect("writing report markdown should not fail");
+    writeln!(output, "- Session: `{}`", report.session_id)
+        .expect("writing report markdown should not fail");
+    writeln!(output, "- Namespace: `{}`", report.namespace)
+        .expect("writing report markdown should not fail");
+    writeln!(output, "- Session status: `{}`", report.session_status)
+        .expect("writing report markdown should not fail");
+    writeln!(output, "- Report: `{}`", report.report)
+        .expect("writing report markdown should not fail");
+    writeln!(output, "- Reason: `{}`", report.reason)
+        .expect("writing report markdown should not fail");
+
+    output
 }
 
 /// Return the check status for discovered session lifecycle metadata.
@@ -3215,14 +3245,14 @@ fn print_verbose_trace(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::{
-        CheckRunItem, CheckRunReport, CheckRunStatusCounts, SessionCreateApplyError,
-        SessionPlanBuildError, SessionStateRecordError, apply_session_resources,
-        check_run_report_from_session, planned_resource_token, planned_session_annotations,
-        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
-        planned_session_resources, planned_session_risk_notes, render_check_evidence,
-        render_check_run_json_report, render_check_run_text_report,
-        report_show_unavailable_from_session, required_session_permissions,
-        resolve_session_route_strategy, route_cleanup_from_session,
+        CheckRunItem, CheckRunReport, CheckRunStatusCounts, ReportShowUnavailable,
+        SessionCreateApplyError, SessionPlanBuildError, SessionStateRecordError,
+        apply_session_resources, check_run_report_from_session, planned_resource_token,
+        planned_session_annotations, planned_session_checks, planned_session_cleanup_steps,
+        planned_session_labels, planned_session_resources, planned_session_risk_notes,
+        render_check_evidence, render_check_run_json_report, render_check_run_text_report,
+        render_report_unavailable_markdown, report_show_unavailable_from_session,
+        required_session_permissions, resolve_session_route_strategy, route_cleanup_from_session,
         route_strategy_creates_route_object, route_strategy_has_route_check,
         route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
         session_state_check_status, session_token, unsupported_session_feature_warnings,
@@ -3347,6 +3377,22 @@ mod tests {
         assert_eq!(report.session_status, "unknown");
         assert_eq!(report.report, "not_available");
         assert_eq!(report.reason, "session_report_persistence_not_implemented");
+    }
+
+    #[test]
+    fn renders_report_unavailable_markdown() {
+        let report = ReportShowUnavailable {
+            session_id: "checkout-plan".to_owned(),
+            namespace: "shop".to_owned(),
+            session_status: "active".to_owned(),
+            report: "not_available",
+            reason: "session_report_persistence_not_implemented",
+        };
+
+        insta::assert_snapshot!(
+            "report_unavailable_markdown",
+            render_report_unavailable_markdown(&report)
+        );
     }
 
     #[test]

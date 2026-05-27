@@ -176,6 +176,8 @@ impl ReportCommand {
 pub enum ReportExportFormat {
     /// Export the report as JSON.
     Json,
+    /// Export the report as Markdown.
+    Markdown,
 }
 
 /// Temporary route commands.

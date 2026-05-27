@@ -3627,6 +3627,24 @@ fn covers_every_report_command() {
         ])
         .assert()
         .code(EXIT_USAGE);
+
+    kply_cmd()
+        .args([
+            "report",
+            ReportCommand::Export {
+                session: String::new(),
+                namespace: None,
+                format: ReportExportFormat::Markdown,
+            }
+            .name(),
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--format",
+            "markdown",
+        ])
+        .assert()
+        .code(EXIT_USAGE);
 }
 
 #[test]
