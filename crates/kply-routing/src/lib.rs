@@ -10,7 +10,7 @@ use kply_core::{
     CLEANUP_SELECTOR_LABELS, KubernetesResourceRef, MetadataEntry, REQUIRED_OWNERSHIP_LABELS,
     RouteSelector, SAFE_APP_LABELS,
 };
-use kply_k8s::{GatewayClassSummary, GatewaySummary, HttpRouteSummary};
+use kply_k8s::{GatewayClassSummary, GatewaySummary, HttpRouteSummary, IngressSummary};
 use serde::Serialize;
 
 const GATEWAY_API_VERSION: &str = "gateway.networking.k8s.io/v1";
@@ -27,6 +27,96 @@ pub struct GatewayApiDiscoveryInput<'a> {
     pub gateways: Option<&'a [GatewaySummary]>,
     /// HTTPRoute list when the API resource was discovered.
     pub http_routes: Option<&'a [HttpRouteSummary]>,
+}
+
+/// Successful or missing discovery inputs for route strategy capability detection.
+#[derive(Clone, Copy, Debug)]
+pub struct RoutingCapabilityInput<'a> {
+    /// Gateway API discovery inputs.
+    pub gateway_api: GatewayApiDiscoveryInput<'a>,
+    /// Ingress list when the API resource was discovered.
+    pub ingresses: Option<&'a [IngressSummary]>,
+}
+
+/// Detected routing capabilities across supported and fallback route strategies.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RoutingCapabilityDetection {
+    /// Gateway API temporary route capability details.
+    pub gateway_api: GatewayRouteCapabilities,
+    /// Ingress inventory relevant to future ingress-based route planning.
+    pub ingress: IngressRouteDetection,
+    /// Whether direct preview Service checks can be used as an explicit fallback.
+    pub preview_service_available: bool,
+    /// Route strategies with enough detected input to be considered.
+    pub candidate_strategies: Vec<RouteStrategy>,
+    /// Limitations that explain why candidates are fallback-only or incomplete.
+    pub limitations: Vec<RoutingCapabilityLimitation>,
+}
+
+/// Detected Ingress inventory relevant to future route planning.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IngressRouteDetection {
+    /// Whether the Ingress API could be listed.
+    pub ingress_api_detected: bool,
+    /// Number of discovered Ingress resources in the target namespace.
+    pub ingress_count: usize,
+    /// Discovered Ingress resource names in deterministic order.
+    pub ingress_names: Vec<String>,
+    /// Discovered IngressClass names in deterministic order.
+    pub ingress_class_names: Vec<String>,
+    /// Hostnames discovered from Ingress rules and TLS blocks.
+    pub hostnames: Vec<String>,
+    /// Backend Service names referenced by discovered Ingress resources.
+    pub backend_service_names: Vec<String>,
+}
+
+/// Route strategy detected as usable or worth considering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteStrategy {
+    /// Gateway API HTTPRoute strategy.
+    GatewayApi,
+    /// Kubernetes Ingress strategy for future controller-specific adapters.
+    Ingress,
+    /// Direct preview Service strategy for agent-only checks.
+    PreviewService,
+}
+
+impl RouteStrategy {
+    /// Return the stable snake_case string form of this strategy.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GatewayApi => "gateway_api",
+            Self::Ingress => "ingress",
+            Self::PreviewService => "preview_service",
+        }
+    }
+}
+
+/// Limitation discovered while modeling route strategy capabilities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingCapabilityLimitation {
+    /// Gateway API did not expose enough resources for temporary HTTPRoute routing.
+    GatewayApiUnavailable,
+    /// Ingress objects were not available in the target namespace.
+    IngressUnavailable,
+    /// Ingress resources exist, but controller-specific route planning is future work.
+    IngressPlanningNotImplemented,
+    /// Preview Service checks bypass edge routing behavior.
+    PreviewServiceBypassesEdgeRouting,
+}
+
+impl RoutingCapabilityLimitation {
+    /// Return the stable snake_case string form of this limitation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GatewayApiUnavailable => "gateway_api_unavailable",
+            Self::IngressUnavailable => "ingress_unavailable",
+            Self::IngressPlanningNotImplemented => "ingress_planning_not_implemented",
+            Self::PreviewServiceBypassesEdgeRouting => "preview_service_bypasses_edge_routing",
+        }
+    }
 }
 
 /// Detected Gateway API inventory relevant to temporary session routing.
@@ -429,6 +519,24 @@ pub fn model_gateway_route_capabilities(
     }
 }
 
+/// Detect routing capabilities across Gateway API, Ingress, and explicit fallbacks.
+pub fn detect_routing_capabilities(
+    input: RoutingCapabilityInput<'_>,
+) -> RoutingCapabilityDetection {
+    let gateway_api = model_gateway_route_capabilities(input.gateway_api);
+    let ingress = detect_ingress_routes(input.ingresses);
+    let candidate_strategies = routing_candidate_strategies(&gateway_api, &ingress);
+    let limitations = routing_capability_limitations(&gateway_api, &ingress);
+
+    RoutingCapabilityDetection {
+        gateway_api,
+        ingress,
+        preview_service_available: true,
+        candidate_strategies,
+        limitations,
+    }
+}
+
 /// Generate a temporary Gateway API HTTPRoute manifest for sandbox traffic.
 pub fn generate_gateway_http_route_manifest(
     input: GatewayHttpRouteManifestInput<'_>,
@@ -824,6 +932,120 @@ fn listener_protocols(gateways: &[GatewaySummary]) -> Vec<String> {
         .collect()
 }
 
+/// Detect Ingress inventory from read-only Kubernetes summaries.
+fn detect_ingress_routes(ingresses: Option<&[IngressSummary]>) -> IngressRouteDetection {
+    let ingress_api_detected = ingresses.is_some();
+    let ingresses = ingresses.unwrap_or_default();
+
+    IngressRouteDetection {
+        ingress_api_detected,
+        ingress_count: ingresses.len(),
+        ingress_names: ingress_names(ingresses),
+        ingress_class_names: ingress_class_names(ingresses),
+        hostnames: ingress_hostnames(ingresses),
+        backend_service_names: ingress_backend_service_names(ingresses),
+    }
+}
+
+/// Return candidate route strategies in deterministic preference order.
+fn routing_candidate_strategies(
+    gateway_api: &GatewayRouteCapabilities,
+    ingress: &IngressRouteDetection,
+) -> Vec<RouteStrategy> {
+    let mut strategies = Vec::new();
+
+    if gateway_api.supports_temporary_http_routes {
+        strategies.push(RouteStrategy::GatewayApi);
+    }
+    if ingress.ingress_count > 0 {
+        strategies.push(RouteStrategy::Ingress);
+    }
+    strategies.push(RouteStrategy::PreviewService);
+
+    strategies
+}
+
+/// Return stable high-level routing capability limitation codes.
+fn routing_capability_limitations(
+    gateway_api: &GatewayRouteCapabilities,
+    ingress: &IngressRouteDetection,
+) -> Vec<RoutingCapabilityLimitation> {
+    let mut limitations = Vec::new();
+
+    if !gateway_api.supports_temporary_http_routes {
+        limitations.push(RoutingCapabilityLimitation::GatewayApiUnavailable);
+    }
+    if ingress.ingress_count == 0 {
+        limitations.push(RoutingCapabilityLimitation::IngressUnavailable);
+    } else {
+        limitations.push(RoutingCapabilityLimitation::IngressPlanningNotImplemented);
+    }
+    limitations.push(RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting);
+
+    limitations
+}
+
+/// Return namespace-qualified Ingress names in deterministic order.
+fn ingress_names(ingresses: &[IngressSummary]) -> Vec<String> {
+    ingresses
+        .iter()
+        .map(|ingress| qualified_resource_name(&ingress.namespace, &ingress.name))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Return discovered IngressClass names in deterministic order.
+fn ingress_class_names(ingresses: &[IngressSummary]) -> Vec<String> {
+    ingresses
+        .iter()
+        .filter_map(|ingress| ingress.ingress_class_name.as_deref())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Return discovered Ingress hostnames in deterministic order.
+fn ingress_hostnames(ingresses: &[IngressSummary]) -> Vec<String> {
+    ingresses
+        .iter()
+        .flat_map(|ingress| {
+            ingress
+                .rules
+                .iter()
+                .filter_map(|rule| rule.host.as_deref())
+                .chain(
+                    ingress
+                        .tls
+                        .iter()
+                        .flat_map(|tls| tls.hosts.iter().map(String::as_str)),
+                )
+        })
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Return Ingress backend Service names in deterministic order.
+fn ingress_backend_service_names(ingresses: &[IngressSummary]) -> Vec<String> {
+    ingresses
+        .iter()
+        .flat_map(|ingress| {
+            ingress.default_backend.iter().chain(
+                ingress
+                    .rules
+                    .iter()
+                    .flat_map(|rule| rule.paths.iter().filter_map(|path| path.backend.as_ref())),
+            )
+        })
+        .map(|backend| backend.service_name.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// Return true when a Gateway listener protocol can attach HTTPRoute traffic.
 fn is_http_compatible_protocol(protocol: Option<&str>) -> bool {
     protocol.is_some_and(|protocol| {
@@ -847,16 +1069,18 @@ mod tests {
     use super::{
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
         GatewayHttpRouteManifestError, GatewayHttpRouteManifestInput, GatewayRouteCapabilities,
-        GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus,
-        detect_gateway_api_resources, gateway_http_route_cleanup_target,
-        gateway_route_cleanup_selector, generate_gateway_header_http_route_manifest,
-        generate_gateway_host_http_route_manifest, generate_gateway_http_route_manifest,
-        model_gateway_route_capabilities,
+        GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus, IngressRouteDetection,
+        RouteStrategy, RoutingCapabilityDetection, RoutingCapabilityInput,
+        RoutingCapabilityLimitation, detect_gateway_api_resources, detect_routing_capabilities,
+        gateway_http_route_cleanup_target, gateway_route_cleanup_selector,
+        generate_gateway_header_http_route_manifest, generate_gateway_host_http_route_manifest,
+        generate_gateway_http_route_manifest, model_gateway_route_capabilities,
     };
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
     use kply_k8s::{
         GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary,
-        gateway_class_summary, gateway_summary, http_route_summary,
+        IngressBackendSummary, IngressPathSummary, IngressRuleSummary, IngressSummary,
+        IngressTlsSummary, gateway_class_summary, gateway_summary, http_route_summary,
     };
     use kube::{api::ObjectList, core::DynamicObject};
     use serde_json::json;
@@ -1074,6 +1298,105 @@ mod tests {
             ["shop/public", "shop/secure"]
         );
         assert_eq!(capabilities.limitations, Vec::new());
+    }
+
+    #[test]
+    /// Detects routing capabilities with Gateway API as the preferred candidate.
+    fn detects_routing_capabilities_with_supported_gateway_api() {
+        let gateway_classes = vec![gateway_class("istio", Some("istio.io/gateway-controller"))];
+        let gateways = vec![gateway_with_protocol(
+            "shop",
+            "public",
+            "istio",
+            Some("HTTP"),
+        )];
+        let http_routes: Vec<HttpRouteSummary> = Vec::new();
+        let ingresses = vec![ingress("shop", "checkout", Some("nginx"))];
+
+        let detection = detect_routing_capabilities(RoutingCapabilityInput {
+            gateway_api: GatewayApiDiscoveryInput {
+                gateway_classes: Some(&gateway_classes),
+                gateways: Some(&gateways),
+                http_routes: Some(&http_routes),
+            },
+            ingresses: Some(&ingresses),
+        });
+
+        assert_eq!(
+            detection,
+            RoutingCapabilityDetection {
+                gateway_api: model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+                    gateway_classes: Some(&gateway_classes),
+                    gateways: Some(&gateways),
+                    http_routes: Some(&http_routes),
+                }),
+                ingress: IngressRouteDetection {
+                    ingress_api_detected: true,
+                    ingress_count: 1,
+                    ingress_names: vec!["shop/checkout".to_owned()],
+                    ingress_class_names: vec!["nginx".to_owned()],
+                    hostnames: vec!["checkout.example.com".to_owned()],
+                    backend_service_names: vec!["checkout-http".to_owned()],
+                },
+                preview_service_available: true,
+                candidate_strategies: vec![
+                    RouteStrategy::GatewayApi,
+                    RouteStrategy::Ingress,
+                    RouteStrategy::PreviewService,
+                ],
+                limitations: vec![
+                    RoutingCapabilityLimitation::IngressPlanningNotImplemented,
+                    RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting,
+                ],
+            }
+        );
+        assert_eq!(RouteStrategy::GatewayApi.as_str(), "gateway_api");
+        assert_eq!(
+            RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting.as_str(),
+            "preview_service_bypasses_edge_routing"
+        );
+    }
+
+    #[test]
+    /// Detects routing capabilities when only fallback preview Service checks are possible.
+    fn detects_routing_capabilities_with_preview_service_fallback() {
+        let detection = detect_routing_capabilities(RoutingCapabilityInput {
+            gateway_api: GatewayApiDiscoveryInput {
+                gateway_classes: None,
+                gateways: None,
+                http_routes: None,
+            },
+            ingresses: None,
+        });
+
+        assert_eq!(
+            detection.gateway_api.status,
+            GatewayRouteCapabilityStatus::Unsupported
+        );
+        assert_eq!(
+            detection.ingress,
+            IngressRouteDetection {
+                ingress_api_detected: false,
+                ingress_count: 0,
+                ingress_names: Vec::new(),
+                ingress_class_names: Vec::new(),
+                hostnames: Vec::new(),
+                backend_service_names: Vec::new(),
+            }
+        );
+        assert!(detection.preview_service_available);
+        assert_eq!(
+            detection.candidate_strategies,
+            [RouteStrategy::PreviewService]
+        );
+        assert_eq!(
+            detection.limitations,
+            [
+                RoutingCapabilityLimitation::GatewayApiUnavailable,
+                RoutingCapabilityLimitation::IngressUnavailable,
+                RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting,
+            ]
+        );
     }
 
     #[test]
@@ -1791,6 +2114,31 @@ mod tests {
                 hostname: None,
                 port: Some(80),
                 protocol: protocol.map(ToOwned::to_owned),
+            }],
+        }
+    }
+
+    /// Build an Ingress summary fixture with one host and backend Service.
+    fn ingress(namespace: &str, name: &str, ingress_class_name: Option<&str>) -> IngressSummary {
+        IngressSummary {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            ingress_class_name: ingress_class_name.map(ToOwned::to_owned),
+            default_backend: None,
+            rules: vec![IngressRuleSummary {
+                host: Some("checkout.example.com".to_owned()),
+                paths: vec![IngressPathSummary {
+                    path: Some("/".to_owned()),
+                    path_type: Some("Prefix".to_owned()),
+                    backend: Some(IngressBackendSummary {
+                        service_name: "checkout-http".to_owned(),
+                        service_port: "80".to_owned(),
+                    }),
+                }],
+            }],
+            tls: vec![IngressTlsSummary {
+                hosts: vec!["checkout.example.com".to_owned()],
+                secret_name: Some("checkout-tls".to_owned()),
             }],
         }
     }
