@@ -558,6 +558,8 @@ pub enum PolicyConfigField {
     AllowedRouteStrategies,
     /// Policy `max_session_ttl` field.
     MaxSessionTtl,
+    /// Policy `mutation_mode` field.
+    MutationMode,
 }
 
 impl PolicyConfigField {
@@ -571,6 +573,7 @@ impl PolicyConfigField {
             Self::AllowedImageRegistries => "allowed_image_registries",
             Self::AllowedRouteStrategies => "allowed_route_strategies",
             Self::MaxSessionTtl => "max_session_ttl",
+            Self::MutationMode => "mutation_mode",
         }
     }
 }
@@ -776,6 +779,30 @@ impl RouteStrategy {
     }
 }
 
+/// Mutation scope allowed by a policy entry.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MutationModePolicy {
+    /// Allow read-only planning and inspection only.
+    ReadOnly,
+    /// Allow mutation only for sandbox-owned resources.
+    SandboxOnly,
+    /// Allow sandbox resources and route mutation for isolated test traffic.
+    RouteMutation,
+}
+
+impl MutationModePolicy {
+    /// Return the stable config spelling for this [`MutationModePolicy`].
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::SandboxOnly => "sandbox-only",
+            Self::RouteMutation => "route-mutation",
+        }
+    }
+}
+
 /// Top-level routing config section.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingConfig;
@@ -917,6 +944,8 @@ pub struct PolicyConfig {
     allowed_route_strategies: Vec<RouteStrategy>,
     #[serde(default)]
     max_session_ttl: Option<String>,
+    #[serde(default)]
+    mutation_mode: Option<MutationModePolicy>,
 }
 
 impl PolicyConfig {
@@ -931,6 +960,7 @@ impl PolicyConfig {
             allowed_image_registries: Vec::new(),
             allowed_route_strategies: Vec::new(),
             max_session_ttl: None,
+            mutation_mode: None,
         }
     }
 
@@ -1034,6 +1064,17 @@ impl PolicyConfig {
     /// Return a copy of this policy entry with a maximum session TTL.
     pub fn with_max_session_ttl(mut self, max_session_ttl: impl Into<String>) -> Self {
         self.max_session_ttl = Some(max_session_ttl.into());
+        self
+    }
+
+    /// Return the mutation mode this policy will allow.
+    pub const fn mutation_mode(&self) -> Option<MutationModePolicy> {
+        self.mutation_mode
+    }
+
+    /// Return a copy of this policy entry with a mutation mode.
+    pub fn with_mutation_mode(mut self, mutation_mode: MutationModePolicy) -> Self {
+        self.mutation_mode = Some(mutation_mode);
         self
     }
 
@@ -1408,9 +1449,10 @@ mod tests {
     use super::{
         AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
         CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
-        ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig,
-        PolicyConfigField, PolicyConfigs, PolicyDurationError, PolicyImageRegistryError,
-        RouteStrategy, RoutingConfig, discover_config_path_from, load_config_path,
+        ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig,
+        MutationModePolicy, PolicyConfig, PolicyConfigField, PolicyConfigs, PolicyDurationError,
+        PolicyImageRegistryError, RouteStrategy, RoutingConfig, discover_config_path_from,
+        load_config_path,
     };
     use std::env;
     use std::fs;
@@ -2027,6 +2069,7 @@ apps:
             "allowed_route_strategies"
         );
         assert_eq!(PolicyConfigField::MaxSessionTtl.as_str(), "max_session_ttl");
+        assert_eq!(PolicyConfigField::MutationMode.as_str(), "mutation_mode");
     }
 
     #[test]
@@ -2059,6 +2102,10 @@ apps:
             &[RouteStrategy::Header, RouteStrategy::Preview]
         );
         assert_eq!(config.max_session_ttl(), Some("2h"));
+        assert_eq!(
+            config.mutation_mode(),
+            Some(MutationModePolicy::SandboxOnly)
+        );
     }
 
     #[test]
@@ -2073,6 +2120,7 @@ apps:
         assert!(config.allowed_image_registries().is_empty());
         assert!(config.allowed_route_strategies().is_empty());
         assert_eq!(config.max_session_ttl(), None);
+        assert_eq!(config.mutation_mode(), None);
     }
 
     #[test]
@@ -2092,6 +2140,7 @@ policies:
     allowed_route_strategies:
       - header
     max_session_ttl: 30m
+    mutation_mode: sandbox-only
 "#,
         )
         .expect("valid policy config YAML");
@@ -2103,7 +2152,8 @@ policies:
                 .with_allowed_workload_kinds(["Deployment"])
                 .with_allowed_image_registries(["registry.example.com", "localhost:5000"])
                 .with_allowed_route_strategies([RouteStrategy::Header])
-                .with_max_session_ttl("30m")]
+                .with_max_session_ttl("30m")
+                .with_mutation_mode(MutationModePolicy::SandboxOnly)]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -2372,6 +2422,7 @@ policies:
                 "allowed_image_registries": ["registry.example.com", "localhost:5000"],
                 "allowed_route_strategies": ["header", "preview"],
                 "max_session_ttl": "2h",
+                "mutation_mode": "sandbox-only",
             })
         );
     }
@@ -2428,6 +2479,13 @@ policies:
         assert_eq!(RouteStrategy::Header.as_str(), "header");
         assert_eq!(RouteStrategy::Host.as_str(), "host");
         assert_eq!(RouteStrategy::Preview.as_str(), "preview");
+    }
+
+    #[test]
+    fn renders_mutation_mode_policy_names() {
+        assert_eq!(MutationModePolicy::ReadOnly.as_str(), "read-only");
+        assert_eq!(MutationModePolicy::SandboxOnly.as_str(), "sandbox-only");
+        assert_eq!(MutationModePolicy::RouteMutation.as_str(), "route-mutation");
     }
 
     #[test]
@@ -2543,5 +2601,6 @@ policies:
             .with_allowed_image_registries(["registry.example.com", "localhost:5000"])
             .with_allowed_route_strategies([RouteStrategy::Header, RouteStrategy::Preview])
             .with_max_session_ttl("2h")
+            .with_mutation_mode(MutationModePolicy::SandboxOnly)
     }
 }
