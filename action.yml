@@ -46,6 +46,9 @@ outputs:
   app:
     description: Configured app name validated by kply app inspect.
     value: ${{ steps.app.outputs.app }}
+  image:
+    description: Candidate image reference validated by kply session plan, when provided.
+    value: ${{ steps.image.outputs.image }}
 
 runs:
   using: composite
@@ -324,3 +327,38 @@ runs:
 
         echo "app=${INPUT_APP}" >> "${GITHUB_OUTPUT}"
         echo "Validated Kply app ${INPUT_APP}"
+
+    - name: Validate Kply image override
+      id: image
+      shell: bash
+      env:
+        INPUT_IMAGE: ${{ inputs.image }}
+        KPLY_PATH: ${{ steps.install.outputs.kply_path }}
+        CONFIG_PATH: ${{ steps.config.outputs.config_path }}
+        APP: ${{ steps.app.outputs.app }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${INPUT_IMAGE}" ]]; then
+          echo "image=" >> "${GITHUB_OUTPUT}"
+          echo "No Kply image override configured"
+          exit 0
+        fi
+
+        if [[ "${INPUT_IMAGE}" == *$'\n'* || "${INPUT_IMAGE}" == *$'\r'* ]]; then
+          echo "::error::image must be a single-line reference."
+          exit 1
+        fi
+
+        image_plan_json="$(mktemp "${RUNNER_TEMP}/kply-image-plan.XXXXXX.json")"
+        trap 'rm -f "${image_plan_json}"' EXIT
+        "${KPLY_PATH}" \
+          session plan "${APP}" \
+          --config "${CONFIG_PATH}" \
+          --image "${INPUT_IMAGE}" \
+          --json \
+          --quiet \
+          --no-color > "${image_plan_json}"
+
+        echo "image=${INPUT_IMAGE}" >> "${GITHUB_OUTPUT}"
+        echo "Validated Kply image override ${INPUT_IMAGE}"
