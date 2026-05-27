@@ -426,6 +426,8 @@ pub enum PolicyConfigField {
     Description,
     /// Policy `allowed_namespaces` field.
     AllowedNamespaces,
+    /// Policy `allowed_workload_kinds` field.
+    AllowedWorkloadKinds,
 }
 
 impl PolicyConfigField {
@@ -435,6 +437,7 @@ impl PolicyConfigField {
             Self::Name => "name",
             Self::Description => "description",
             Self::AllowedNamespaces => "allowed_namespaces",
+            Self::AllowedWorkloadKinds => "allowed_workload_kinds",
         }
     }
 }
@@ -773,6 +776,8 @@ pub struct PolicyConfig {
     description: Option<String>,
     #[serde(default)]
     allowed_namespaces: Vec<String>,
+    #[serde(default)]
+    allowed_workload_kinds: Vec<String>,
 }
 
 impl PolicyConfig {
@@ -783,6 +788,7 @@ impl PolicyConfig {
             enabled: default_policy_enabled(),
             description: None,
             allowed_namespaces: Vec::new(),
+            allowed_workload_kinds: Vec::new(),
         }
     }
 
@@ -830,6 +836,23 @@ impl PolicyConfig {
         self
     }
 
+    /// Borrow the Kubernetes workload kinds this policy will allow.
+    pub fn allowed_workload_kinds(&self) -> &[String] {
+        &self.allowed_workload_kinds
+    }
+
+    /// Return a copy of this policy entry with allowed workload kinds.
+    pub fn with_allowed_workload_kinds(
+        mut self,
+        allowed_workload_kinds: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.allowed_workload_kinds = allowed_workload_kinds
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        self
+    }
+
     /// Return validation errors for this policy entry with top-level index context.
     fn validation_errors(&self, policy_index: usize) -> Vec<ConfigValidationError> {
         let mut errors = Vec::new();
@@ -855,6 +878,12 @@ impl PolicyConfig {
             policy_index,
             PolicyConfigField::AllowedNamespaces,
             self.allowed_namespaces(),
+        );
+        push_policy_list_entry_errors(
+            &mut errors,
+            policy_index,
+            PolicyConfigField::AllowedWorkloadKinds,
+            self.allowed_workload_kinds(),
         );
 
         errors
@@ -888,20 +917,21 @@ fn push_policy_list_entry_errors(
     field: PolicyConfigField,
     values: &[String],
 ) {
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
 
     for (entry_index, value) in values.iter().enumerate() {
-        if value.trim().is_empty() {
+        let normalized_value = value.trim();
+        if normalized_value.is_empty() {
             errors.push(ConfigValidationError::EmptyPolicyListEntry {
                 policy_index,
                 field,
                 entry_index,
             });
-        } else if !seen.insert(value) {
+        } else if !seen.insert(normalized_value.to_owned()) {
             errors.push(ConfigValidationError::DuplicatePolicyListEntry {
                 policy_index,
                 field,
-                value: value.clone(),
+                value: normalized_value.to_owned(),
             });
         }
     }
@@ -1600,6 +1630,10 @@ apps:
             PolicyConfigField::AllowedNamespaces.as_str(),
             "allowed_namespaces"
         );
+        assert_eq!(
+            PolicyConfigField::AllowedWorkloadKinds.as_str(),
+            "allowed_workload_kinds"
+        );
     }
 
     #[test]
@@ -1616,6 +1650,10 @@ apps:
             config.allowed_namespaces(),
             &["shop".to_string(), "kply-demo".to_string()]
         );
+        assert_eq!(
+            config.allowed_workload_kinds(),
+            &["Deployment".to_string(), "StatefulSet".to_string()]
+        );
     }
 
     #[test]
@@ -1626,6 +1664,7 @@ apps:
         assert!(config.enabled());
         assert_eq!(config.description(), None);
         assert!(config.allowed_namespaces().is_empty());
+        assert!(config.allowed_workload_kinds().is_empty());
     }
 
     #[test]
@@ -1637,13 +1676,17 @@ policies:
   - name: sandbox-defaults
     allowed_namespaces:
       - shop
+    allowed_workload_kinds:
+      - Deployment
 "#,
         )
         .expect("valid policy config YAML");
 
         assert_eq!(
             config.policies().entries(),
-            &[PolicyConfig::new("sandbox-defaults").with_allowed_namespaces(["shop"])]
+            &[PolicyConfig::new("sandbox-defaults")
+                .with_allowed_namespaces(["shop"])
+                .with_allowed_workload_kinds(["Deployment"])]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -1725,6 +1768,47 @@ policies:
     }
 
     #[test]
+    fn rejects_empty_and_duplicate_policy_allowed_workload_kinds() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::new(vec![
+                PolicyConfig::new("sandbox-defaults").with_allowed_workload_kinds([
+                    "Deployment",
+                    "",
+                    " Deployment ",
+                ]),
+            ]),
+        );
+
+        let errors = config
+            .validate()
+            .expect_err("invalid allowed workload kinds should fail");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::EmptyPolicyListEntry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedWorkloadKinds,
+                    entry_index: 1,
+                },
+                ConfigValidationError::DuplicatePolicyListEntry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedWorkloadKinds,
+                    value: "Deployment".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "2 config validation errors; first error: policies[0].allowed_workload_kinds[1]: field is required"
+        );
+    }
+
+    #[test]
     fn serializes_policy_config_to_stable_json() {
         let value = serde_json::to_value(policy_config()).expect("policy should serialize");
 
@@ -1735,6 +1819,7 @@ policies:
                 "enabled": false,
                 "description": "Default sandbox boundaries for local agent sessions",
                 "allowed_namespaces": ["shop", "kply-demo"],
+                "allowed_workload_kinds": ["Deployment", "StatefulSet"],
             })
         );
     }
@@ -1902,5 +1987,6 @@ policies:
             .with_enabled(false)
             .with_description("Default sandbox boundaries for local agent sessions")
             .with_allowed_namespaces(["shop", "kply-demo"])
+            .with_allowed_workload_kinds(["Deployment", "StatefulSet"])
     }
 }

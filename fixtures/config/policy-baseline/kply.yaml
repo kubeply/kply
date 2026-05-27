@@ -9,3 +9,6 @@ policies:
     allowed_namespaces:
       - shop
       - kply-demo
+    allowed_workload_kinds:
+      - Deployment
+      - StatefulSet
