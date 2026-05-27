@@ -1896,11 +1896,11 @@ mod tests {
         NginxIngressRoutePlanError, NginxIngressRoutePlanInput, RouteStrategy,
         RoutingCapabilityDetection, RoutingCapabilityInput, RoutingCapabilityLimitation,
         TraefikIngressRoutePlanError, TraefikIngressRoutePlanInput, detect_gateway_api_resources,
-        detect_routing_capabilities, gateway_http_route_cleanup_target,
+        detect_ingress_routes, detect_routing_capabilities, gateway_http_route_cleanup_target,
         gateway_route_cleanup_selector, generate_gateway_header_http_route_manifest,
         generate_gateway_host_http_route_manifest, generate_gateway_http_route_manifest,
         generate_nginx_ingress_canary_manifest, generate_traefik_ingress_route_manifest,
-        model_gateway_route_capabilities,
+        model_gateway_route_capabilities, routing_candidate_strategies,
     };
     use k8s_openapi::api::networking::v1::Ingress;
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
@@ -2183,6 +2183,57 @@ mod tests {
         assert_eq!(
             RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting.as_str(),
             "preview_service_bypasses_edge_routing"
+        );
+    }
+
+    #[test]
+    /// Selects route strategy candidates in stable preference order.
+    fn selects_route_strategy_candidates_in_stable_preference_order() {
+        let gateway_classes = vec![gateway_class("istio", Some("istio.io/gateway-controller"))];
+        let gateways = vec![gateway_with_protocol(
+            "shop",
+            "public",
+            "istio",
+            Some("HTTP"),
+        )];
+        let http_routes: Vec<HttpRouteSummary> = Vec::new();
+        let gateway_api = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: Some(&gateway_classes),
+            gateways: Some(&gateways),
+            http_routes: Some(&http_routes),
+        });
+        let unavailable_gateway_api = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: None,
+            gateways: None,
+            http_routes: None,
+        });
+        let ingresses = vec![ingress("shop", "checkout", Some("nginx"))];
+        let detected_ingress = detect_ingress_routes(Some(&ingresses));
+        let unavailable_ingress = detect_ingress_routes(None);
+
+        assert_eq!(
+            routing_candidate_strategies(&gateway_api, &detected_ingress, true),
+            [
+                RouteStrategy::GatewayApi,
+                RouteStrategy::Ingress,
+                RouteStrategy::PreviewService,
+            ]
+        );
+        assert_eq!(
+            routing_candidate_strategies(&gateway_api, &unavailable_ingress, false),
+            [RouteStrategy::GatewayApi]
+        );
+        assert_eq!(
+            routing_candidate_strategies(&unavailable_gateway_api, &detected_ingress, false),
+            [RouteStrategy::Ingress]
+        );
+        assert_eq!(
+            routing_candidate_strategies(&unavailable_gateway_api, &unavailable_ingress, true),
+            [RouteStrategy::PreviewService]
+        );
+        assert_eq!(
+            routing_candidate_strategies(&unavailable_gateway_api, &unavailable_ingress, false),
+            Vec::<RouteStrategy>::new()
         );
     }
 
