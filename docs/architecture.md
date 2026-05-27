@@ -450,7 +450,9 @@ evaluate enabled policies before rendering or applying a plan. If no enabled
 policies are configured, planning keeps the default sandbox policy. If one or
 more enabled policies are configured, at least one enabled policy must allow the
 requested namespace, workload kind, image registry, route strategy, TTL, and
-mutation scope.
+mutation scope. The session resource apply boundary also checks the planned
+session policy before Kubernetes mutation starts, so read-only policies cannot
+create sandbox resources.
 
 Current CLI config precedence is:
 
