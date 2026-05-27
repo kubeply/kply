@@ -192,6 +192,7 @@ Gateway API routing permissions are documented in
 can and cannot test. Session plans currently include
 `gateway.networking.k8s.io/httproutes` with `create`, `delete`, and `get` when
 temporary routes may be part of the sandbox session.
+Least-privilege RBAC examples are documented in [rbac.md](rbac.md).
 
 Current provisional pre-`1.0.0` routing capability detection fields:
 

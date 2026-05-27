@@ -64,6 +64,8 @@ planned sandbox session can include a temporary `HTTPRoute`. Route cleanup must
 only delete routes carrying Kply ownership labels, but Kubernetes RBAC cannot
 restrict deletion by label selector by itself. Use a dedicated namespace,
 dedicated service account, or admission policy when granting delete access.
+See [Least-Privilege RBAC](rbac.md) for complete read-only, sandbox-only, and
+route-mutation examples.
 
 ## Route Ownership
 
