@@ -3061,18 +3061,18 @@ fn print_verbose_trace(cli: &Cli) {
 mod tests {
     use super::{
         CheckRunItem, CheckRunReport, CheckRunStatusCounts, SessionCreateApplyError,
-        SessionStateRecordError, apply_session_resources, check_run_report_from_session,
-        planned_resource_token, planned_session_annotations, planned_session_checks,
-        planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
-        planned_session_risk_notes, render_check_evidence, render_check_run_json_report,
-        render_check_run_text_report, required_session_permissions, resolve_session_route_strategy,
-        route_strategy_creates_route_object, route_strategy_has_route_check,
-        route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
-        session_state_check_status, session_token, unsupported_session_feature_warnings,
-        workload_permission_resource,
+        SessionPlanBuildError, SessionStateRecordError, apply_session_resources,
+        check_run_report_from_session, planned_resource_token, planned_session_annotations,
+        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
+        planned_session_resources, planned_session_risk_notes, render_check_evidence,
+        render_check_run_json_report, render_check_run_text_report, required_session_permissions,
+        resolve_session_route_strategy, route_strategy_creates_route_object,
+        route_strategy_has_route_check, route_strategy_uses_preview_service,
+        session_plan_from_config, session_state_annotations, session_state_check_status,
+        session_token, unsupported_session_feature_warnings, workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
-    use kply_core::{CheckResultStatus, ImageRef, SessionStatus, WorkloadRef};
+    use kply_core::{CheckResultStatus, ImageRef, SessionPlan, SessionStatus, WorkloadRef};
     use kply_k8s::{
         DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, MutationError,
         MutationErrorCode, ServiceSummary, SessionSummary,
@@ -4172,6 +4172,129 @@ mod tests {
         assert!(!route_strategy_creates_route_object("preview-service"));
         assert!(route_strategy_has_route_check("preview-service"));
         assert!(route_strategy_uses_preview_service("preview-service"));
+    }
+
+    #[test]
+    fn selects_route_strategy_from_config_auto_and_explicit_overrides() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("registry.example.com/shop/checkout:test".to_owned()),
+            RouteStrategy::Host,
+        );
+
+        let configured_plan = session_plan_from_config(&app, None, None, None, None)
+            .unwrap_or_else(|_| panic!("configured route strategy should build a plan"));
+        assert_eq!(planned_route_strategy(&configured_plan), "host");
+        assert_eq!(
+            configured_plan
+                .route_selector()
+                .expect("host strategy should set a route selector")
+                .kind(),
+            "host"
+        );
+        assert!(
+            configured_plan
+                .planned_resources()
+                .iter()
+                .any(|resource| resource.kind() == "HTTPRoute")
+        );
+
+        let auto_plan = session_plan_from_config(&app, None, None, None, Some("auto"))
+            .unwrap_or_else(|_| panic!("auto route strategy should resolve to config"));
+        assert_eq!(planned_route_strategy(&auto_plan), "host");
+        assert_eq!(
+            auto_plan
+                .route_selector()
+                .expect("auto host strategy should set a route selector")
+                .kind(),
+            "host"
+        );
+
+        let header_plan = session_plan_from_config(&app, None, None, None, Some("header"))
+            .unwrap_or_else(|_| panic!("explicit header route strategy should build a plan"));
+        assert_eq!(planned_route_strategy(&header_plan), "header");
+        assert_eq!(
+            header_plan
+                .route_selector()
+                .expect("header strategy should set a route selector")
+                .kind(),
+            "header"
+        );
+
+        let preview_service_plan =
+            session_plan_from_config(&app, None, None, None, Some("preview-service"))
+                .unwrap_or_else(|_| {
+                    panic!("explicit preview-service route strategy should build a plan")
+                });
+        assert_eq!(
+            planned_route_strategy(&preview_service_plan),
+            "preview-service"
+        );
+        assert!(preview_service_plan.route_selector().is_none());
+        assert!(
+            !preview_service_plan
+                .planned_resources()
+                .iter()
+                .any(|resource| resource.kind() == "HTTPRoute")
+        );
+        assert!(
+            preview_service_plan
+                .planned_checks()
+                .iter()
+                .any(|check| check.name() == "route_ready"
+                    && check.target() == "shop/checkout-plan-service")
+        );
+
+        let none_plan = session_plan_from_config(&app, None, None, None, Some("none"))
+            .unwrap_or_else(|_| panic!("explicit none route strategy should build a plan"));
+        assert_eq!(planned_route_strategy(&none_plan), "none");
+        assert!(none_plan.route_selector().is_none());
+        assert!(
+            !none_plan
+                .planned_resources()
+                .iter()
+                .any(|resource| resource.kind() == "HTTPRoute")
+        );
+        assert!(
+            !none_plan
+                .planned_checks()
+                .iter()
+                .any(|check| check.name() == "route_ready")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_route_strategy_with_supported_strategy_list() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("registry.example.com/shop/checkout:test".to_owned()),
+            RouteStrategy::Header,
+        );
+
+        match session_plan_from_config(&app, None, None, None, Some("unknown")) {
+            Err(SessionPlanBuildError::Usage(message)) => {
+                assert_eq!(
+                    message,
+                    "unsupported route strategy `unknown`; expected auto, none, preview-service, header, host, preview"
+                );
+            }
+            Err(SessionPlanBuildError::Config(_)) => panic!("expected a usage error"),
+            Ok(_) => panic!("unknown route strategy should be rejected"),
+        }
+    }
+
+    fn planned_route_strategy(plan: &SessionPlan) -> &str {
+        plan.planned_annotations()
+            .iter()
+            .find(|annotation| annotation.key() == "kply.dev/route-strategy")
+            .map(|annotation| annotation.value())
+            .expect("route strategy annotation should be planned")
     }
 
     #[test]
