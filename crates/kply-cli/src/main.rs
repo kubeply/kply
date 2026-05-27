@@ -41,6 +41,7 @@ const EXIT_USAGE: i32 = 2;
 const EXIT_INTERNAL: i32 = 3;
 const EXIT_BLOCKING: i32 = 1;
 const SESSION_HEADER_NAME: &str = "x-kply-session";
+const ROUTE_STRATEGY_AUTO: &str = "auto";
 const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
@@ -1766,7 +1767,7 @@ fn session_plan_from_config(
         .map(TimeToLive::new)
         .transpose()
         .map_err(|error| SessionPlanBuildError::Usage(error.to_string()))?;
-    let route_strategy = route_strategy.unwrap_or_else(|| app.route_strategy().as_str());
+    let route_strategy = resolve_session_route_strategy(app, route_strategy);
     let route_selector = match route_strategy {
         "header" => Some(
             RouteSelector::header(SESSION_HEADER_NAME, session_id.as_str()).map_err(|error| {
@@ -2116,11 +2117,21 @@ fn planned_resource_token(session_id: &str, suffix: &str) -> String {
 }
 
 fn supported_route_strategies() -> String {
-    SUPPORTED_ROUTE_STRATEGIES
-        .iter()
-        .map(RouteStrategy::as_str)
+    std::iter::once(ROUTE_STRATEGY_AUTO)
+        .chain(SUPPORTED_ROUTE_STRATEGIES.iter().map(RouteStrategy::as_str))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Resolve CLI route strategy input to a concrete configured strategy.
+fn resolve_session_route_strategy<'a>(
+    app: &'a AppConfig,
+    route_strategy: Option<&'a str>,
+) -> &'a str {
+    match route_strategy {
+        Some(ROUTE_STRATEGY_AUTO) | None => app.route_strategy().as_str(),
+        Some(route_strategy) => route_strategy,
+    }
 }
 
 /// Build a dry-run route plan from a session id and optional namespace.
@@ -2996,9 +3007,9 @@ mod tests {
         planned_resource_token, planned_session_annotations, planned_session_checks,
         planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
         planned_session_risk_notes, render_check_evidence, render_check_run_json_report,
-        render_check_run_text_report, required_session_permissions, session_plan_from_config,
-        session_state_annotations, session_state_check_status, session_token,
-        unsupported_session_feature_warnings, workload_permission_resource,
+        render_check_run_text_report, required_session_permissions, resolve_session_route_strategy,
+        session_plan_from_config, session_state_annotations, session_state_check_status,
+        session_token, unsupported_session_feature_warnings, workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{CheckResultStatus, ImageRef, SessionStatus, WorkloadRef};
@@ -3996,6 +4007,25 @@ mod tests {
 
         assert!(header_warnings.is_empty());
         assert!(preview_warnings.is_empty());
+    }
+
+    #[test]
+    fn resolves_auto_route_strategy_to_configured_strategy() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("registry.example.com/shop/checkout:test".to_owned()),
+            RouteStrategy::Preview,
+        );
+
+        assert_eq!(resolve_session_route_strategy(&app, None), "preview");
+        assert_eq!(
+            resolve_session_route_strategy(&app, Some("auto")),
+            "preview"
+        );
+        assert_eq!(resolve_session_route_strategy(&app, Some("host")), "host");
     }
 
     #[test]
