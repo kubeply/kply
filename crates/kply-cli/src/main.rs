@@ -3044,7 +3044,15 @@ fn render_session_plan_policy_error(message: &str, wants_json: bool) -> Result<E
             "error": {
                 "code": "policy",
                 "exit_code": EXIT_BLOCKING,
-                "message": message
+                "message": message,
+                "policy_violation": {
+                    "reason": "policy_denied",
+                    "violations": [
+                        {
+                            "message": message
+                        }
+                    ]
+                }
             }
         });
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
