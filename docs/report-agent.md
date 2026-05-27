@@ -39,15 +39,15 @@ Required handling:
 2. Preserve `session_id`, `namespace`, `session_status`, `report`, and `reason`
    fields in the handoff.
 3. If `report` is `not_available`, explain that persistent report loading is
-   not implemented yet and fall back to `kply check run <session>`.
+   not implemented yet and fall back to `kply check run <session> --json`.
 4. If a future report includes checks, quote the failing or warning checks by
    name and include their evidence.
 5. If cleanup is required or failed, make cleanup the next action before any
    promotion discussion.
 
-Agents must not write that a change is "safe to deploy", "production ready", or
-"approved for promotion" based only on a Kply report. Until promotion
-integrations exist, the strongest allowed wording is:
+Agents must not turn Kply evidence into deployment approval, production
+readiness, or promotion approval. Until promotion integrations exist, the
+strongest allowed wording is:
 
 > Kply did not report a blocking condition in the available evidence. A human
 > still needs to review and promote outside Kply.

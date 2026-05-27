@@ -2238,7 +2238,7 @@ fn unsupported_session_feature_warnings(
         .collect()
 }
 
-/// Build risk notes for app shapes that need human review before promotion.
+/// Build risk notes for app shapes that need human review before release decisions.
 fn planned_session_risk_notes(app: &AppConfig) -> std::result::Result<Vec<RiskNote>, String> {
     let target = database_like_app_target(app);
     let notes = match target {
