@@ -428,6 +428,8 @@ pub enum PolicyConfigField {
     AllowedNamespaces,
     /// Policy `allowed_workload_kinds` field.
     AllowedWorkloadKinds,
+    /// Policy `allowed_route_strategies` field.
+    AllowedRouteStrategies,
 }
 
 impl PolicyConfigField {
@@ -438,6 +440,7 @@ impl PolicyConfigField {
             Self::Description => "description",
             Self::AllowedNamespaces => "allowed_namespaces",
             Self::AllowedWorkloadKinds => "allowed_workload_kinds",
+            Self::AllowedRouteStrategies => "allowed_route_strategies",
         }
     }
 }
@@ -778,6 +781,8 @@ pub struct PolicyConfig {
     allowed_namespaces: Vec<String>,
     #[serde(default)]
     allowed_workload_kinds: Vec<String>,
+    #[serde(default)]
+    allowed_route_strategies: Vec<RouteStrategy>,
 }
 
 impl PolicyConfig {
@@ -789,6 +794,7 @@ impl PolicyConfig {
             description: None,
             allowed_namespaces: Vec::new(),
             allowed_workload_kinds: Vec::new(),
+            allowed_route_strategies: Vec::new(),
         }
     }
 
@@ -853,6 +859,20 @@ impl PolicyConfig {
         self
     }
 
+    /// Borrow the route strategies this policy will allow.
+    pub fn allowed_route_strategies(&self) -> &[RouteStrategy] {
+        &self.allowed_route_strategies
+    }
+
+    /// Return a copy of this policy entry with allowed route strategies.
+    pub fn with_allowed_route_strategies(
+        mut self,
+        allowed_route_strategies: impl IntoIterator<Item = RouteStrategy>,
+    ) -> Self {
+        self.allowed_route_strategies = allowed_route_strategies.into_iter().collect::<Vec<_>>();
+        self
+    }
+
     /// Return validation errors for this policy entry with top-level index context.
     fn validation_errors(&self, policy_index: usize) -> Vec<ConfigValidationError> {
         let mut errors = Vec::new();
@@ -884,6 +904,11 @@ impl PolicyConfig {
             policy_index,
             PolicyConfigField::AllowedWorkloadKinds,
             self.allowed_workload_kinds(),
+        );
+        push_policy_route_strategy_errors(
+            &mut errors,
+            policy_index,
+            self.allowed_route_strategies(),
         );
 
         errors
@@ -932,6 +957,25 @@ fn push_policy_list_entry_errors(
                 policy_index,
                 field,
                 value: normalized_value.to_owned(),
+            });
+        }
+    }
+}
+
+/// Push field-scoped errors for duplicate policy route strategies.
+fn push_policy_route_strategy_errors(
+    errors: &mut Vec<ConfigValidationError>,
+    policy_index: usize,
+    values: &[RouteStrategy],
+) {
+    let mut seen = std::collections::BTreeSet::<RouteStrategy>::new();
+
+    for value in values {
+        if !seen.insert(*value) {
+            errors.push(ConfigValidationError::DuplicatePolicyListEntry {
+                policy_index,
+                field: PolicyConfigField::AllowedRouteStrategies,
+                value: value.as_str().to_owned(),
             });
         }
     }
@@ -1634,6 +1678,10 @@ apps:
             PolicyConfigField::AllowedWorkloadKinds.as_str(),
             "allowed_workload_kinds"
         );
+        assert_eq!(
+            PolicyConfigField::AllowedRouteStrategies.as_str(),
+            "allowed_route_strategies"
+        );
     }
 
     #[test]
@@ -1654,6 +1702,10 @@ apps:
             config.allowed_workload_kinds(),
             &["Deployment".to_string(), "StatefulSet".to_string()]
         );
+        assert_eq!(
+            config.allowed_route_strategies(),
+            &[RouteStrategy::Header, RouteStrategy::Preview]
+        );
     }
 
     #[test]
@@ -1665,6 +1717,7 @@ apps:
         assert_eq!(config.description(), None);
         assert!(config.allowed_namespaces().is_empty());
         assert!(config.allowed_workload_kinds().is_empty());
+        assert!(config.allowed_route_strategies().is_empty());
     }
 
     #[test]
@@ -1678,6 +1731,8 @@ policies:
       - shop
     allowed_workload_kinds:
       - Deployment
+    allowed_route_strategies:
+      - header
 "#,
         )
         .expect("valid policy config YAML");
@@ -1686,7 +1741,8 @@ policies:
             config.policies().entries(),
             &[PolicyConfig::new("sandbox-defaults")
                 .with_allowed_namespaces(["shop"])
-                .with_allowed_workload_kinds(["Deployment"])]
+                .with_allowed_workload_kinds(["Deployment"])
+                .with_allowed_route_strategies([RouteStrategy::Header])]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -1809,6 +1865,40 @@ policies:
     }
 
     #[test]
+    fn rejects_duplicate_policy_allowed_route_strategies() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::new(vec![
+                PolicyConfig::new("sandbox-defaults").with_allowed_route_strategies([
+                    RouteStrategy::Header,
+                    RouteStrategy::Preview,
+                    RouteStrategy::Header,
+                ]),
+            ]),
+        );
+
+        let errors = config
+            .validate()
+            .expect_err("duplicate allowed route strategies should fail");
+
+        assert_eq!(
+            errors.errors(),
+            &[ConfigValidationError::DuplicatePolicyListEntry {
+                policy_index: 0,
+                field: PolicyConfigField::AllowedRouteStrategies,
+                value: "header".to_string(),
+            }]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "policies[0].allowed_route_strategies: duplicate value `header`"
+        );
+    }
+
+    #[test]
     fn serializes_policy_config_to_stable_json() {
         let value = serde_json::to_value(policy_config()).expect("policy should serialize");
 
@@ -1820,6 +1910,7 @@ policies:
                 "description": "Default sandbox boundaries for local agent sessions",
                 "allowed_namespaces": ["shop", "kply-demo"],
                 "allowed_workload_kinds": ["Deployment", "StatefulSet"],
+                "allowed_route_strategies": ["header", "preview"],
             })
         );
     }
@@ -1988,5 +2079,6 @@ policies:
             .with_description("Default sandbox boundaries for local agent sessions")
             .with_allowed_namespaces(["shop", "kply-demo"])
             .with_allowed_workload_kinds(["Deployment", "StatefulSet"])
+            .with_allowed_route_strategies([RouteStrategy::Header, RouteStrategy::Preview])
     }
 }

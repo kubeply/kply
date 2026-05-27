@@ -12,3 +12,6 @@ policies:
     allowed_workload_kinds:
       - Deployment
       - StatefulSet
+    allowed_route_strategies:
+      - header
+      - preview

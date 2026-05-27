@@ -384,6 +384,8 @@ evaluation:
 - `allowed_workload_kinds`: optional list of Kubernetes workload kinds the
   policy will allow once policy evaluation is wired into session planning and
   mutation.
+- `allowed_route_strategies`: optional list of route strategies the policy will
+  allow once policy evaluation is wired into route planning and mutation.
 
 Application config entries define these fields:
 
@@ -405,7 +407,8 @@ Application config entries define these fields:
 Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and
 required app fields, plus policy scalar fields and policy lists such as
-`allowed_namespaces` and `allowed_workload_kinds`.
+`allowed_namespaces`, `allowed_workload_kinds`, and
+`allowed_route_strategies`.
 
 Resolved config JSON serializes the top-level model with `apps`, `checks`, and
 `policies` as arrays, `routing` as an object, `version` as a number, and route
