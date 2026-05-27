@@ -9,7 +9,7 @@ use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Service;
 use kply_cli::cli::{
     AppCommand, CheckCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand,
-    RouteCommand, SessionCommand,
+    ReportCommand, RouteCommand, SessionCommand,
 };
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
@@ -206,6 +206,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Route {
             command: Some(RouteCommand::Cleanup { session, namespace }),
         }) => return render_route_cleanup(&cli, session, namespace.as_deref()),
+        Some(Command::Report {
+            command: Some(ReportCommand::Show { session, namespace }),
+        }) => return render_report_show(&cli, session, namespace.as_deref()),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -493,6 +496,42 @@ fn render_session_status(cli: &Cli, session: &str, namespace: Option<&str>) -> R
             "workload: {}/{}",
             session.workload_kind, session.workload_name
         );
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render the report lookup surface for one sandbox session.
+fn render_report_show(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_report_show_error(&error.to_string(), cli.json),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let namespace = match namespace {
+        Some(namespace) => namespace.to_owned(),
+        None => match runtime.block_on(kply_k8s::cluster_info()) {
+            Ok(info) => info.default_namespace,
+            Err(error) => return render_kubeconfig_error(&error, cli.json),
+        },
+    };
+    let session = match runtime.block_on(get_session_in_namespace(&namespace, session_id.as_str()))
+    {
+        Ok(session) => session,
+        Err(error) => return render_discovery_error(&error, cli.json),
+    };
+    let unavailable = report_show_unavailable_from_session(&session);
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&unavailable)?);
+    } else if !cli.quiet {
+        println!("kply report show {}", unavailable.session_id);
+        println!("namespace: {}", unavailable.namespace);
+        println!("session_status: {}", unavailable.session_status);
+        println!("report: {}", unavailable.report);
+        println!("reason: {}", unavailable.reason);
     }
 
     Ok(ExitCode::SUCCESS)
@@ -899,6 +938,20 @@ fn check_run_report_from_session(session: &SessionSummary) -> CheckRunReport {
     }
 }
 
+/// Build the current report availability response from discovered session metadata.
+fn report_show_unavailable_from_session(session: &SessionSummary) -> ReportShowUnavailable {
+    ReportShowUnavailable {
+        session_id: session.id.clone(),
+        namespace: session.namespace.clone(),
+        session_status: session
+            .status
+            .clone()
+            .unwrap_or_else(|| "unknown".to_owned()),
+        report: "not_available",
+        reason: "session_report_persistence_not_implemented",
+    }
+}
+
 /// Return the check status for discovered session lifecycle metadata.
 fn session_state_check_status(status: Option<&str>) -> CheckResultStatus {
     match status {
@@ -1047,6 +1100,16 @@ struct CheckRunStatusCounts {
     failed: usize,
     warning: usize,
     skipped: usize,
+}
+
+/// Placeholder report availability emitted by `kply report show`.
+#[derive(Debug, Serialize)]
+struct ReportShowUnavailable {
+    session_id: String,
+    namespace: String,
+    session_status: String,
+    report: &'static str,
+    reason: &'static str,
 }
 
 /// Dry-run route plan emitted by `kply route plan`.
@@ -2645,6 +2708,24 @@ fn render_session_status_error(message: &str, wants_json: bool) -> Result<ExitCo
     Ok(exit_code(EXIT_USAGE))
 }
 
+/// Render report show input errors.
+fn render_report_show_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "report_show",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: report show\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
 /// Render check run input errors.
 fn render_check_run_error(message: &str, wants_json: bool) -> Result<ExitCode> {
     if wants_json {
@@ -3089,7 +3170,8 @@ mod tests {
         check_run_report_from_session, planned_resource_token, planned_session_annotations,
         planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
         planned_session_resources, planned_session_risk_notes, render_check_evidence,
-        render_check_run_json_report, render_check_run_text_report, required_session_permissions,
+        render_check_run_json_report, render_check_run_text_report,
+        report_show_unavailable_from_session, required_session_permissions,
         resolve_session_route_strategy, route_cleanup_from_session,
         route_strategy_creates_route_object, route_strategy_has_route_check,
         route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
@@ -3177,6 +3259,25 @@ mod tests {
             "shop/Deployment/checkout-plan-workload"
         );
         assert_eq!(report.checks[0].status, CheckResultStatus::Passed);
+    }
+
+    #[test]
+    fn builds_report_show_unavailable_from_session_metadata() {
+        let report = report_show_unavailable_from_session(&SessionSummary {
+            id: "checkout-plan".to_owned(),
+            name: Some("checkout-session".to_owned()),
+            namespace: "shop".to_owned(),
+            app: Some("checkout".to_owned()),
+            status: Some("active".to_owned()),
+            workload_kind: "Deployment".to_owned(),
+            workload_name: "checkout-plan-workload".to_owned(),
+        });
+
+        assert_eq!(report.session_id, "checkout-plan");
+        assert_eq!(report.namespace, "shop");
+        assert_eq!(report.session_status, "active");
+        assert_eq!(report.report, "not_available");
+        assert_eq!(report.reason, "session_report_persistence_not_implemented");
     }
 
     #[test]

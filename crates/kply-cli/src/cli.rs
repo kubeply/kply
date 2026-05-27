@@ -100,7 +100,11 @@ pub enum Command {
     /// Generate future shell completion scripts.
     Completion,
     /// Read future session reports.
-    Report,
+    Report {
+        /// Optional report command.
+        #[command(subcommand)]
+        command: Option<ReportCommand>,
+    },
 }
 
 impl Command {
@@ -113,7 +117,7 @@ impl Command {
         Self::Check { command: None },
         Self::Route { command: None },
         Self::Completion,
-        Self::Report,
+        Self::Report { command: None },
     ];
 
     /// Return the stable command name used in CLI output.
@@ -128,7 +132,29 @@ impl Command {
             Self::Route { .. } => "route",
             Self::Demo { .. } => "demo",
             Self::Completion => "completion",
-            Self::Report => "report",
+            Self::Report { .. } => "report",
+        }
+    }
+}
+
+/// Session report commands.
+#[derive(Clone, Debug, Subcommand)]
+pub enum ReportCommand {
+    /// Show the report for one sandbox session.
+    Show {
+        /// Session id to inspect.
+        session: String,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
+}
+
+impl ReportCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Show { .. } => "show",
         }
     }
 }

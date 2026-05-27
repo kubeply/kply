@@ -8,6 +8,7 @@ use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
 use kply_cli::cli::DemoCommand;
+use kply_cli::cli::ReportCommand;
 use kply_cli::cli::RouteCommand;
 use kply_cli::cli::SessionCommand;
 use kply_test::{
@@ -1338,6 +1339,67 @@ fn rejects_session_status_without_kubeconfig_json() {
     );
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
     insta::assert_json_snapshot!("session_status_missing_kubeconfig_json", value);
+}
+
+#[test]
+fn rejects_report_show_invalid_session() {
+    let output = kply_cmd()
+        .args(["report", "show", "Checkout", "--namespace", "shop"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("report_show_invalid_session", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_report_show_invalid_session_json() {
+    let output = kply_cmd()
+        .args([
+            "report",
+            "show",
+            "Checkout",
+            "--namespace",
+            "shop",
+            "--json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("report_show_invalid_session_json", value);
+}
+
+#[test]
+fn rejects_report_show_without_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["report", "show", "checkout-plan", "--namespace", "shop"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "report show errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!("report_show_missing_kubeconfig", normalize_output(&stderr));
 }
 
 #[test]
@@ -3395,6 +3457,38 @@ fn covers_every_route_command() {
         ])
         .assert()
         .success();
+}
+
+#[test]
+fn covers_every_report_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("report")
+        .expect("report command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["show"],
+        "update report command tests when the report command surface changes"
+    );
+
+    kply_cmd()
+        .args([
+            "report",
+            ReportCommand::Show {
+                session: String::new(),
+                namespace: None,
+            }
+            .name(),
+            "checkout-plan",
+            "--namespace",
+            "shop",
+        ])
+        .assert()
+        .code(EXIT_USAGE);
 }
 
 #[test]
