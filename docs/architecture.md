@@ -246,6 +246,13 @@ Current provisional pre-`1.0.0` unsupported feature warning fields:
 - `reason`: stable reason code explaining why the feature is not executable
   yet.
 
+Current provisional pre-`1.0.0` unsupported route output fields:
+
+- `strategy`: route strategy that cannot be planned completely.
+- `feature`: stable route capability identifier.
+- `reason`: stable reason code explaining why the route cannot be planned.
+- `action`: stable next action hint for agents and humans.
+
 Current provisional pre-`1.0.0` risk note fields:
 
 - `category`: stable risk category such as `database` or `secret`.
