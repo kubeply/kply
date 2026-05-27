@@ -12,15 +12,16 @@ use kply_cli::cli::{
     PolicyCommand, ReportCommand, ReportExportFormat, RouteCommand, SessionCommand,
 };
 use kply_config::{
-    AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
+    AppConfig, ConfigLoadError, ConfigValidationErrors, DatabaseRiskWarningPolicy, KplyConfig,
+    MutationModePolicy, PolicyConfig, PolicyConfigs, RouteStrategy, load_config_path,
 };
 use kply_core::{
     AppGraph, CheckResultStatus, ConfidenceLevel, GraphRelationship, ImageRef,
     KubernetesResourceRef, MetadataEntry, PlannedCheck, PlannedCleanupStep, RelationshipConfidence,
     RequiredPermission, RiskNote, RouteSelector, SandboxManifestError, ServiceRef, SessionId,
-    SessionName, SessionPlan, SessionPolicy, SessionStatus, TimeToLive, UnsupportedFeatureWarning,
-    WorkloadRef, sandbox_deployment_manifest, sandbox_route_placeholder_manifest,
-    sandbox_service_manifest,
+    SessionName, SessionOperation, SessionPlan, SessionPolicy, SessionStatus, TimeToLive,
+    UnsupportedFeatureWarning, WorkloadRef, sandbox_deployment_manifest,
+    sandbox_route_placeholder_manifest, sandbox_service_manifest,
 };
 use kply_k8s::{
     DeploymentRolloutPhase, DeploymentSummary, DiscoveryError, KubeconfigError, MutationError,
@@ -307,15 +308,32 @@ fn render_session_create(
         return render_app_not_found_error(app_name, cli.json);
     };
 
-    let plan = match session_plan_from_config(app, image, namespace, time_to_live, route_strategy) {
+    let plan = match session_plan_from_config_with_policies(
+        app,
+        config.policies(),
+        image,
+        namespace,
+        time_to_live,
+        route_strategy,
+    ) {
         Ok(plan) => plan,
         Err(SessionPlanBuildError::Config(message)) => {
             return render_session_plan_config_error(&message, cli.json);
+        }
+        Err(SessionPlanBuildError::Policy(message)) => {
+            return render_session_plan_policy_error(&message, cli.json);
         }
         Err(SessionPlanBuildError::Usage(message)) => {
             return render_session_plan_error(&message, cli.json);
         }
     };
+
+    if apply && !plan.policy().allows(SessionOperation::Prepare) {
+        return render_session_plan_policy_error(
+            "policy does not allow session creation",
+            cli.json,
+        );
+    }
 
     if apply {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1576,10 +1594,20 @@ fn render_session_manifests(
         return render_app_not_found_error(app_name, cli.json);
     };
 
-    let plan = match session_plan_from_config(app, image, namespace, time_to_live, route_strategy) {
+    let plan = match session_plan_from_config_with_policies(
+        app,
+        config.policies(),
+        image,
+        namespace,
+        time_to_live,
+        route_strategy,
+    ) {
         Ok(plan) => plan,
         Err(SessionPlanBuildError::Config(message)) => {
             return render_session_plan_config_error(&message, cli.json);
+        }
+        Err(SessionPlanBuildError::Policy(message)) => {
+            return render_session_plan_policy_error(&message, cli.json);
         }
         Err(SessionPlanBuildError::Usage(message)) => {
             return render_session_plan_error(&message, cli.json);
@@ -1649,10 +1677,20 @@ fn render_session_plan(
         return render_app_not_found_error(app_name, cli.json);
     };
 
-    let plan = match session_plan_from_config(app, image, namespace, time_to_live, route_strategy) {
+    let plan = match session_plan_from_config_with_policies(
+        app,
+        config.policies(),
+        image,
+        namespace,
+        time_to_live,
+        route_strategy,
+    ) {
         Ok(plan) => plan,
         Err(SessionPlanBuildError::Config(message)) => {
             return render_session_plan_config_error(&message, cli.json);
+        }
+        Err(SessionPlanBuildError::Policy(message)) => {
+            return render_session_plan_policy_error(&message, cli.json);
         }
         Err(SessionPlanBuildError::Usage(message)) => {
             return render_session_plan_error(&message, cli.json);
@@ -1744,9 +1782,12 @@ struct SessionManifestDocument {
 }
 
 /// Error produced while building a session plan from config and CLI input.
+#[derive(Debug)]
 enum SessionPlanBuildError {
     /// Configuration-derived data could not be converted into the core model.
     Config(String),
+    /// Configured policy boundaries reject the requested session plan.
+    Policy(String),
     /// User-provided CLI input was invalid for session planning.
     Usage(String),
 }
@@ -1892,8 +1933,28 @@ fn planned_manifest_summary(
 }
 
 /// Build a session plan from static app configuration and CLI overrides.
+#[cfg(test)]
 fn session_plan_from_config(
     app: &AppConfig,
+    image: Option<&str>,
+    namespace: Option<&str>,
+    time_to_live: Option<&str>,
+    route_strategy: Option<&str>,
+) -> std::result::Result<SessionPlan, SessionPlanBuildError> {
+    session_plan_from_config_with_policies(
+        app,
+        &PolicyConfigs::default(),
+        image,
+        namespace,
+        time_to_live,
+        route_strategy,
+    )
+}
+
+/// Build a session plan from app config, policy config, and CLI overrides.
+fn session_plan_from_config_with_policies(
+    app: &AppConfig,
+    policies: &PolicyConfigs,
     image: Option<&str>,
     namespace: Option<&str>,
     time_to_live: Option<&str>,
@@ -1964,6 +2025,14 @@ fn session_plan_from_config(
             )));
         }
     };
+    let policy_decision = evaluate_session_planning_policies(
+        policies,
+        namespace,
+        app.workload_kind(),
+        &image,
+        time_to_live.as_ref(),
+        route_strategy,
+    )?;
     let planned_resources = planned_session_resources(
         namespace,
         SANDBOX_WORKLOAD_KIND,
@@ -2012,16 +2081,20 @@ fn session_plan_from_config(
                 "invalid unsupported feature warning metadata: {error}"
             ))
         })?;
-    let risk_notes = planned_session_risk_notes(app).map_err(|error| {
-        SessionPlanBuildError::Config(format!("invalid risk note metadata: {error}"))
-    })?;
+    let risk_notes = if policy_decision.database_risk_warnings_enabled {
+        planned_session_risk_notes(app).map_err(|error| {
+            SessionPlanBuildError::Config(format!("invalid risk note metadata: {error}"))
+        })?
+    } else {
+        Vec::new()
+    };
 
     let mut plan = SessionPlan::new(
         session_id,
         session_name,
         workload,
         image,
-        SessionPolicy::sandbox(),
+        policy_decision.session_policy,
     );
     plan = plan.with_planned_resources(planned_resources);
     plan = plan.with_planned_labels(planned_labels).map_err(|error| {
@@ -2041,6 +2114,198 @@ fn session_plan_from_config(
     }
 
     Ok(plan)
+}
+
+/// Policy decision returned by planning policy evaluation.
+#[derive(Debug)]
+struct SessionPlanningPolicyDecision {
+    session_policy: SessionPolicy,
+    database_risk_warnings_enabled: bool,
+}
+
+/// Evaluate configured policy entries against one requested session plan.
+fn evaluate_session_planning_policies(
+    policies: &PolicyConfigs,
+    namespace: &str,
+    workload_kind: &str,
+    image: &ImageRef,
+    time_to_live: Option<&TimeToLive>,
+    route_strategy: &str,
+) -> std::result::Result<SessionPlanningPolicyDecision, SessionPlanBuildError> {
+    let enabled_policies = policies
+        .entries()
+        .iter()
+        .filter(|policy| policy.enabled())
+        .collect::<Vec<_>>();
+
+    if enabled_policies.is_empty() {
+        return Ok(SessionPlanningPolicyDecision {
+            session_policy: SessionPolicy::sandbox(),
+            database_risk_warnings_enabled: true,
+        });
+    }
+
+    let mut denials = Vec::new();
+    for policy in enabled_policies {
+        match evaluate_session_planning_policy(
+            policy,
+            namespace,
+            workload_kind,
+            image,
+            time_to_live,
+            route_strategy,
+        ) {
+            Ok(decision) => return Ok(decision),
+            Err(reason) => denials.push(format!("policy `{}` {reason}", policy.name())),
+        }
+    }
+
+    Err(SessionPlanBuildError::Policy(format!(
+        "no enabled policy allows this session plan: {}",
+        denials.join("; ")
+    )))
+}
+
+/// Evaluate one policy entry against one requested session plan.
+fn evaluate_session_planning_policy(
+    policy: &PolicyConfig,
+    namespace: &str,
+    workload_kind: &str,
+    image: &ImageRef,
+    time_to_live: Option<&TimeToLive>,
+    route_strategy: &str,
+) -> std::result::Result<SessionPlanningPolicyDecision, String> {
+    if !policy.allowed_namespaces().is_empty()
+        && !policy
+            .allowed_namespaces()
+            .iter()
+            .any(|allowed| allowed == namespace)
+    {
+        return Err(format!("does not allow namespace `{namespace}`"));
+    }
+
+    if !policy.allowed_workload_kinds().is_empty()
+        && !policy
+            .allowed_workload_kinds()
+            .iter()
+            .any(|allowed| allowed == workload_kind)
+    {
+        return Err(format!("does not allow workload kind `{workload_kind}`"));
+    }
+
+    if !policy.allowed_image_registries().is_empty() {
+        let registry = image_registry_host(image.as_str());
+        if !policy
+            .allowed_image_registries()
+            .iter()
+            .any(|allowed| allowed == registry)
+        {
+            return Err(format!("does not allow image registry `{registry}`"));
+        }
+    }
+
+    if !policy.allowed_route_strategies().is_empty() {
+        let Some(strategy) = policy_route_strategy(route_strategy) else {
+            return Err(format!("does not allow route strategy `{route_strategy}`"));
+        };
+        if !policy.allowed_route_strategies().contains(&strategy) {
+            return Err(format!("does not allow route strategy `{route_strategy}`"));
+        }
+    }
+
+    if let (Some(max_session_ttl), Some(time_to_live)) = (policy.max_session_ttl(), time_to_live)
+        && compact_duration_seconds(time_to_live.as_str())
+            > compact_duration_seconds(max_session_ttl)
+    {
+        return Err(format!(
+            "does not allow ttl `{}` above max_session_ttl `{max_session_ttl}`",
+            time_to_live.as_str()
+        ));
+    }
+
+    if route_strategy_creates_route_object(route_strategy)
+        && matches!(
+            policy.mutation_mode(),
+            Some(MutationModePolicy::ReadOnly | MutationModePolicy::SandboxOnly)
+        )
+    {
+        return Err(format!(
+            "does not allow route mutation for route strategy `{route_strategy}`"
+        ));
+    }
+
+    Ok(SessionPlanningPolicyDecision {
+        session_policy: session_policy_for_mutation_mode(policy.mutation_mode())?,
+        database_risk_warnings_enabled: policy.database_risk_warnings()
+            != Some(DatabaseRiskWarningPolicy::Disabled),
+    })
+}
+
+/// Return the session operations represented by a mutation mode policy.
+fn session_policy_for_mutation_mode(
+    mutation_mode: Option<MutationModePolicy>,
+) -> std::result::Result<SessionPolicy, String> {
+    match mutation_mode {
+        Some(MutationModePolicy::ReadOnly) => {
+            SessionPolicy::new([SessionOperation::Inspect, SessionOperation::Plan])
+                .map_err(|error| format!("invalid read-only session policy: {error}"))
+        }
+        Some(MutationModePolicy::SandboxOnly) => SessionPolicy::new([
+            SessionOperation::Inspect,
+            SessionOperation::Plan,
+            SessionOperation::Prepare,
+            SessionOperation::Verify,
+            SessionOperation::Cleanup,
+        ])
+        .map_err(|error| format!("invalid sandbox-only session policy: {error}")),
+        Some(MutationModePolicy::RouteMutation) | None => Ok(SessionPolicy::sandbox()),
+        Some(_) => Ok({
+            // `MutationModePolicy` is non-exhaustive outside `kply-config`.
+            // Unknown future modes keep the current sandbox-safe operation set
+            // until this CLI deliberately adopts their semantics.
+            SessionPolicy::sandbox()
+        }),
+    }
+}
+
+/// Convert a CLI route strategy spelling to the policy route strategy domain.
+fn policy_route_strategy(route_strategy: &str) -> Option<RouteStrategy> {
+    match route_strategy {
+        "header" => Some(RouteStrategy::Header),
+        "host" => Some(RouteStrategy::Host),
+        ROUTE_STRATEGY_PREVIEW | ROUTE_STRATEGY_PREVIEW_SERVICE => Some(RouteStrategy::Preview),
+        // `none` deliberately has no config-level route strategy variant. A
+        // policy with an explicit route strategy allowlist rejects it instead
+        // of treating "no route mutation" as one of the allowed route types.
+        ROUTE_STRATEGY_NONE => None,
+        _ => None,
+    }
+}
+
+/// Return the explicit registry host for an image reference.
+fn image_registry_host(image: &str) -> &str {
+    let first_component = image.split('/').next().unwrap_or(image);
+    let has_registry_port = first_component
+        .rsplit_once(':')
+        .is_some_and(|(_, port)| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()));
+    if first_component == "localhost" || first_component.contains('.') || has_registry_port {
+        first_component
+    } else {
+        "docker.io"
+    }
+}
+
+/// Convert a validated compact duration to seconds for policy comparisons.
+fn compact_duration_seconds(value: &str) -> u128 {
+    let (digits, unit) = value.split_at(value.len().saturating_sub(1));
+    let value = digits.parse::<u128>().unwrap_or(u128::MAX);
+    match unit {
+        "s" => value,
+        "m" => value.saturating_mul(60),
+        "h" => value.saturating_mul(60 * 60),
+        "d" => value.saturating_mul(24 * 60 * 60),
+        _ => u128::MAX,
+    }
 }
 
 /// Build Kubernetes resource identities created by one planned sandbox session.
@@ -2768,6 +3033,24 @@ fn render_session_plan_config_error(message: &str, wants_json: bool) -> Result<E
     Ok(exit_code(EXIT_BLOCKING))
 }
 
+/// Render configured policy rejection errors.
+fn render_session_plan_policy_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "policy",
+                "exit_code": EXIT_BLOCKING,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: policy\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_BLOCKING))
+}
+
 /// Render session status input errors.
 fn render_session_status_error(message: &str, wants_json: bool) -> Result<ExitCode> {
     if wants_json {
@@ -3291,20 +3574,28 @@ mod tests {
     use super::{
         CheckRunItem, CheckRunReport, CheckRunStatusCounts, ReportShowUnavailable,
         SessionCreateApplyError, SessionPlanBuildError, SessionStateRecordError,
-        apply_session_resources, check_run_report_from_session, planned_resource_token,
+        apply_session_resources, check_run_report_from_session, compact_duration_seconds,
+        evaluate_session_planning_policies, image_registry_host, planned_resource_token,
         planned_session_annotations, planned_session_checks, planned_session_cleanup_steps,
         planned_session_labels, planned_session_resources, planned_session_risk_notes,
-        render_check_evidence, render_check_run_json_report, render_check_run_text_report,
-        render_report_unavailable_json, render_report_unavailable_markdown,
-        render_report_unavailable_text, report_show_unavailable_from_session,
-        required_session_permissions, resolve_session_route_strategy, route_cleanup_from_session,
+        policy_route_strategy, render_check_evidence, render_check_run_json_report,
+        render_check_run_text_report, render_report_unavailable_json,
+        render_report_unavailable_markdown, render_report_unavailable_text,
+        report_show_unavailable_from_session, required_session_permissions,
+        resolve_session_route_strategy, route_cleanup_from_session,
         route_strategy_creates_route_object, route_strategy_has_route_check,
-        route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
-        session_state_check_status, session_token, unsupported_session_feature_warnings,
-        workload_permission_resource,
+        route_strategy_uses_preview_service, session_plan_from_config,
+        session_policy_for_mutation_mode, session_state_annotations, session_state_check_status,
+        session_token, unsupported_session_feature_warnings, workload_permission_resource,
     };
-    use kply_config::{AppConfig, RouteStrategy};
-    use kply_core::{CheckResultStatus, ImageRef, SessionPlan, SessionStatus, WorkloadRef};
+    use kply_config::{
+        AppConfig, DatabaseRiskWarningPolicy, MutationModePolicy, PolicyConfig, PolicyConfigs,
+        RouteStrategy,
+    };
+    use kply_core::{
+        CheckResultStatus, ImageRef, SessionOperation, SessionPlan, SessionStatus, TimeToLive,
+        WorkloadRef,
+    };
     use kply_k8s::{
         DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, MutationError,
         MutationErrorCode, ServiceSummary, SessionSummary,
@@ -4537,6 +4828,117 @@ mod tests {
     }
 
     #[test]
+    fn maps_cli_route_strategies_to_policy_route_strategies() {
+        assert_eq!(policy_route_strategy("header"), Some(RouteStrategy::Header));
+        assert_eq!(policy_route_strategy("host"), Some(RouteStrategy::Host));
+        assert_eq!(
+            policy_route_strategy("preview"),
+            Some(RouteStrategy::Preview)
+        );
+        assert_eq!(
+            policy_route_strategy("preview-service"),
+            Some(RouteStrategy::Preview)
+        );
+        assert_eq!(policy_route_strategy("none"), None);
+        assert_eq!(policy_route_strategy("unknown"), None);
+    }
+
+    #[test]
+    fn extracts_image_registry_hosts_for_policy_checks() {
+        assert_eq!(image_registry_host("ghcr.io/acme/checkout:next"), "ghcr.io");
+        assert_eq!(
+            image_registry_host("localhost:5000/acme/checkout:next"),
+            "localhost:5000"
+        );
+        assert_eq!(
+            image_registry_host("localhost/acme/checkout:next"),
+            "localhost"
+        );
+        assert_eq!(image_registry_host("nginx:latest"), "docker.io");
+        assert_eq!(image_registry_host("myimage:v1"), "docker.io");
+        assert_eq!(image_registry_host("busybox"), "docker.io");
+    }
+
+    #[test]
+    fn converts_compact_policy_durations_to_seconds() {
+        assert_eq!(compact_duration_seconds("30s"), 30);
+        assert_eq!(compact_duration_seconds("2m"), 120);
+        assert_eq!(compact_duration_seconds("3h"), 10_800);
+        assert_eq!(compact_duration_seconds("1d"), 86_400);
+    }
+
+    #[test]
+    fn derives_session_policy_from_mutation_mode() {
+        let read_only = session_policy_for_mutation_mode(Some(MutationModePolicy::ReadOnly))
+            .expect("read-only policy should build");
+        assert_eq!(read_only.allowed_operations().len(), 2);
+        assert!(read_only.allows(SessionOperation::Inspect));
+        assert!(read_only.allows(SessionOperation::Plan));
+        assert!(!read_only.allows(SessionOperation::Prepare));
+
+        let sandbox_only = session_policy_for_mutation_mode(Some(MutationModePolicy::SandboxOnly))
+            .expect("sandbox-only policy should build");
+        assert_eq!(sandbox_only.allowed_operations().len(), 5);
+        assert!(sandbox_only.allows(SessionOperation::Prepare));
+        assert!(!sandbox_only.allows(SessionOperation::Route));
+
+        let route_mutation =
+            session_policy_for_mutation_mode(Some(MutationModePolicy::RouteMutation))
+                .expect("route-mutation policy should build");
+        assert_eq!(route_mutation.allowed_operations().len(), 6);
+        assert!(route_mutation.allows(SessionOperation::Route));
+    }
+
+    #[test]
+    fn evaluates_session_planning_policy_matches_and_denials() {
+        let image = ImageRef::new("ghcr.io/acme/checkout:next").expect("image");
+        let time_to_live = TimeToLive::new("30m").expect("ttl");
+        let policies = PolicyConfigs::new(vec![
+            PolicyConfig::new("disabled")
+                .with_enabled(false)
+                .with_allowed_namespaces(["warehouse"]),
+            PolicyConfig::new("sandbox-defaults")
+                .with_allowed_namespaces(["shop"])
+                .with_allowed_workload_kinds(["Deployment"])
+                .with_allowed_image_registries(["ghcr.io"])
+                .with_allowed_route_strategies([RouteStrategy::Preview])
+                .with_max_session_ttl("30m")
+                .with_mutation_mode(MutationModePolicy::SandboxOnly)
+                .with_database_risk_warnings(DatabaseRiskWarningPolicy::Disabled),
+        ]);
+
+        let decision = evaluate_session_planning_policies(
+            &policies,
+            "shop",
+            "Deployment",
+            &image,
+            Some(&time_to_live),
+            "preview",
+        )
+        .expect("matching policy should allow planning");
+
+        assert!(!decision.database_risk_warnings_enabled);
+        assert_eq!(decision.session_policy.allowed_operations().len(), 5);
+
+        let denied = evaluate_session_planning_policies(
+            &policies,
+            "warehouse",
+            "Deployment",
+            &image,
+            Some(&time_to_live),
+            "preview",
+        )
+        .expect_err("no enabled policy should allow warehouse");
+
+        match denied {
+            SessionPlanBuildError::Policy(message) => {
+                assert!(message.contains("does not allow namespace `warehouse`"));
+            }
+            _ => panic!("expected policy denial"),
+        }
+    }
+
+    #[test]
     fn selects_route_strategy_from_config_auto_and_explicit_overrides() {
         let app = AppConfig::new(
             "checkout",
@@ -4647,6 +5049,7 @@ mod tests {
                 );
             }
             Err(SessionPlanBuildError::Config(_)) => panic!("expected a usage error"),
+            Err(SessionPlanBuildError::Policy(_)) => panic!("expected a usage error"),
             Ok(_) => panic!("unknown route strategy should be rejected"),
         }
     }

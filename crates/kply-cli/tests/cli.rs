@@ -84,6 +84,65 @@ policies:
     enabled: false
 "#;
 
+const POLICY_SESSION_PLAN_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+policies:
+  - name: sandbox-defaults
+    allowed_namespaces:
+      - shop
+    allowed_workload_kinds:
+      - Deployment
+    allowed_image_registries:
+      - ghcr.io
+    allowed_route_strategies:
+      - preview
+    max_session_ttl: 30m
+    mutation_mode: sandbox-only
+    database_risk_warnings: disabled
+"#;
+
+const POLICY_SESSION_PLAN_DENY_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+policies:
+  - name: warehouse-only
+    allowed_namespaces:
+      - warehouse
+"#;
+
+const POLICY_SESSION_CREATE_READ_ONLY_CONFIG: &str = r#"
+version: 1
+apps:
+  - name: checkout
+    namespace: shop
+    workload: checkout-api
+    service: checkout-http
+    default_image: ghcr.io/acme/checkout:next
+    route_strategy: header
+policies:
+  - name: read-only
+    allowed_namespaces:
+      - shop
+    allowed_workload_kinds:
+      - Deployment
+    allowed_image_registries:
+      - ghcr.io
+    mutation_mode: read-only
+"#;
+
 fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
     let workspace = temp_workspace();
     let config_path = write_temp_file(&workspace, "kply.yaml", SESSION_PLAN_CONFIG);
@@ -682,6 +741,162 @@ fn prints_session_plan_placeholder_json() {
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
     insta::assert_json_snapshot!("session_plan_placeholder_json", value);
+}
+
+#[test]
+fn prints_session_plan_with_matching_policy() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_SESSION_PLAN_CONFIG);
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "plan",
+            "checkout",
+            "--route-strategy",
+            "preview",
+            "--ttl",
+            "30m",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("session_plan_with_matching_policy", output);
+}
+
+#[test]
+fn rejects_session_plan_denied_by_policy() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_SESSION_PLAN_DENY_CONFIG);
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "plan",
+            "checkout",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "policy-denied session plans should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_plan_policy_denied_text", stderr);
+}
+
+#[test]
+fn rejects_session_plan_denied_by_policy_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_SESSION_PLAN_DENY_CONFIG);
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "plan",
+            "checkout",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "policy-denied JSON session plans should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_plan_policy_denied_json", value);
+}
+
+#[test]
+fn rejects_session_create_denied_by_policy() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_SESSION_PLAN_DENY_CONFIG);
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "create",
+            "checkout",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "policy-denied session create should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_create_policy_denied_text", stderr);
+}
+
+#[test]
+fn rejects_session_create_apply_when_policy_is_read_only() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        POLICY_SESSION_CREATE_READ_ONLY_CONFIG,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "create",
+            "checkout",
+            "--apply",
+            "--route-strategy",
+            "none",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "read-only session create apply should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_create_apply_read_only_policy_text", stderr);
+}
+
+#[test]
+fn rejects_session_manifests_denied_by_policy() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_SESSION_PLAN_DENY_CONFIG);
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "manifests",
+            "checkout",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "policy-denied session manifests should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("session_manifests_policy_denied_text", stderr);
 }
 
 #[test]

@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: policy
+
+no enabled policy allows this session plan: policy `warehouse-only` does not allow namespace `shop`

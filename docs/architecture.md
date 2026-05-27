@@ -379,20 +379,21 @@ evaluation:
 - `enabled`: optional boolean, defaulting to `true`, that lets teams keep a
   policy entry documented while disabling its future enforcement.
 - `description`: optional human-readable context for operators and agents.
-- `allowed_namespaces`: optional list of Kubernetes namespaces the policy will
-  allow once policy evaluation is wired into session planning and mutation.
+- `allowed_namespaces`: optional list of Kubernetes namespaces the policy
+  allows during session planning.
 - `allowed_workload_kinds`: optional list of Kubernetes workload kinds the
-  policy will allow once policy evaluation is wired into session planning and
-  mutation.
+  policy allows during session planning.
 - `allowed_image_registries`: optional list of image registry host values such
-  as `registry.example.com` or `localhost:5000` the policy will allow once
-  policy evaluation is wired into session planning and mutation.
+  as `registry.example.com` or `localhost:5000` the policy allows during
+  session planning.
 - `allowed_route_strategies`: optional list of route strategies the policy will
-  allow once policy evaluation is wired into route planning and mutation.
+  allow during session planning.
 - `max_session_ttl`: optional compact duration such as `30m` or `2h` that caps
-  future sandbox session lifetime once policy evaluation is wired in.
+  planned sandbox session lifetime.
 - `mutation_mode`: optional mutation scope. Config files accept `read-only`,
-  `sandbox-only`, and `route-mutation`.
+  `sandbox-only`, and `route-mutation`. Session planning uses this value to
+  derive the planned operation set and to reject route-object plans when route
+  mutation is not allowed.
 - `secret_handling`: optional Secret reference handling. Config files accept
   `metadata-only` and `deny-references`; no policy mode permits reading Secret
   contents.
@@ -442,8 +443,14 @@ file specified with `--config`, or the default config shape if not provided.
 
 `kply policy check` validates the currently resolved config model and reports
 the number of configured and enabled policy entries. It is a policy-boundary
-configuration check; later policy roadmap milestones wire those validated
-boundaries into session planning and mutation.
+configuration check.
+
+`kply session plan`, `kply session create`, and `kply session manifests`
+evaluate enabled policies before rendering or applying a plan. If no enabled
+policies are configured, planning keeps the default sandbox policy. If one or
+more enabled policies are configured, at least one enabled policy must allow the
+requested namespace, workload kind, image registry, route strategy, TTL, and
+mutation scope.
 
 Current CLI config precedence is:
 
