@@ -201,6 +201,7 @@ expression: value
       "namespace": "checkout"
     }
   },
+  "recommended_next_action": "cleanup_required",
   "route_strategy": {
     "selector": {
       "kind": "header",
