@@ -209,6 +209,17 @@ Current provisional pre-`1.0.0` routing capability detection fields:
 - `limitations`: stable limitation codes explaining unavailable or incomplete
   routing paths.
 
+Current provisional pre-`1.0.0` NGINX Ingress planning behavior:
+
+- `kply-routing` can generate a session-owned ingress-nginx canary `Ingress`
+  manifest from an existing source `Ingress`.
+- The source `Ingress` must declare an IngressClass name of `nginx`,
+  `ingress-nginx`, or `nginx-ingress`.
+- Only header-selected sandbox traffic is planned. The generated manifest adds
+  ingress-nginx canary annotations for the configured header name and value.
+- Host/path rules are mirrored from the source `Ingress`, but backends point to
+  the sandbox Service. Production `Ingress` resources are not patched.
+
 Current provisional pre-`1.0.0` unsupported feature warning fields:
 
 - `feature`: stable unsupported feature identifier.
