@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: config validation
+
+policies[0].allowed_namespaces: duplicate value `shop`

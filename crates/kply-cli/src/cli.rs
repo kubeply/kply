@@ -73,6 +73,12 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<ConfigCommand>,
     },
+    /// Check configured policy boundaries.
+    Policy {
+        /// Optional policy command.
+        #[command(subcommand)]
+        command: Option<PolicyCommand>,
+    },
     /// Inspect Kubernetes cluster facts.
     Cluster {
         /// Optional cluster command.
@@ -113,6 +119,7 @@ impl Command {
         Self::Session { command: None },
         Self::App { command: None },
         Self::Config { command: None },
+        Self::Policy { command: None },
         Self::Cluster { command: None },
         Self::Check { command: None },
         Self::Route { command: None },
@@ -127,6 +134,7 @@ impl Command {
             Self::Session { .. } => "session",
             Self::App { .. } => "app",
             Self::Config { .. } => "config",
+            Self::Policy { .. } => "policy",
             Self::Cluster { .. } => "cluster",
             Self::Check { .. } => "check",
             Self::Route { .. } => "route",
@@ -433,6 +441,22 @@ impl ConfigCommand {
         match self {
             Self::Show => "show",
             Self::Validate => "validate",
+        }
+    }
+}
+
+/// Policy commands.
+#[derive(Clone, Copy, Debug, Subcommand)]
+pub enum PolicyCommand {
+    /// Validate configured policy boundaries.
+    Check,
+}
+
+impl PolicyCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Check => "check",
         }
     }
 }

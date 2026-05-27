@@ -8,6 +8,7 @@ use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
 use kply_cli::cli::DemoCommand;
+use kply_cli::cli::PolicyCommand;
 use kply_cli::cli::ReportCommand;
 use kply_cli::cli::ReportExportFormat;
 use kply_cli::cli::RouteCommand;
@@ -60,6 +61,27 @@ apps:
     workload: checkout-api
     service: checkout-http
     route_strategy: header
+"#;
+
+const POLICY_CHECK_CONFIG: &str = r#"
+version: 1
+policies:
+  - name: sandbox-defaults
+    enabled: true
+    allowed_namespaces:
+      - shop
+    allowed_workload_kinds:
+      - Deployment
+    allowed_image_registries:
+      - ghcr.io
+    allowed_route_strategies:
+      - header
+    max_session_ttl: 30m
+    mutation_mode: sandbox-only
+    secret_handling: metadata-only
+    database_risk_warnings: metadata-only
+  - name: documented-disabled-policy
+    enabled: false
 "#;
 
 fn with_session_plan_config<T>(run: impl FnOnce(&str) -> T) -> T {
@@ -2910,6 +2932,130 @@ fn suppresses_config_validate_text_when_quiet() {
 }
 
 #[test]
+fn prints_policy_check_text() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_CHECK_CONFIG);
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "policy",
+            "check",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("policy_check_text", output);
+}
+
+#[test]
+fn prints_policy_check_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_CHECK_CONFIG);
+
+    let output = kply_cmd()
+        .args([
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "policy",
+            "check",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("policy_check_json", value);
+}
+
+#[test]
+fn rejects_invalid_policy_check_text() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+policies:
+  - name: sandbox-defaults
+    allowed_namespaces:
+      - shop
+      - shop
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "policy",
+            "check",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid policy check text output should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("policy_check_invalid_text", stderr);
+}
+
+#[test]
+fn rejects_invalid_policy_check_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+policies:
+  - name: sandbox-defaults
+    allowed_image_registries:
+      - GHCR.io/acme
+"#,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "policy",
+            "check",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid policy check JSON output should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("policy_check_invalid_json", value);
+}
+
+#[test]
+fn suppresses_policy_check_text_when_quiet() {
+    kply_cmd()
+        .args(["policy", "check", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
 fn prints_app_list_empty_text() {
     let output = kply_cmd()
         .args(["app", "list"])
@@ -3477,6 +3623,7 @@ fn covers_every_top_level_command() {
             "config",
             "demo",
             "help",
+            "policy",
             "report",
             "route",
             "session"
@@ -3669,6 +3816,28 @@ fn covers_every_config_command() {
         .success();
     kply_cmd()
         .args(["config", ConfigCommand::Validate.name()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn covers_every_policy_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("policy")
+        .expect("policy command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["check"],
+        "update policy command tests when the policy command surface changes"
+    );
+
+    kply_cmd()
+        .args(["policy", PolicyCommand::Check.name()])
         .assert()
         .success();
 }

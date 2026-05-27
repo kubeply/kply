@@ -1,0 +1,8 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply policy check
+Policy config is valid.
+Policies: 2
+Enabled policies: 1

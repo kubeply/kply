@@ -11,6 +11,7 @@ Commands:
   session     Manage future sandbox sessions
   app         Inspect configured application targets
   config      Manage Kply configuration
+  policy      Check configured policy boundaries
   cluster     Inspect Kubernetes cluster facts
   check       Run verification checks for sandbox sessions
   route       Plan and manage temporary route changes

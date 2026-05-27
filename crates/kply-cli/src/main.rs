@@ -9,7 +9,7 @@ use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Service;
 use kply_cli::cli::{
     AppCommand, CheckCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand,
-    ReportCommand, ReportExportFormat, RouteCommand, SessionCommand,
+    PolicyCommand, ReportCommand, ReportExportFormat, RouteCommand, SessionCommand,
 };
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
@@ -94,6 +94,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Config {
             command: Some(ConfigCommand::Validate),
         }) => return render_config_validate(&cli),
+        Some(Command::Policy {
+            command: Some(PolicyCommand::Check),
+        }) => return render_policy_check(&cli),
         Some(Command::App {
             command: Some(AppCommand::List),
         }) => return render_app_list(&cli),
@@ -3163,6 +3166,38 @@ fn render_config_validate(cli: &Cli) -> Result<ExitCode> {
             } else if !cli.quiet {
                 println!("kply config validate");
                 println!("Config is valid.");
+            }
+
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(errors) => render_config_validation_error(&errors, cli.json),
+    }
+}
+
+/// Validate configured policy boundaries.
+fn render_policy_check(cli: &Cli) -> Result<ExitCode> {
+    let config = match resolved_config(cli) {
+        Ok(config) => config,
+        Err(error) => return render_config_load_error(&error, cli.json),
+    };
+
+    match config.validate() {
+        Ok(()) => {
+            let policies = config.policies().entries();
+            let enabled_policies = policies.iter().filter(|policy| policy.enabled()).count();
+            if cli.json {
+                let value = serde_json::json!({
+                    "status": "valid",
+                    "policies": policies.len(),
+                    "enabled_policies": enabled_policies,
+                    "errors": []
+                });
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            } else if !cli.quiet {
+                println!("kply policy check");
+                println!("Policy config is valid.");
+                println!("Policies: {}", policies.len());
+                println!("Enabled policies: {enabled_policies}");
             }
 
             Ok(ExitCode::SUCCESS)

@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "enabled_policies": 1,
+  "errors": [],
+  "policies": 2,
+  "status": "valid"
+}
