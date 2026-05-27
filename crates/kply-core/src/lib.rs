@@ -5355,6 +5355,7 @@ mod tests {
         )
     }
 
+    /// Build a routed session plan with a resolved header route strategy.
     fn test_routed_session_plan() -> SessionPlan {
         test_session_plan()
             .with_route_selector(
@@ -7873,6 +7874,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify session reports round-trip with route strategy summary data.
     fn round_trips_session_report_json() {
         let report = SessionReport::new(test_routed_session_plan(), SessionStatus::Ready)
             .expect("session report")
@@ -7887,6 +7889,7 @@ mod tests {
     }
 
     #[test]
+    /// Snapshot the stable JSON contract for routed session reports.
     fn snapshots_session_report_json_contract() {
         let report = SessionReport::new(test_routed_session_plan(), SessionStatus::Ready)
             .expect("session report")
@@ -7899,6 +7902,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify legacy session reports decode when optional report fields are absent.
     fn deserializes_session_report_without_app_graph_summary_field() {
         let report = serde_json::from_value::<SessionReport>(json!({
             "metadata": {
@@ -8018,6 +8022,7 @@ mod tests {
     }
 
     #[test]
+    /// Reject report JSON when the app graph summary targets another workload.
     fn rejects_session_report_json_with_mismatched_app_graph_summary() {
         let error = serde_json::from_value::<SessionReport>(json!({
             "metadata": {
@@ -8067,6 +8072,7 @@ mod tests {
     }
 
     #[test]
+    /// Reject report JSON when the route strategy does not match the nested plan.
     fn rejects_session_report_json_with_mismatched_route_strategy() {
         let error = serde_json::from_value::<SessionReport>(json!({
             "metadata": {
@@ -8446,6 +8452,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify reportable statuses produce reports with derived route strategy data.
     fn creates_session_report_for_reportable_status() {
         for status in [
             SessionStatus::Blocked,
@@ -8470,6 +8477,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify session reports expose the route strategy derived from the plan.
     fn creates_session_report_with_route_strategy() {
         let plan = test_routed_session_plan();
         let report =
