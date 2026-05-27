@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/src/main.rs
+expression: render_report_unavailable_markdown(&report)
+---
+# Kply Session Report
+
+- Session: `checkout-plan`
+- Namespace: `shop`
+- Session status: `active`
+- Report: `not_available`
+- Reason: `session_report_persistence_not_implemented`
