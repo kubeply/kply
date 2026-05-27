@@ -209,6 +209,14 @@ fn run() -> Result<ExitCode> {
         Some(Command::Report {
             command: Some(ReportCommand::Show { session, namespace }),
         }) => return render_report_show(&cli, session, namespace.as_deref()),
+        Some(Command::Report {
+            command:
+                Some(ReportCommand::Export {
+                    session,
+                    namespace,
+                    format: _,
+                }),
+        }) => return render_report_export(&cli, session, namespace.as_deref()),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -533,6 +541,34 @@ fn render_report_show(cli: &Cli, session: &str, namespace: Option<&str>) -> Resu
         println!("report: {}", unavailable.report);
         println!("reason: {}", unavailable.reason);
     }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render the JSON report export surface for one sandbox session.
+fn render_report_export(_cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_report_export_error(&error.to_string()),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let namespace = match namespace {
+        Some(namespace) => namespace.to_owned(),
+        None => match runtime.block_on(kply_k8s::cluster_info()) {
+            Ok(info) => info.default_namespace,
+            Err(error) => return render_kubeconfig_error(&error, true),
+        },
+    };
+    let session = match runtime.block_on(get_session_in_namespace(&namespace, session_id.as_str()))
+    {
+        Ok(session) => session,
+        Err(error) => return render_discovery_error(&error, true),
+    };
+    let unavailable = report_show_unavailable_from_session(&session);
+
+    println!("{}", serde_json::to_string_pretty(&unavailable)?);
 
     Ok(ExitCode::SUCCESS)
 }
@@ -2722,6 +2758,20 @@ fn render_report_show_error(message: &str, wants_json: bool) -> Result<ExitCode>
     } else {
         eprintln!("kply error: report show\n\n{message}");
     }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render report export input errors.
+fn render_report_export_error(message: &str) -> Result<ExitCode> {
+    let value = serde_json::json!({
+        "error": {
+            "code": "report_export",
+            "exit_code": EXIT_USAGE,
+            "message": message
+        }
+    });
+    eprintln!("{}", serde_json::to_string_pretty(&value)?);
 
     Ok(exit_code(EXIT_USAGE))
 }

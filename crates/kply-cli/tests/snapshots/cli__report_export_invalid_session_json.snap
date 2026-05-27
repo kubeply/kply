@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "error": {
+    "code": "report_export",
+    "exit_code": 2,
+    "message": "session id must start and end with a lowercase ASCII letter or digit"
+  }
+}

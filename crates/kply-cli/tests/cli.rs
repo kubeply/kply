@@ -9,6 +9,7 @@ use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
 use kply_cli::cli::DemoCommand;
 use kply_cli::cli::ReportCommand;
+use kply_cli::cli::ReportExportFormat;
 use kply_cli::cli::RouteCommand;
 use kply_cli::cli::SessionCommand;
 use kply_test::{
@@ -1433,6 +1434,92 @@ fn rejects_report_show_without_kubeconfig_json() {
     );
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
     insta::assert_json_snapshot!("report_show_missing_kubeconfig_json", value);
+}
+
+#[test]
+fn rejects_report_export_invalid_session_json() {
+    let output = kply_cmd()
+        .args([
+            "report",
+            "export",
+            "Checkout",
+            "--namespace",
+            "shop",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("report_export_invalid_session_json", value);
+}
+
+#[test]
+fn rejects_report_export_without_kubeconfig_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args([
+            "report",
+            "export",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "report export JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("report_export_missing_kubeconfig_json", value);
+}
+
+#[test]
+fn rejects_report_export_without_kubeconfig_default_namespace_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["report", "export", "checkout-plan", "--format", "json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "report export JSON errors should not leak the configured kubeconfig path"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!(
+        "report_export_default_namespace_missing_kubeconfig_json",
+        value
+    );
 }
 
 #[test]
@@ -3504,7 +3591,7 @@ fn covers_every_report_command() {
 
     assert_eq!(
         command_names,
-        ["show"],
+        ["export", "show"],
         "update report command tests when the report command surface changes"
     );
 
@@ -3519,6 +3606,24 @@ fn covers_every_report_command() {
             "checkout-plan",
             "--namespace",
             "shop",
+        ])
+        .assert()
+        .code(EXIT_USAGE);
+
+    kply_cmd()
+        .args([
+            "report",
+            ReportCommand::Export {
+                session: String::new(),
+                namespace: None,
+                format: ReportExportFormat::Json,
+            }
+            .name(),
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--format",
+            "json",
         ])
         .assert()
         .code(EXIT_USAGE);
