@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/src/main.rs
+expression: value
+---
+{
+  "namespace": "shop",
+  "reason": "session_report_persistence_not_implemented",
+  "report": "not_available",
+  "session_id": "checkout-plan",
+  "session_status": "active"
+}

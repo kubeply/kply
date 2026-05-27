@@ -533,13 +533,9 @@ fn render_report_show(cli: &Cli, session: &str, namespace: Option<&str>) -> Resu
     let unavailable = report_show_unavailable_from_session(&session);
 
     if cli.json {
-        println!("{}", serde_json::to_string_pretty(&unavailable)?);
+        println!("{}", render_report_unavailable_json(&unavailable)?);
     } else if !cli.quiet {
-        println!("kply report show {}", unavailable.session_id);
-        println!("namespace: {}", unavailable.namespace);
-        println!("session_status: {}", unavailable.session_status);
-        println!("report: {}", unavailable.report);
-        println!("reason: {}", unavailable.reason);
+        print!("{}", render_report_unavailable_text(&unavailable));
     }
 
     Ok(ExitCode::SUCCESS)
@@ -573,7 +569,7 @@ fn render_report_export(
     let unavailable = report_show_unavailable_from_session(&session);
 
     match format {
-        ReportExportFormat::Json => println!("{}", serde_json::to_string_pretty(&unavailable)?),
+        ReportExportFormat::Json => println!("{}", render_report_unavailable_json(&unavailable)?),
         ReportExportFormat::Markdown => {
             println!("{}", render_report_unavailable_markdown(&unavailable))
         }
@@ -995,6 +991,19 @@ fn report_show_unavailable_from_session(session: &SessionSummary) -> ReportShowU
         report: "not_available",
         reason: "session_report_persistence_not_implemented",
     }
+}
+
+/// Render a deterministic text report availability response.
+fn render_report_unavailable_text(report: &ReportShowUnavailable) -> String {
+    format!(
+        "kply report show {}\nnamespace: {}\nsession_status: {}\nreport: {}\nreason: {}\n",
+        report.session_id, report.namespace, report.session_status, report.report, report.reason
+    )
+}
+
+/// Render a deterministic JSON report availability response.
+fn render_report_unavailable_json(report: &ReportShowUnavailable) -> serde_json::Result<String> {
+    serde_json::to_string_pretty(report)
 }
 
 /// Render a deterministic Markdown report availability response.
@@ -3251,7 +3260,8 @@ mod tests {
         planned_session_annotations, planned_session_checks, planned_session_cleanup_steps,
         planned_session_labels, planned_session_resources, planned_session_risk_notes,
         render_check_evidence, render_check_run_json_report, render_check_run_text_report,
-        render_report_unavailable_markdown, report_show_unavailable_from_session,
+        render_report_unavailable_json, render_report_unavailable_markdown,
+        render_report_unavailable_text, report_show_unavailable_from_session,
         required_session_permissions, resolve_session_route_strategy, route_cleanup_from_session,
         route_strategy_creates_route_object, route_strategy_has_route_check,
         route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
@@ -3393,6 +3403,37 @@ mod tests {
             "report_unavailable_markdown",
             render_report_unavailable_markdown(&report)
         );
+    }
+
+    #[test]
+    fn renders_report_unavailable_text() {
+        let report = ReportShowUnavailable {
+            session_id: "checkout-plan".to_owned(),
+            namespace: "shop".to_owned(),
+            session_status: "active".to_owned(),
+            report: "not_available",
+            reason: "session_report_persistence_not_implemented",
+        };
+
+        insta::assert_snapshot!(
+            "report_unavailable_text",
+            render_report_unavailable_text(&report)
+        );
+    }
+
+    #[test]
+    fn renders_report_unavailable_json() {
+        let report = ReportShowUnavailable {
+            session_id: "checkout-plan".to_owned(),
+            namespace: "shop".to_owned(),
+            session_status: "active".to_owned(),
+            report: "not_available",
+            reason: "session_report_persistence_not_implemented",
+        };
+        let output = render_report_unavailable_json(&report).expect("report should serialize");
+        let value: serde_json::Value = serde_json::from_str(&output).expect("report JSON");
+
+        insta::assert_json_snapshot!("report_unavailable_json", value);
     }
 
     #[test]
