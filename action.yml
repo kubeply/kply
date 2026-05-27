@@ -1,0 +1,41 @@
+name: Kply
+description: Run Kply safely in pull request workflows.
+author: Kubeply
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: Kply release version to install, or latest.
+    required: false
+    default: latest
+  config-path:
+    description: Path to the kply.yaml config file.
+    required: false
+    default: kply.yaml
+  app:
+    description: Configured app name to plan or check.
+    required: false
+  image:
+    description: Candidate image reference for the sandbox workload.
+    required: false
+  mode:
+    description: Action mode to run. Plan mode is the first supported target.
+    required: false
+    default: plan
+  output-path:
+    description: Path where the action will write the JSON output artifact.
+    required: false
+    default: kply-report.json
+
+runs:
+  using: composite
+  steps:
+    - name: Stop until action runtime is implemented
+      shell: bash
+      run: |
+        echo "::error::The Kply GitHub Action metadata is present, but binary download and execution are not implemented yet."
+        echo "::error::Use the kply CLI directly until the action runtime lands in the next roadmap subtasks."
+        exit 1
