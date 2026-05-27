@@ -4990,6 +4990,113 @@ mod tests {
     }
 
     #[test]
+    fn evaluates_session_planning_policy_allowed_and_denied_actions() {
+        let image = ImageRef::new("ghcr.io/acme/checkout:next").expect("image");
+        let time_to_live = TimeToLive::new("30m").expect("ttl");
+        let long_time_to_live = TimeToLive::new("45m").expect("long ttl");
+
+        let route_mutation_policies = PolicyConfigs::new(vec![
+            PolicyConfig::new("route-mutation")
+                .with_allowed_namespaces(["shop"])
+                .with_allowed_workload_kinds(["Deployment"])
+                .with_allowed_image_registries(["ghcr.io"])
+                .with_allowed_route_strategies([RouteStrategy::Header])
+                .with_max_session_ttl("30m")
+                .with_mutation_mode(MutationModePolicy::RouteMutation),
+        ]);
+        let route_mutation = evaluate_session_planning_policies(
+            &route_mutation_policies,
+            "shop",
+            "Deployment",
+            &image,
+            Some(&time_to_live),
+            "header",
+        )
+        .expect("route mutation policy should allow matching route action");
+        assert!(
+            route_mutation
+                .session_policy
+                .allows(SessionOperation::Route)
+        );
+
+        let denied_workload_kind = evaluate_session_planning_policies(
+            &route_mutation_policies,
+            "shop",
+            "StatefulSet",
+            &image,
+            Some(&time_to_live),
+            "header",
+        )
+        .expect_err("workload kind allowlist should deny mismatches");
+        assert_policy_denial_contains(denied_workload_kind, "does not allow workload kind");
+
+        let denied_registry = evaluate_session_planning_policies(
+            &route_mutation_policies,
+            "shop",
+            "Deployment",
+            &ImageRef::new("registry.example.com/acme/checkout:next").expect("image"),
+            Some(&time_to_live),
+            "header",
+        )
+        .expect_err("image registry allowlist should deny mismatches");
+        assert_policy_denial_contains(denied_registry, "does not allow image registry");
+
+        let denied_route_strategy = evaluate_session_planning_policies(
+            &route_mutation_policies,
+            "shop",
+            "Deployment",
+            &image,
+            Some(&time_to_live),
+            "host",
+        )
+        .expect_err("route strategy allowlist should deny mismatches");
+        assert_policy_denial_contains(denied_route_strategy, "does not allow route strategy");
+
+        let denied_time_to_live = evaluate_session_planning_policies(
+            &route_mutation_policies,
+            "shop",
+            "Deployment",
+            &image,
+            Some(&long_time_to_live),
+            "header",
+        )
+        .expect_err("max session ttl should deny longer sessions");
+        assert_policy_denial_contains(denied_time_to_live, "above max_session_ttl");
+
+        let sandbox_only_route_policies = PolicyConfigs::new(vec![
+            PolicyConfig::new("sandbox-only")
+                .with_allowed_namespaces(["shop"])
+                .with_allowed_workload_kinds(["Deployment"])
+                .with_allowed_image_registries(["ghcr.io"])
+                .with_allowed_route_strategies([RouteStrategy::Header])
+                .with_max_session_ttl("30m")
+                .with_mutation_mode(MutationModePolicy::SandboxOnly),
+        ]);
+        let denied_route_mutation = evaluate_session_planning_policies(
+            &sandbox_only_route_policies,
+            "shop",
+            "Deployment",
+            &image,
+            Some(&time_to_live),
+            "header",
+        )
+        .expect_err("sandbox-only policy should deny route mutation");
+        assert_policy_denial_contains(denied_route_mutation, "does not allow route mutation");
+    }
+
+    fn assert_policy_denial_contains(error: SessionPlanBuildError, expected: &str) {
+        match error {
+            SessionPlanBuildError::Policy(message) => {
+                assert!(
+                    message.contains(expected),
+                    "policy denial `{message}` should contain `{expected}`"
+                );
+            }
+            _ => panic!("expected policy denial"),
+        }
+    }
+
+    #[test]
     fn selects_route_strategy_from_config_auto_and_explicit_overrides() {
         let app = AppConfig::new(
             "checkout",
