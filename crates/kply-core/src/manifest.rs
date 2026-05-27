@@ -17,7 +17,7 @@ pub const REQUIRED_OWNERSHIP_LABELS: [&str; 4] = [
 ///
 /// This deliberate subset of [`REQUIRED_OWNERSHIP_LABELS`] ties cleanup to Kply
 /// and the session id without depending on app or human-readable session names.
-const CLEANUP_SELECTOR_LABELS: [&str; 2] = ["kply.dev/managed-by", "kply.dev/session-id"];
+pub const CLEANUP_SELECTOR_LABELS: [&str; 2] = ["kply.dev/managed-by", "kply.dev/session-id"];
 const REQUIRED_AUDIT_ANNOTATIONS: [&str; 3] = [
     "kply.dev/image",
     "kply.dev/route-strategy",

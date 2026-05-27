@@ -3,11 +3,11 @@
 mod manifest;
 
 pub use manifest::{
-    REQUIRED_OWNERSHIP_LABELS, SAFE_APP_LABELS, SandboxCleanupSelector, SandboxContainer,
-    SandboxDeploymentManifest, SandboxDeploymentSpec, SandboxLabelSelector, SandboxManifestError,
-    SandboxObjectMetadata, SandboxPodSpec, SandboxPodTemplate, SandboxPodTemplateMetadata,
-    SandboxRoutePlaceholderManifest, SandboxServiceManifest, SandboxServicePort,
-    SandboxServicePortConfig, SandboxServiceSpec, sandbox_cleanup_selector,
+    CLEANUP_SELECTOR_LABELS, REQUIRED_OWNERSHIP_LABELS, SAFE_APP_LABELS, SandboxCleanupSelector,
+    SandboxContainer, SandboxDeploymentManifest, SandboxDeploymentSpec, SandboxLabelSelector,
+    SandboxManifestError, SandboxObjectMetadata, SandboxPodSpec, SandboxPodTemplate,
+    SandboxPodTemplateMetadata, SandboxRoutePlaceholderManifest, SandboxServiceManifest,
+    SandboxServicePort, SandboxServicePortConfig, SandboxServiceSpec, sandbox_cleanup_selector,
     sandbox_deployment_manifest, sandbox_route_placeholder_manifest, sandbox_service_manifest,
     sandbox_service_manifest_with_port,
 };

@@ -7,7 +7,8 @@ use std::{
 };
 
 use kply_core::{
-    KubernetesResourceRef, MetadataEntry, REQUIRED_OWNERSHIP_LABELS, RouteSelector, SAFE_APP_LABELS,
+    CLEANUP_SELECTOR_LABELS, KubernetesResourceRef, MetadataEntry, REQUIRED_OWNERSHIP_LABELS,
+    RouteSelector, SAFE_APP_LABELS,
 };
 use kply_k8s::{GatewayClassSummary, GatewaySummary, HttpRouteSummary};
 use serde::Serialize;
@@ -257,6 +258,30 @@ pub struct GatewayHttpRouteBackendRef {
     pub port: u16,
 }
 
+/// Cleanup target for a generated Gateway API HTTPRoute.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayHttpRouteCleanupTarget {
+    /// Gateway API version for the HTTPRoute resource.
+    pub api_version: &'static str,
+    /// Kubernetes resource kind for this cleanup target.
+    pub kind: &'static str,
+    /// Namespace containing the temporary HTTPRoute.
+    pub namespace: String,
+    /// Name of the temporary HTTPRoute.
+    pub name: String,
+    /// [`GatewayRouteCleanupSelector`] that must match before cleanup deletes the route.
+    pub selector: GatewayRouteCleanupSelector,
+}
+
+/// Kubernetes label selector used to clean up Gateway API routes.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GatewayRouteCleanupSelector {
+    /// Required ownership labels for route cleanup.
+    #[serde(rename = "matchLabels")]
+    pub match_labels: BTreeMap<String, String>,
+}
+
 /// Error returned while generating a temporary Gateway API HTTPRoute manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GatewayHttpRouteManifestError {
@@ -344,7 +369,7 @@ impl fmt::Display for GatewayHttpRouteManifestError {
             Self::MissingOwnershipLabel { key } => {
                 write!(
                     formatter,
-                    "HTTPRoute manifest is missing ownership label `{key}`"
+                    "Gateway route is missing ownership label `{key}`"
                 )
             }
         }
@@ -456,6 +481,43 @@ pub fn generate_gateway_host_http_route_manifest(
     generate_gateway_http_route_manifest(input)
 }
 
+/// Generate a [`GatewayHttpRouteCleanupTarget`] for a temporary Gateway API HTTPRoute.
+///
+/// The cleanup target is derived from a [`KubernetesResourceRef`] and ownership
+/// [`MetadataEntry`] labels.
+pub fn gateway_http_route_cleanup_target(
+    route: &KubernetesResourceRef,
+    labels: &[MetadataEntry],
+) -> Result<GatewayHttpRouteCleanupTarget, GatewayHttpRouteManifestError> {
+    if route.kind() != HTTP_ROUTE_KIND {
+        return Err(GatewayHttpRouteManifestError::RouteKind {
+            kind: route.kind().to_owned(),
+        });
+    }
+
+    Ok(GatewayHttpRouteCleanupTarget {
+        api_version: GATEWAY_API_VERSION,
+        kind: HTTP_ROUTE_KIND,
+        namespace: route.namespace().to_owned(),
+        name: route.name().to_owned(),
+        selector: gateway_route_cleanup_selector(labels)?,
+    })
+}
+
+/// Generate the minimal [`GatewayRouteCleanupSelector`] required for Gateway API route cleanup.
+///
+/// The selector is derived from ownership [`MetadataEntry`] labels.
+pub fn gateway_route_cleanup_selector(
+    labels: &[MetadataEntry],
+) -> Result<GatewayRouteCleanupSelector, GatewayHttpRouteManifestError> {
+    let labels = metadata_entries_to_map(labels);
+    ensure_route_ownership_labels(&labels)?;
+
+    Ok(GatewayRouteCleanupSelector {
+        match_labels: cleanup_labels(&labels),
+    })
+}
+
 /// Validate the typed inputs used to generate a Gateway API HTTPRoute.
 fn validate_gateway_http_route_manifest_input(
     input: GatewayHttpRouteManifestInput<'_>,
@@ -514,6 +576,15 @@ fn ensure_route_ownership_labels(
 /// Return true when a label should be preserved on generated Gateway routes.
 fn should_preserve_route_label(key: &str) -> bool {
     REQUIRED_OWNERSHIP_LABELS.contains(&key) || SAFE_APP_LABELS.contains(&key)
+}
+
+/// Return only ownership labels required for route cleanup selectors.
+fn cleanup_labels(labels: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    labels
+        .iter()
+        .filter(|(key, _)| CLEANUP_SELECTOR_LABELS.contains(&key.as_str()))
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect()
 }
 
 /// Validate that Gateway capabilities allow a header-based route selector.
@@ -775,7 +846,8 @@ mod tests {
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
         GatewayHttpRouteManifestError, GatewayHttpRouteManifestInput, GatewayRouteCapabilities,
         GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus,
-        detect_gateway_api_resources, generate_gateway_header_http_route_manifest,
+        detect_gateway_api_resources, gateway_http_route_cleanup_target,
+        gateway_route_cleanup_selector, generate_gateway_header_http_route_manifest,
         generate_gateway_host_http_route_manifest, generate_gateway_http_route_manifest,
         model_gateway_route_capabilities,
     };
@@ -1367,6 +1439,86 @@ mod tests {
     }
 
     #[test]
+    /// Generates a cleanup target for a temporary HTTPRoute.
+    fn generates_gateway_http_route_cleanup_target() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let labels = ownership_labels();
+
+        let target = gateway_http_route_cleanup_target(&route, &labels).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(target).unwrap(),
+            json!({
+                "apiVersion": "gateway.networking.k8s.io/v1",
+                "kind": "HTTPRoute",
+                "namespace": "shop",
+                "name": "checkout-kply",
+                "selector": {
+                    "matchLabels": {
+                        "kply.dev/managed-by": "kply",
+                        "kply.dev/session-id": "session-123"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    /// Generates route cleanup selectors from minimal ownership labels.
+    fn generates_gateway_route_cleanup_selector() {
+        let mut labels = ownership_labels();
+        labels.push(MetadataEntry::new_label("pod-template-hash", "abc123").unwrap());
+        labels.push(MetadataEntry::new_label("app.kubernetes.io/name", "checkout").unwrap());
+
+        let selector = gateway_route_cleanup_selector(&labels).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(selector).unwrap(),
+            json!({
+                "matchLabels": {
+                    "kply.dev/managed-by": "kply",
+                    "kply.dev/session-id": "session-123"
+                }
+            })
+        );
+    }
+
+    #[test]
+    /// Rejects route cleanup targets for non-HTTPRoute resources.
+    fn rejects_non_http_route_cleanup_targets() {
+        let route = resource("shop", "ConfigMap", "checkout-kply");
+        let labels = ownership_labels();
+
+        let error = gateway_http_route_cleanup_target(&route, &labels).unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::RouteKind {
+                kind: "ConfigMap".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected HTTPRoute route resource, found ConfigMap"
+        );
+    }
+
+    #[test]
+    /// Rejects route cleanup selectors without complete ownership labels.
+    fn rejects_gateway_route_cleanup_selector_without_ownership_labels() {
+        let labels = vec![MetadataEntry::new_label("kply.dev/session-id", "session-123").unwrap()];
+
+        let error = gateway_route_cleanup_selector(&labels).unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::MissingOwnershipLabel {
+                key: "kply.dev/app"
+            }
+        );
+    }
+
+    #[test]
     /// Rejects valid route manifests without complete ownership labels.
     fn rejects_gateway_http_route_manifest_without_ownership_labels() {
         let route = resource("shop", "HTTPRoute", "checkout-kply");
@@ -1394,7 +1546,7 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "HTTPRoute manifest is missing ownership label `kply.dev/app`"
+            "Gateway route is missing ownership label `kply.dev/app`"
         );
     }
 
