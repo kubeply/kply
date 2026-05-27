@@ -381,6 +381,9 @@ evaluation:
 - `description`: optional human-readable context for operators and agents.
 - `allowed_namespaces`: optional list of Kubernetes namespaces the policy will
   allow once policy evaluation is wired into session planning and mutation.
+- `allowed_workload_kinds`: optional list of Kubernetes workload kinds the
+  policy will allow once policy evaluation is wired into session planning and
+  mutation.
 
 Application config entries define these fields:
 
