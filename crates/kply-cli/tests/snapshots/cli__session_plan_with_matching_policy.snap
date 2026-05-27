@@ -1,0 +1,40 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply session plan checkout
+id: checkout-plan
+name: checkout-session
+workload: shop/Deployment/checkout-api
+image: ghcr.io/acme/checkout:next
+planned_resources: 2
+  resource: shop/Deployment/checkout-plan-workload
+  resource: shop/Service/checkout-plan-service
+planned_labels: 4
+  label: kply.dev/app=checkout
+  label: kply.dev/managed-by=kply
+  label: kply.dev/session-id=checkout-plan
+  label: kply.dev/session-name=checkout-session
+planned_annotations: 3
+  annotation: kply.dev/image=ghcr.io/acme/checkout:next
+  annotation: kply.dev/route-strategy=preview
+  annotation: kply.dev/workload=shop/Deployment/checkout-api
+planned_checks: 4
+  check: image_pull -> ghcr.io/acme/checkout:next
+  check: route_ready -> shop/checkout-plan-service
+  check: service_endpoints -> shop/checkout-plan-service
+  check: workload_ready -> shop/Deployment/checkout-api
+planned_cleanup_steps: 2
+  cleanup: delete_service -> shop/Service/checkout-plan-service
+  cleanup: delete_workload -> shop/Deployment/checkout-plan-workload
+required_permissions: 3
+  permission: core/pods [get,list,watch]
+  permission: core/services [create,delete,get,patch]
+  permission: apps/deployments [create,delete,get,patch]
+unsupported_feature_warnings: 1
+  unsupported: edge_route_validation: preview_service_skips_edge_route_validation
+risk_notes: 0
+route_selector: <none>
+policy_operations: 5
+status: planned
+ttl: 30m

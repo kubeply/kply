@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "error": {
+    "code": "policy",
+    "exit_code": 1,
+    "message": "no enabled policy allows this session plan: policy `warehouse-only` does not allow namespace `shop`"
+  }
+}

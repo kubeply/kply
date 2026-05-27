@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: policy
+
+policy does not allow session creation
