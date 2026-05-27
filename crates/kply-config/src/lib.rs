@@ -830,6 +830,7 @@ impl PolicyConfig {
         self
     }
 
+    /// Return validation errors for this policy entry with top-level index context.
     fn validation_errors(&self, policy_index: usize) -> Vec<ConfigValidationError> {
         let mut errors = Vec::new();
 
@@ -860,10 +861,12 @@ impl PolicyConfig {
     }
 }
 
+/// Return the default enabled flag for policy entries.
 fn default_policy_enabled() -> bool {
     true
 }
 
+/// Push a field-scoped error when a scalar policy field is blank.
 fn push_empty_policy_field_error(
     errors: &mut Vec<ConfigValidationError>,
     policy_index: usize,
@@ -878,6 +881,7 @@ fn push_empty_policy_field_error(
     }
 }
 
+/// Push field-scoped errors for blank or duplicate policy list values.
 fn push_policy_list_entry_errors(
     errors: &mut Vec<ConfigValidationError>,
     policy_index: usize,
