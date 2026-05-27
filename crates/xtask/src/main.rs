@@ -50,7 +50,7 @@ fn main() -> Result<()> {
             println!("  check-placeholders verify product crates expose placeholder markers only");
             println!("  check-report-language verify reports do not overclaim deployment safety");
             println!("  check-readme-roadmap-link verify README links the roadmap");
-            println!("  check-release-planning verify cargo-dist planning stays non-publishing");
+            println!("  check-release-planning verify cargo-dist release packaging stays pinned");
             println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
@@ -606,21 +606,33 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         errors.push("dist.pr-run-mode must stay plan".to_owned());
     }
 
+    let packages = dist_config
+        .get("dist")
+        .and_then(|dist| dist.get("packages"))
+        .and_then(toml::Value::as_array);
+
+    if !matches!(
+        packages,
+        Some(packages)
+            if packages.len() == 1
+                && packages.first().and_then(toml::Value::as_str) == Some("kply-cli")
+    ) {
+        errors.push("dist.packages must release only kply-cli".to_owned());
+    }
+
     if !workflow_has_pull_request(&release_workflow_yaml) {
         errors.push("release workflow must run on pull_request".to_owned());
     }
 
-    if workflow_has_push(&release_workflow_yaml) {
-        errors.push("release workflow must not run on push".to_owned());
-    }
-
     if workflow_has_push_tags(&release_workflow_yaml) {
-        errors.push("release workflow must not run on tag pushes".to_owned());
+        // Tag pushes are the real release path once release packaging starts.
+    } else {
+        errors.push("release workflow must run on semver tag pushes".to_owned());
     }
 
     let run_commands = workflow_run_commands(&release_workflow_yaml);
 
-    for forbidden in ["dist build", "dist host", "dist publish"] {
+    for forbidden in ["dist publish"] {
         if run_commands
             .iter()
             .any(|run_command| run_command.contains(forbidden))
@@ -633,9 +645,30 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
 
     if !run_commands
         .iter()
-        .any(|run_command| run_command.contains("dist plan"))
+        .any(|run_command| run_command.contains("dist plan") || run_command.contains("|| 'plan'"))
     {
         errors.push("release workflow must keep dist plan command".to_owned());
+    }
+
+    if !run_commands
+        .iter()
+        .any(|run_command| run_command.contains("dist build"))
+    {
+        errors.push("release workflow must build release artifacts".to_owned());
+    }
+
+    if !run_commands
+        .iter()
+        .any(|run_command| run_command.contains("dist host"))
+    {
+        errors.push("release workflow must host release artifacts".to_owned());
+    }
+
+    if !run_commands
+        .iter()
+        .any(|run_command| run_command.contains("gh release create"))
+    {
+        errors.push("release workflow must create a GitHub Release".to_owned());
     }
 
     if !errors.is_empty() {
@@ -654,10 +687,6 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
 
 fn workflow_has_pull_request(workflow: &YamlValue) -> bool {
     workflow_event(workflow, &YAML_PULL_REQUEST_KEY).is_some()
-}
-
-fn workflow_has_push(workflow: &YamlValue) -> bool {
-    workflow_event(workflow, &YAML_PUSH_KEY).is_some()
 }
 
 fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
@@ -1405,6 +1434,7 @@ highlight = "all"
     const DIST_CONFIG: &str = r#"
 [dist]
 cargo-dist-version = "0.32.0"
+packages = ["kply-cli"]
 pr-run-mode = "plan"
 "#;
     const RELEASE_PLAN_WORKFLOW: &str = r#"
@@ -1412,12 +1442,21 @@ name: release
 
 on:
   pull_request:
+  push:
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
   dist-plan:
     steps:
       - name: Plan release
         run: dist plan
+      - name: Build release artifacts
+        run: dist build --artifacts=global
+      - name: Host release artifacts
+        run: dist host --steps=upload --steps=release
+      - name: Create GitHub Release
+        run: gh release create v0.1.0 artifacts/*
 "#;
 
     #[test]
@@ -2361,7 +2400,7 @@ license = "Apache-2.0"
     }
 
     #[test]
-    fn accepts_non_publishing_release_planning() {
+    fn accepts_release_packaging_workflow() {
         let temp = TempDir::new().expect("temp dir should be created");
         let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
         let workflow_path = write_nested_source(
@@ -2371,27 +2410,26 @@ license = "Apache-2.0"
         );
 
         check_release_planning_inner(&dist_path, &workflow_path)
-            .expect("non-publishing release planning should pass");
+            .expect("release packaging workflow should pass");
     }
 
     #[test]
-    fn rejects_release_workflow_tag_publish_trigger() {
+    fn rejects_release_workflow_without_tag_push_trigger() {
         let temp = TempDir::new().expect("temp dir should be created");
         let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
         let workflow_path = write_nested_source(
             temp.path(),
             ".github/workflows/release.yml",
-            "on:\n  push:\n    tags:\n      - \"v*\"\n  pull_request:\n\njobs:\n  plan:\n    steps:\n      - run: dist plan\n",
+            &RELEASE_PLAN_WORKFLOW.replace(
+                "  push:\n    tags:\n      - \"**[0-9]+.[0-9]+.[0-9]+*\"\n",
+                "",
+            ),
         );
 
         let error = check_release_planning_inner(&dist_path, &workflow_path)
-            .expect_err("tag publishing trigger should fail before release milestone");
+            .expect_err("release workflow without tag push should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("release planning issue(s) found")
-        );
+        assert!(error.to_string().contains("semver tag pushes"));
     }
 
     #[test]
@@ -2415,18 +2453,17 @@ license = "Apache-2.0"
         let temp = TempDir::new().expect("temp dir should be created");
         let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
 
-        for command in ["dist build", "dist host", "dist publish"] {
-            let workflow_path = write_nested_source(
-                temp.path(),
-                ".github/workflows/release.yml",
-                &RELEASE_PLAN_WORKFLOW.replace("dist plan", command),
-            );
+        let command = "dist publish";
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("dist plan", command),
+        );
 
-            let error = check_release_planning_inner(&dist_path, &workflow_path)
-                .expect_err("release publishing command should fail before release milestone");
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release publishing command should fail before release milestone");
 
-            assert!(error.to_string().contains(command));
-        }
+        assert!(error.to_string().contains(command));
     }
 
     #[test]
@@ -2443,6 +2480,54 @@ license = "Apache-2.0"
             .expect_err("release workflow without dist plan should fail");
 
         assert!(error.to_string().contains("dist plan"));
+    }
+
+    #[test]
+    fn rejects_release_workflow_without_dist_build() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("dist build", "cargo build"),
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without dist build should fail");
+
+        assert!(error.to_string().contains("build release artifacts"));
+    }
+
+    #[test]
+    fn rejects_release_workflow_without_dist_host() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("dist host", "gh release upload"),
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without dist host should fail");
+
+        assert!(error.to_string().contains("host release artifacts"));
+    }
+
+    #[test]
+    fn rejects_release_workflow_without_github_release_creation() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("gh release create", "gh release view"),
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without GitHub Release creation should fail");
+
+        assert!(error.to_string().contains("GitHub Release"));
     }
 
     #[test]
@@ -2490,6 +2575,29 @@ license = "Apache-2.0"
                 .to_string()
                 .contains("release planning issue(s) found")
         );
+    }
+
+    #[test]
+    fn rejects_release_packages_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                "packages = [\"kply-cli\"]",
+                "packages = [\"kply-cli\", \"xtask\"]",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release package drift should fail");
+
+        assert!(error.to_string().contains("kply-cli"));
     }
 
     #[test]
