@@ -546,7 +546,7 @@ fn render_report_show(cli: &Cli, session: &str, namespace: Option<&str>) -> Resu
 }
 
 /// Render the JSON report export surface for one sandbox session.
-fn render_report_export(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+fn render_report_export(_cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
     let session_id = match SessionId::new(session) {
         Ok(session_id) => session_id,
         Err(error) => return render_report_export_error(&error.to_string()),
@@ -568,9 +568,7 @@ fn render_report_export(cli: &Cli, session: &str, namespace: Option<&str>) -> Re
     };
     let unavailable = report_show_unavailable_from_session(&session);
 
-    if !cli.quiet {
-        println!("{}", serde_json::to_string_pretty(&unavailable)?);
-    }
+    println!("{}", serde_json::to_string_pretty(&unavailable)?);
 
     Ok(ExitCode::SUCCESS)
 }
