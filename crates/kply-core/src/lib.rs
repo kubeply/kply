@@ -2379,18 +2379,21 @@ impl SessionReport {
         })
     }
 
-    /// Return a copy of this report with a summarized [`AppGraph`].
-    pub fn with_app_graph_summary(
+    fn with_app_graph_summary_value(
         mut self,
-        app_graph: &AppGraph,
+        app_graph_summary: SessionReportAppGraphSummary,
     ) -> Result<Self, SessionReportError> {
-        let summary = SessionReportAppGraphSummary::from_app_graph(app_graph);
-        if summary.workload() != self.metadata.workload() {
+        if app_graph_summary.workload() != self.metadata.workload() {
             return Err(SessionReportError::AppGraphSummaryMismatch);
         }
 
-        self.app_graph_summary = Some(summary);
+        self.app_graph_summary = Some(app_graph_summary);
         Ok(self)
+    }
+
+    /// Return a copy of this report with a summarized [`AppGraph`].
+    pub fn with_app_graph_summary(self, app_graph: &AppGraph) -> Result<Self, SessionReportError> {
+        self.with_app_graph_summary_value(SessionReportAppGraphSummary::from_app_graph(app_graph))
     }
 
     /// Borrow the top-level [`SessionReportMetadata`].
@@ -2615,17 +2618,13 @@ impl<'de> Deserialize<'de> for SessionReport {
             return Err(D::Error::custom(SessionReportError::MetadataMismatch));
         }
 
-        let mut report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
-        if let Some(app_graph_summary) = fields.app_graph_summary {
-            if app_graph_summary.workload() != report.metadata().workload() {
-                return Err(D::Error::custom(
-                    SessionReportError::AppGraphSummaryMismatch,
-                ));
-            }
-            report.app_graph_summary = Some(app_graph_summary);
+        let report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
+        match fields.app_graph_summary {
+            Some(app_graph_summary) => report
+                .with_app_graph_summary_value(app_graph_summary)
+                .map_err(D::Error::custom),
+            None => Ok(report),
         }
-
-        Ok(report)
     }
 }
 
@@ -7788,6 +7787,52 @@ mod tests {
         let value = serde_json::to_value(report).expect("session report should serialize");
 
         insta::assert_json_snapshot!("session_report_json_contract", value);
+    }
+
+    #[test]
+    fn deserializes_session_report_without_app_graph_summary_field() {
+        let report = serde_json::from_value::<SessionReport>(json!({
+            "metadata": {
+                "session_id": "session-123",
+                "session_name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                }
+            },
+            "plan": {
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": null,
+                "policy": {
+                    "allowed_operations": ["inspect"]
+                },
+                "status": "planned"
+            },
+            "status": "ready"
+        }))
+        .expect("legacy session report should deserialize");
+        let expected_plan = SessionPlan::new(
+            SessionId::new("session-123").expect("session id"),
+            SessionName::new("checkout-test").expect("session name"),
+            WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
+            ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
+            SessionPolicy::new([SessionOperation::Inspect]).expect("session policy"),
+        );
+
+        assert_eq!(
+            report,
+            SessionReport::new(expected_plan, SessionStatus::Ready)
+                .expect("session report should be valid")
+        );
+        assert_eq!(report.app_graph_summary(), None);
     }
 
     #[test]
