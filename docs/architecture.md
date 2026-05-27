@@ -364,7 +364,10 @@ Application config entries define these fields:
   `StatefulSet`, or `DaemonSet`, defaulting to `Deployment`.
 - `service`: Kubernetes service name used for routed traffic.
 - `default_image`: optional default sandbox image.
-- `route_strategy`: requested sandbox route strategy.
+- `route_strategy`: requested sandbox route strategy. Config files accept
+  concrete strategies such as `header`, `host`, and `preview`; CLI session
+  commands also accept `--route-strategy auto`, which resolves to the configured
+  app strategy until live capability-based selection is wired in.
 
 Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and
