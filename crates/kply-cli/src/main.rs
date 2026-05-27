@@ -328,13 +328,6 @@ fn render_session_create(
         }
     };
 
-    if apply && !plan.policy().allows(SessionOperation::Prepare) {
-        return render_session_plan_policy_error(
-            "policy does not allow session creation",
-            cli.json,
-        );
-    }
-
     if apply {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -351,6 +344,9 @@ fn render_session_create(
             |resources, status| runtime.block_on(record_session_state_metadata(resources, status)),
         ) {
             Ok(applied) => applied,
+            Err(SessionCreateApplyError::Policy(message)) => {
+                return render_session_plan_policy_error(&message, cli.json);
+            }
             Err(SessionCreateApplyError::Manifest(error)) => {
                 return render_session_manifest_error(&error, cli.json);
             }
@@ -1288,6 +1284,8 @@ struct SessionCleanupApplyError {
 /// Error raised while applying session resources to Kubernetes.
 #[derive(Debug)]
 enum SessionCreateApplyError {
+    /// Configured policy does not allow session resource apply.
+    Policy(String),
     /// Generated session manifests could not be converted for apply.
     Manifest(SessionManifestBuildError),
     /// Kubernetes rejected or could not execute the mutation.
@@ -1325,6 +1323,12 @@ fn apply_session_resources(
         SessionStateRecordError,
     >,
 ) -> std::result::Result<SessionCreateApplyResult, SessionCreateApplyError> {
+    if !plan.policy().allows(SessionOperation::Prepare) {
+        return Err(SessionCreateApplyError::Policy(
+            "policy does not allow session creation".to_owned(),
+        ));
+    }
+
     let deployment =
         session_deployment_manifest(plan).map_err(SessionCreateApplyError::Manifest)?;
     let service = session_service_manifest(plan).map_err(SessionCreateApplyError::Manifest)?;
@@ -3585,8 +3589,9 @@ mod tests {
         resolve_session_route_strategy, route_cleanup_from_session,
         route_strategy_creates_route_object, route_strategy_has_route_check,
         route_strategy_uses_preview_service, session_plan_from_config,
-        session_policy_for_mutation_mode, session_state_annotations, session_state_check_status,
-        session_token, unsupported_session_feature_warnings, workload_permission_resource,
+        session_plan_from_config_with_policies, session_policy_for_mutation_mode,
+        session_state_annotations, session_state_check_status, session_token,
+        unsupported_session_feature_warnings, workload_permission_resource,
     };
     use kply_config::{
         AppConfig, DatabaseRiskWarningPolicy, MutationModePolicy, PolicyConfig, PolicyConfigs,
@@ -4036,6 +4041,44 @@ mod tests {
             recorded_statuses,
             [SessionStatus::Preparing, SessionStatus::Active]
         );
+    }
+
+    #[test]
+    fn rejects_session_resource_apply_when_policy_forbids_prepare() {
+        let app = AppConfig::new(
+            "checkout",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+            Some("ghcr.io/acme/checkout:next".to_owned()),
+            RouteStrategy::Header,
+        );
+        let policies = PolicyConfigs::new(vec![
+            PolicyConfig::new("read-only")
+                .with_allowed_namespaces(["shop"])
+                .with_allowed_workload_kinds(["Deployment"])
+                .with_allowed_image_registries(["ghcr.io"])
+                .with_mutation_mode(MutationModePolicy::ReadOnly),
+        ]);
+        let plan =
+            session_plan_from_config_with_policies(&app, &policies, None, None, None, Some("none"))
+                .unwrap_or_else(|_| panic!("read-only session plan should be created"));
+
+        let error = apply_session_resources(
+            &plan,
+            |_, _| panic!("deployment creation must not run for read-only policies"),
+            |_, _| panic!("service creation must not run for read-only policies"),
+            |_, _| panic!("readiness wait must not run for read-only policies"),
+            |_, _| panic!("state recording must not run for read-only policies"),
+        )
+        .expect_err("read-only policy should block resource apply");
+
+        match error {
+            SessionCreateApplyError::Policy(message) => {
+                assert_eq!(message, "policy does not allow session creation");
+            }
+            _ => panic!("expected policy apply denial"),
+        }
     }
 
     #[test]
