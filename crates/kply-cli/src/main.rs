@@ -43,6 +43,8 @@ const EXIT_BLOCKING: i32 = 1;
 const SESSION_HEADER_NAME: &str = "x-kply-session";
 const ROUTE_STRATEGY_AUTO: &str = "auto";
 const ROUTE_STRATEGY_NONE: &str = "none";
+const ROUTE_STRATEGY_PREVIEW: &str = "preview";
+const ROUTE_STRATEGY_PREVIEW_SERVICE: &str = "preview-service";
 const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
@@ -1781,8 +1783,8 @@ fn session_plan_from_config(
                 SessionPlanBuildError::Config(format!("invalid session route selector: {error}"))
             })?)
         }
-        // Preview routing is represented by future planned resources, not a request selector.
-        "preview" => None,
+        // Preview routing is represented by Service-targeted checks, not a request selector.
+        ROUTE_STRATEGY_PREVIEW | ROUTE_STRATEGY_PREVIEW_SERVICE => None,
         // No routing keeps the sandbox reachable only through its direct Service.
         ROUTE_STRATEGY_NONE => None,
         value => {
@@ -1945,12 +1947,13 @@ fn planned_session_checks(
     let service = ServiceRef::new(namespace, planned_resource_token(session_id, "service"))
         .map_err(|error| error.to_string())?
         .to_string();
-    let route_ready_target =
-        route_strategy_has_route_check(route_strategy).then_some(if route_strategy == "preview" {
+    let route_ready_target = route_strategy_has_route_check(route_strategy).then_some(
+        if route_strategy_uses_preview_service(route_strategy) {
             service.as_str()
         } else {
             route_strategy
-        });
+        },
+    );
     let mut checks = vec![
         ("image_pull", image.as_str()),
         ("service_endpoints", service.as_str()),
@@ -2124,11 +2127,15 @@ fn planned_resource_token(session_id: &str, suffix: &str) -> String {
 }
 
 fn supported_route_strategies() -> String {
-    [ROUTE_STRATEGY_AUTO, ROUTE_STRATEGY_NONE]
-        .into_iter()
-        .chain(SUPPORTED_ROUTE_STRATEGIES.iter().map(RouteStrategy::as_str))
-        .collect::<Vec<_>>()
-        .join(", ")
+    [
+        ROUTE_STRATEGY_AUTO,
+        ROUTE_STRATEGY_NONE,
+        ROUTE_STRATEGY_PREVIEW_SERVICE,
+    ]
+    .into_iter()
+    .chain(SUPPORTED_ROUTE_STRATEGIES.iter().map(RouteStrategy::as_str))
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 /// Resolve CLI route strategy input to a concrete configured strategy.
@@ -2144,12 +2151,23 @@ fn resolve_session_route_strategy<'a>(
 
 /// Return whether a strategy should plan a Kubernetes route object.
 fn route_strategy_creates_route_object(route_strategy: &str) -> bool {
-    !matches!(route_strategy, "preview" | ROUTE_STRATEGY_NONE)
+    !matches!(
+        route_strategy,
+        ROUTE_STRATEGY_PREVIEW | ROUTE_STRATEGY_PREVIEW_SERVICE | ROUTE_STRATEGY_NONE
+    )
 }
 
 /// Return whether a strategy has a route readiness check.
 fn route_strategy_has_route_check(route_strategy: &str) -> bool {
     route_strategy != ROUTE_STRATEGY_NONE
+}
+
+/// Return whether route readiness targets the sandbox Service directly.
+fn route_strategy_uses_preview_service(route_strategy: &str) -> bool {
+    matches!(
+        route_strategy,
+        ROUTE_STRATEGY_PREVIEW | ROUTE_STRATEGY_PREVIEW_SERVICE
+    )
 }
 
 /// Build a dry-run route plan from a session id and optional namespace.
@@ -3027,8 +3045,9 @@ mod tests {
         planned_session_risk_notes, render_check_evidence, render_check_run_json_report,
         render_check_run_text_report, required_session_permissions, resolve_session_route_strategy,
         route_strategy_creates_route_object, route_strategy_has_route_check,
-        session_plan_from_config, session_state_annotations, session_state_check_status,
-        session_token, unsupported_session_feature_warnings, workload_permission_resource,
+        route_strategy_uses_preview_service, session_plan_from_config, session_state_annotations,
+        session_state_check_status, session_token, unsupported_session_feature_warnings,
+        workload_permission_resource,
     };
     use kply_config::{AppConfig, RouteStrategy};
     use kply_core::{CheckResultStatus, ImageRef, SessionStatus, WorkloadRef};
@@ -3818,6 +3837,13 @@ mod tests {
         assert_eq!(preview_resources[0].kind(), "Workload");
         assert_eq!(preview_resources[1].kind(), "Service");
 
+        let preview_service_resources =
+            planned_session_resources("ns", "Workload", "sess", "preview-service")
+                .expect("preview service resources");
+        assert_eq!(preview_service_resources.len(), 2);
+        assert_eq!(preview_service_resources[0].kind(), "Workload");
+        assert_eq!(preview_service_resources[1].kind(), "Service");
+
         let none_resources =
             planned_session_resources("ns", "Workload", "sess", "none").expect("none resources");
         assert_eq!(none_resources.len(), 2);
@@ -3910,6 +3936,14 @@ mod tests {
             &format!("ns/{}", planned_resource_token("sess", "service"))
         );
 
+        let preview_service_checks =
+            planned_session_checks("ns", &workload, &image, "preview-service", "sess")
+                .expect("checks");
+        assert_eq!(
+            preview_service_checks[1].target(),
+            &format!("ns/{}", planned_resource_token("sess", "service"))
+        );
+
         let none_checks =
             planned_session_checks("ns", &workload, &image, "none", "sess").expect("checks");
         assert_eq!(none_checks.len(), 3);
@@ -3959,6 +3993,13 @@ mod tests {
         assert_eq!(preview_steps[0].action(), "delete_service");
         assert_eq!(preview_steps[1].action(), "delete_workload");
 
+        let preview_service_steps =
+            planned_session_cleanup_steps("ns", "Deployment", "sess", "preview-service")
+                .expect("preview service cleanup steps");
+        assert_eq!(preview_service_steps.len(), 2);
+        assert_eq!(preview_service_steps[0].action(), "delete_service");
+        assert_eq!(preview_service_steps[1].action(), "delete_workload");
+
         let none_steps = planned_session_cleanup_steps("ns", "Deployment", "sess", "none")
             .expect("none cleanup steps");
         assert_eq!(none_steps.len(), 2);
@@ -3998,6 +4039,16 @@ mod tests {
         assert_eq!(preview_permissions.len(), 3);
         assert!(
             preview_permissions
+                .iter()
+                .all(|permission| permission.resource() != "httproutes")
+        );
+
+        let preview_service_permissions =
+            required_session_permissions("Deployment", "preview-service")
+                .expect("preview service permissions");
+        assert_eq!(preview_service_permissions.len(), 3);
+        assert!(
+            preview_service_permissions
                 .iter()
                 .all(|permission| permission.resource() != "httproutes")
         );
@@ -4074,8 +4125,15 @@ mod tests {
         );
         assert_eq!(resolve_session_route_strategy(&app, Some("host")), "host");
         assert_eq!(resolve_session_route_strategy(&app, Some("none")), "none");
+        assert_eq!(
+            resolve_session_route_strategy(&app, Some("preview-service")),
+            "preview-service"
+        );
         assert!(!route_strategy_creates_route_object("none"));
         assert!(!route_strategy_has_route_check("none"));
+        assert!(!route_strategy_creates_route_object("preview-service"));
+        assert!(route_strategy_has_route_check("preview-service"));
+        assert!(route_strategy_uses_preview_service("preview-service"));
     }
 
     #[test]
