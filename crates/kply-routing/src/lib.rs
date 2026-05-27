@@ -1887,7 +1887,7 @@ fn qualified_resource_name(namespace: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{collections::BTreeMap, fs, path::Path};
 
     use super::{
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
@@ -1902,11 +1902,13 @@ mod tests {
         generate_nginx_ingress_canary_manifest, generate_traefik_ingress_route_manifest,
         model_gateway_route_capabilities,
     };
+    use k8s_openapi::api::networking::v1::Ingress;
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
     use kply_k8s::{
         GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary,
         IngressBackendSummary, IngressPathSummary, IngressRuleSummary, IngressSummary,
         IngressTlsSummary, gateway_class_summary, gateway_summary, http_route_summary,
+        ingress_summary,
     };
     use kube::{api::ObjectList, core::DynamicObject};
     use serde_json::json;
@@ -2644,6 +2646,127 @@ mod tests {
             TraefikIngressRoutePlanError::UnsafeRuleLiteral {
                 value: "checkout`bad.example.com".to_owned()
             }
+        );
+    }
+
+    #[test]
+    /// Models common annotated Ingress fixtures without requiring annotation parsing.
+    fn models_common_ingress_annotation_fixture_shapes() {
+        let ingresses = read_ingress_fixture("ingress-common-annotations", "ingresses.json")
+            .items
+            .iter()
+            .map(ingress_summary)
+            .collect::<Vec<_>>();
+
+        let detection = detect_routing_capabilities(RoutingCapabilityInput {
+            gateway_api: GatewayApiDiscoveryInput {
+                gateway_classes: None,
+                gateways: None,
+                http_routes: None,
+            },
+            ingresses: Some(&ingresses),
+            preview_service_enabled: true,
+        });
+
+        assert_eq!(ingresses.len(), 3);
+        assert_eq!(
+            detection.ingress.ingress_names,
+            [
+                "payments/payments-alb".to_owned(),
+                "shop/catalog-traefik".to_owned(),
+                "shop/checkout-nginx".to_owned(),
+            ]
+        );
+        assert_eq!(
+            detection.ingress.ingress_class_names,
+            ["alb".to_owned(), "nginx".to_owned(), "traefik".to_owned()]
+        );
+        assert_eq!(
+            detection.ingress.hostnames,
+            [
+                "catalog.example.com".to_owned(),
+                "checkout.example.com".to_owned(),
+                "payments.example.com".to_owned(),
+            ]
+        );
+        assert_eq!(
+            detection.ingress.backend_service_names,
+            [
+                "catalog-http".to_owned(),
+                "checkout-http".to_owned(),
+                "payments-http".to_owned(),
+            ]
+        );
+        assert_eq!(
+            detection.candidate_strategies,
+            [RouteStrategy::Ingress, RouteStrategy::PreviewService]
+        );
+    }
+
+    #[test]
+    /// Does not copy source Ingress controller annotations into generated routes.
+    fn skips_source_ingress_annotations_on_generated_ingress_routes() {
+        let ingresses = read_ingress_fixture("ingress-common-annotations", "ingresses.json")
+            .items
+            .iter()
+            .map(ingress_summary)
+            .collect::<Vec<_>>();
+        let nginx_source = ingresses
+            .iter()
+            .find(|ingress| ingress.name == "checkout-nginx")
+            .expect("nginx ingress fixture should exist");
+        let traefik_source = ingresses
+            .iter()
+            .find(|ingress| ingress.name == "catalog-traefik")
+            .expect("traefik ingress fixture should exist");
+        let route_annotations =
+            vec![MetadataEntry::new("kply.dev/route-strategy", "ingress").unwrap()];
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+        let service = resource("shop", "Service", "checkout-sandbox");
+
+        let nginx_manifest = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: nginx_source,
+            route: &resource("shop", "Ingress", "checkout-session-123"),
+            backend_service: &service,
+            backend_port: "http",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &route_annotations,
+        })
+        .unwrap();
+        let traefik_manifest =
+            generate_traefik_ingress_route_manifest(TraefikIngressRoutePlanInput {
+                source_ingress: traefik_source,
+                route: &resource("shop", "IngressRoute", "catalog-session-123"),
+                backend_service: &service,
+                backend_port: "http",
+                selector: &selector,
+                labels: &ownership_labels(),
+                annotations: &route_annotations,
+            })
+            .unwrap();
+
+        assert_eq!(
+            nginx_manifest.metadata.annotations,
+            BTreeMap::from([
+                ("kply.dev/route-strategy".to_owned(), "ingress".to_owned()),
+                (
+                    "nginx.ingress.kubernetes.io/canary".to_owned(),
+                    "true".to_owned()
+                ),
+                (
+                    "nginx.ingress.kubernetes.io/canary-by-header".to_owned(),
+                    "x-kply-session".to_owned()
+                ),
+                (
+                    "nginx.ingress.kubernetes.io/canary-by-header-value".to_owned(),
+                    "session-123".to_owned()
+                ),
+            ])
+        );
+        assert_eq!(
+            traefik_manifest.metadata.annotations,
+            BTreeMap::from([("kply.dev/route-strategy".to_owned(), "ingress".to_owned())])
         );
     }
 
@@ -3431,6 +3554,25 @@ mod tests {
         serde_json::from_str(&source).unwrap_or_else(|error| {
             panic!(
                 "Gateway API fixture {} should deserialize: {error}",
+                fixture_path.display()
+            )
+        })
+    }
+
+    /// Read one Ingress response fixture list.
+    fn read_ingress_fixture(shape: &str, name: &str) -> ObjectList<Ingress> {
+        let fixture_path =
+            kply_test::fixture_path(Path::new("k8s-responses").join(shape).join(name));
+        let source = fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
+            panic!(
+                "Ingress fixture {} should be readable: {error}",
+                fixture_path.display()
+            )
+        });
+
+        serde_json::from_str(&source).unwrap_or_else(|error| {
+            panic!(
+                "Ingress fixture {} should deserialize: {error}",
                 fixture_path.display()
             )
         })

@@ -18,3 +18,7 @@ Current fixtures:
   where Gateways exist but no GatewayClass resources are discoverable.
 - `gateway-api-unsupported-tcp-only/`: synthetic Gateway API responses where
   discovered Gateways only expose TCP listeners.
+- `ingress-common-annotations/`: synthetic Ingress responses for common
+  ingress-nginx, Traefik, cert-manager, external-dns, and AWS ALB annotations.
+  These fixtures verify that controller annotations are accepted as source
+  metadata without being copied to generated session-owned route objects.

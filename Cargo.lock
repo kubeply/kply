@@ -661,6 +661,7 @@ dependencies = [
 name = "kply-routing"
 version = "0.1.0"
 dependencies = [
+ "k8s-openapi",
  "kply-core",
  "kply-k8s",
  "kply-test",
