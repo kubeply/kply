@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Kply plan
-        uses: kubeply/kply@v0.1.0
+        uses: kubeply/kply@<full-commit-sha> # v0.1.0
         with:
           version: v0.1.0
           config-path: kply.yaml
@@ -46,9 +46,10 @@ jobs:
           github-token: ${{ github.token }}
 ```
 
-Use a pinned Kply release version for both the action ref and the `version`
-input. `version: latest` is accepted, but a pinned version keeps pull-request
-results reproducible.
+Use a pinned Kply release version for the `version` input and pin the action
+reference to a full commit SHA, optionally annotated with the release tag.
+`version: latest` is accepted, but pinning keeps pull-request results
+reproducible.
 
 ## Inputs
 
@@ -56,7 +57,7 @@ results reproducible.
 | --- | --- | --- | --- |
 | `version` | no | `latest` | Kply release version to install. |
 | `config-path` | no | `kply.yaml` | Path to the project config file. |
-| `app` | yes | none | Configured app name to plan. |
+| `app` | no | none | Configured app name to plan; current action versions fail when this is omitted. |
 | `image` | no | none | Candidate image reference for the sandbox workload. |
 | `mode` | no | `plan` | Action mode. Only `plan` is supported today. |
 | `output-path` | no | `kply-report.json` | Workspace-local JSON report path. |
