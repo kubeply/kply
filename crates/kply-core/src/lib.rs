@@ -2356,6 +2356,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
 /// [`SessionStatus::CleanedUp`], or [`SessionStatus::Failed`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SessionReport {
+    metadata: SessionReportMetadata,
     plan: SessionPlan,
     status: SessionStatus,
 }
@@ -2367,7 +2368,18 @@ impl SessionReport {
             return Err(SessionReportError::NonReportableStatus { status });
         }
 
-        Ok(Self { plan, status })
+        let metadata = SessionReportMetadata::from_plan(&plan);
+
+        Ok(Self {
+            metadata,
+            plan,
+            status,
+        })
+    }
+
+    /// Borrow the top-level [`SessionReportMetadata`].
+    pub fn metadata(&self) -> &SessionReportMetadata {
+        &self.metadata
     }
 
     /// Borrow the original [`SessionPlan`].
@@ -2381,11 +2393,48 @@ impl SessionReport {
     }
 }
 
+/// Stable session identity metadata repeated at the top level of a [`SessionReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionReportMetadata {
+    session_id: SessionId,
+    session_name: SessionName,
+    workload: WorkloadRef,
+}
+
+impl SessionReportMetadata {
+    /// Build [`SessionReportMetadata`] from a [`SessionPlan`].
+    pub fn from_plan(plan: &SessionPlan) -> Self {
+        Self {
+            session_id: plan.id().clone(),
+            session_name: plan.name().clone(),
+            workload: plan.workload().clone(),
+        }
+    }
+
+    /// Borrow the reported [`SessionId`].
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    /// Borrow the reported [`SessionName`].
+    pub fn session_name(&self) -> &SessionName {
+        &self.session_name
+    }
+
+    /// Borrow the reported target [`WorkloadRef`].
+    pub fn workload(&self) -> &WorkloadRef {
+        &self.workload
+    }
+}
+
 /// Error returned when a [`SessionReport`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionReportError {
     /// Session reports must use a reportable terminal or blocked status.
     NonReportableStatus { status: SessionStatus },
+    /// Top-level report metadata must match the nested session plan.
+    MetadataMismatch,
 }
 
 impl fmt::Display for SessionReportError {
@@ -2396,6 +2445,9 @@ impl fmt::Display for SessionReportError {
                     formatter,
                     "session report status `{status}` is not reportable"
                 )
+            }
+            Self::MetadataMismatch => {
+                write!(formatter, "session report metadata does not match plan")
             }
         }
     }
@@ -2436,6 +2488,11 @@ impl<'de> Deserialize<'de> for SessionReport {
         D: Deserializer<'de>,
     {
         let fields = SessionReportFields::deserialize(deserializer)?;
+        let expected = SessionReportMetadata::from_plan(&fields.plan);
+        if fields.metadata != expected {
+            return Err(D::Error::custom(SessionReportError::MetadataMismatch));
+        }
+
         Self::new(fields.plan, fields.status).map_err(D::Error::custom)
     }
 }
@@ -4019,6 +4076,7 @@ struct RiskNoteFields {
 
 #[derive(Deserialize)]
 struct SessionReportFields {
+    metadata: SessionReportMetadata,
     plan: SessionPlan,
     status: SessionStatus,
 }
@@ -5045,8 +5103,8 @@ mod tests {
         SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
         SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportError, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
-        TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
+        SessionReportError, SessionReportMetadata, SessionStatus, SessionTransitionError,
+        TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
         UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
         UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
         WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
@@ -7584,6 +7642,15 @@ mod tests {
     #[test]
     fn rejects_session_report_json_with_non_reportable_status() {
         let error = serde_json::from_value::<SessionReport>(json!({
+            "metadata": {
+                "session_id": "session-123",
+                "session_name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                }
+            },
             "plan": {
                 "id": "session-123",
                 "name": "checkout-test",
@@ -7604,6 +7671,40 @@ mod tests {
         .expect_err("non-reportable report status should be rejected");
 
         assert!(error.to_string().contains("not reportable"));
+    }
+
+    #[test]
+    fn rejects_session_report_json_with_mismatched_metadata() {
+        let error = serde_json::from_value::<SessionReport>(json!({
+            "metadata": {
+                "session_id": "different-session",
+                "session_name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                }
+            },
+            "plan": {
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": null,
+                "policy": {
+                    "allowed_operations": ["inspect"]
+                },
+                "status": "planned"
+            },
+            "status": "ready"
+        }))
+        .expect_err("mismatched report metadata should be rejected");
+
+        assert!(error.to_string().contains("metadata does not match"));
     }
 
     #[test]
@@ -7953,6 +8054,7 @@ mod tests {
             let report =
                 SessionReport::new(plan.clone(), status).expect("session report should be valid");
 
+            assert_eq!(report.metadata(), &SessionReportMetadata::from_plan(&plan));
             assert_eq!(report.plan(), &plan);
             assert_eq!(report.status(), status);
         }
