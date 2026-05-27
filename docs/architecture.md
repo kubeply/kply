@@ -257,6 +257,11 @@ Current provisional pre-`1.0.0` unsupported feature warning fields:
 - `feature`: stable unsupported feature identifier.
 - `reason`: stable reason code explaining why the feature is not executable
   yet.
+- `preview` and `preview-service` session plans emit an
+  `edge_route_validation` warning because Service-targeted checks do not prove
+  ingress or gateway routing behavior.
+- `none` session plans emit an `edge_route_validation` warning because route
+  validation is intentionally skipped.
 
 Current provisional pre-`1.0.0` unsupported route output fields:
 

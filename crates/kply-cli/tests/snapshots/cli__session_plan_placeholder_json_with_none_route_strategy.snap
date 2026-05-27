@@ -119,7 +119,12 @@ expression: value
   "route_selector": null,
   "status": "planned",
   "ttl": null,
-  "unsupported_feature_warnings": [],
+  "unsupported_feature_warnings": [
+    {
+      "feature": "edge_route_validation",
+      "reason": "route_strategy_none_skips_route_validation"
+    }
+  ],
   "workload": {
     "kind": "Deployment",
     "name": "checkout-api",

@@ -1,6 +1,5 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 966
 expression: output
 ---
 kply session plan checkout-db
@@ -32,7 +31,8 @@ required_permissions: 3
   permission: core/pods [get,list,watch]
   permission: core/services [create,delete,get,patch]
   permission: apps/deployments [create,delete,get,patch]
-unsupported_feature_warnings: 0
+unsupported_feature_warnings: 1
+  unsupported: edge_route_validation: preview_service_skips_edge_route_validation
 risk_notes: 1
   risk: warning:database -> app:checkout-db (database_reference_requires_manual_review)
 route_selector: <none>
