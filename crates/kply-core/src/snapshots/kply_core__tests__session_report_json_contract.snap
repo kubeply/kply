@@ -88,6 +88,23 @@ expression: value
       "namespace": "checkout"
     }
   },
+  "created_resources": [
+    {
+      "kind": "Deployment",
+      "name": "session-123-workload",
+      "namespace": "checkout"
+    },
+    {
+      "kind": "HTTPRoute",
+      "name": "session-123-route",
+      "namespace": "checkout"
+    },
+    {
+      "kind": "Service",
+      "name": "session-123-service",
+      "namespace": "checkout"
+    }
+  ],
   "metadata": {
     "session_id": "session-123",
     "session_name": "checkout-test",
