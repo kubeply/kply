@@ -2363,6 +2363,7 @@ pub struct SessionReport {
     created_resources: Vec<KubernetesResourceRef>,
     limitations: Vec<UnsupportedFeatureWarning>,
     plan: SessionPlan,
+    recommended_next_action: SessionReportRecommendedAction,
     route_strategy: SessionReportRouteStrategy,
     status: SessionStatus,
 }
@@ -2390,9 +2391,15 @@ impl SessionReport {
             created_resources: Vec::new(),
             limitations,
             plan,
+            recommended_next_action: recommended_next_action(
+                status,
+                SessionReportCleanupStatus::from_parts(status, &[], &[]),
+                &[],
+            ),
             route_strategy,
             status,
-        })
+        }
+        .with_recomputed_recommended_next_action())
     }
 
     fn with_app_graph_summary_value(
@@ -2425,12 +2432,14 @@ impl SessionReport {
             self.plan.planned_cleanup_steps(),
             &self.created_resources,
         );
+        self = self.with_recomputed_recommended_next_action();
         self
     }
 
     /// Return a copy of this report with executed check results and evidence.
     pub fn with_checks(mut self, checks: impl IntoIterator<Item = SessionReportCheck>) -> Self {
         self.checks = deduplicate_report_checks_by_check(checks);
+        self = self.with_recomputed_recommended_next_action();
         self
     }
 
@@ -2448,6 +2457,22 @@ impl SessionReport {
     /// Return a copy of this report with an explicit cleanup status.
     pub fn with_cleanup_status(mut self, cleanup_status: SessionReportCleanupStatus) -> Self {
         self.cleanup_status = cleanup_status;
+        self = self.with_recomputed_recommended_next_action();
+        self
+    }
+
+    /// Return a copy of this report with an explicit recommended next action.
+    pub fn with_recommended_next_action(
+        mut self,
+        recommended_next_action: SessionReportRecommendedAction,
+    ) -> Self {
+        self.recommended_next_action = recommended_next_action;
+        self
+    }
+
+    fn with_recomputed_recommended_next_action(mut self) -> Self {
+        self.recommended_next_action =
+            recommended_next_action(self.status, self.cleanup_status, &self.checks);
         self
     }
 
@@ -2479,6 +2504,11 @@ impl SessionReport {
     /// Borrow report limitations in deterministic order.
     pub fn limitations(&self) -> &[UnsupportedFeatureWarning] {
         &self.limitations
+    }
+
+    /// Return the recommended next action for an agent or operator.
+    pub const fn recommended_next_action(&self) -> SessionReportRecommendedAction {
+        self.recommended_next_action
     }
 
     /// Borrow the original [`SessionPlan`].
@@ -2552,6 +2582,49 @@ impl SessionReportCleanupStatus {
 }
 
 impl fmt::Display for SessionReportCleanupStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Agent-facing recommended next action included in a [`SessionReport`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionReportRecommendedAction {
+    /// Promote outside Kply after human or external promotion approval.
+    PromoteOutsideKply,
+    /// Fix the attempted change and retry the session.
+    FixAndRetry,
+    /// Inspect the session manually before taking further action.
+    InspectManually,
+    /// Cleanup session-owned resources before continuing.
+    CleanupRequired,
+}
+
+impl SessionReportRecommendedAction {
+    /// Return every recommended action in declaration order.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::PromoteOutsideKply,
+            Self::FixAndRetry,
+            Self::InspectManually,
+            Self::CleanupRequired,
+        ]
+    }
+
+    /// Return the stable snake_case action name used in agent-readable output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::PromoteOutsideKply => "promote_outside_kply",
+            Self::FixAndRetry => "fix_and_retry",
+            Self::InspectManually => "inspect_manually",
+            Self::CleanupRequired => "cleanup_required",
+        }
+    }
+}
+
+impl fmt::Display for SessionReportRecommendedAction {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -2870,6 +2943,12 @@ impl<'de> Deserialize<'de> for SessionReport {
         };
         let report = match fields.limitations {
             Some(limitations) => report.with_limitations(limitations),
+            None => report,
+        };
+        let report = match fields.recommended_next_action {
+            Some(recommended_next_action) => {
+                report.with_recommended_next_action(recommended_next_action)
+            }
             None => report,
         };
         match fields.app_graph_summary {
@@ -4473,6 +4552,8 @@ struct SessionReportFields {
     limitations: Option<Vec<UnsupportedFeatureWarning>>,
     plan: SessionPlan,
     #[serde(default)]
+    recommended_next_action: Option<SessionReportRecommendedAction>,
+    #[serde(default)]
     route_strategy: Option<SessionReportRouteStrategy>,
     status: SessionStatus,
 }
@@ -5370,6 +5451,29 @@ fn deduplicate_report_checks_by_check(
         .collect()
 }
 
+fn recommended_next_action(
+    report_status: SessionStatus,
+    cleanup_status: SessionReportCleanupStatus,
+    checks: &[SessionReportCheck],
+) -> SessionReportRecommendedAction {
+    if matches!(
+        cleanup_status,
+        SessionReportCleanupStatus::Required | SessionReportCleanupStatus::Failed
+    ) {
+        return SessionReportRecommendedAction::CleanupRequired;
+    }
+
+    if checks.iter().any(|check| check.status().is_blocking()) {
+        return SessionReportRecommendedAction::FixAndRetry;
+    }
+
+    if report_status == SessionStatus::Ready {
+        SessionReportRecommendedAction::PromoteOutsideKply
+    } else {
+        SessionReportRecommendedAction::InspectManually
+    }
+}
+
 fn validate_planned_label_entry(entry: MetadataEntry) -> Result<MetadataEntry, MetadataEntryError> {
     MetadataEntry::new_label(entry.key, entry.value)
 }
@@ -5533,12 +5637,13 @@ mod tests {
         SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
         SessionReportAppGraphSummary, SessionReportCheck, SessionReportCleanupStatus,
-        SessionReportError, SessionReportMetadata, SessionReportRouteStrategy, SessionStatus,
-        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
-        UNSUPPORTED_FEATURE_NAME_MAX_LEN, UNSUPPORTED_FEATURE_REASON_MAX_LEN,
-        UnsupportedFeatureNameError, UnsupportedFeatureReasonError, UnsupportedFeatureWarning,
-        UnsupportedFeatureWarningError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        SessionReportError, SessionReportMetadata, SessionReportRecommendedAction,
+        SessionReportRouteStrategy, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
+        TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
+        UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
+        UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -8193,6 +8298,10 @@ mod tests {
         );
         assert_eq!(report.created_resources(), []);
         assert_eq!(report.limitations(), []);
+        assert_eq!(
+            report.recommended_next_action(),
+            SessionReportRecommendedAction::PromoteOutsideKply
+        );
         assert_eq!(report.route_strategy().strategy(), "none");
         assert_eq!(report.route_strategy().selector(), None);
     }
@@ -8724,6 +8833,14 @@ mod tests {
             assert_eq!(report.created_resources(), []);
             assert_eq!(report.limitations(), []);
             assert_eq!(
+                report.recommended_next_action(),
+                if status == SessionStatus::Ready {
+                    SessionReportRecommendedAction::PromoteOutsideKply
+                } else {
+                    SessionReportRecommendedAction::InspectManually
+                }
+            );
+            assert_eq!(
                 report.route_strategy(),
                 &SessionReportRouteStrategy::from_plan(&plan)
             );
@@ -8791,6 +8908,10 @@ mod tests {
             report.cleanup_status(),
             SessionReportCleanupStatus::Required
         );
+        assert_eq!(
+            report.recommended_next_action(),
+            SessionReportRecommendedAction::CleanupRequired
+        );
     }
 
     #[test]
@@ -8846,6 +8967,31 @@ mod tests {
                 .with_cleanup_status(SessionReportCleanupStatus::Failed)
                 .cleanup_status(),
             SessionReportCleanupStatus::Failed
+        );
+    }
+
+    #[test]
+    /// Verify session reports expose conservative recommended next actions.
+    fn creates_session_report_with_recommended_next_action() {
+        let failed_check = SessionReportCheck::new(
+            PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api")
+                .expect("planned check"),
+            CheckResultStatus::Failed,
+            [MetadataEntry::new("reason", "rollout_unavailable").expect("evidence")],
+        );
+        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report should be valid")
+            .with_checks([failed_check]);
+
+        assert_eq!(
+            report.recommended_next_action(),
+            SessionReportRecommendedAction::FixAndRetry
+        );
+        assert_eq!(
+            report
+                .with_recommended_next_action(SessionReportRecommendedAction::InspectManually)
+                .recommended_next_action(),
+            SessionReportRecommendedAction::InspectManually
         );
     }
 
@@ -9516,6 +9662,40 @@ mod tests {
         assert_eq!(SessionReportCleanupStatus::CleanedUp.as_str(), "cleaned_up");
         assert_eq!(SessionReportCleanupStatus::Failed.as_str(), "failed");
         assert_eq!(SessionReportCleanupStatus::Required.to_string(), "required");
+    }
+
+    /// Verifies stable recommended action names for session reports.
+    #[test]
+    fn renders_session_report_recommended_actions() {
+        assert_eq!(
+            SessionReportRecommendedAction::all(),
+            [
+                SessionReportRecommendedAction::PromoteOutsideKply,
+                SessionReportRecommendedAction::FixAndRetry,
+                SessionReportRecommendedAction::InspectManually,
+                SessionReportRecommendedAction::CleanupRequired,
+            ]
+        );
+        assert_eq!(
+            SessionReportRecommendedAction::PromoteOutsideKply.as_str(),
+            "promote_outside_kply"
+        );
+        assert_eq!(
+            SessionReportRecommendedAction::FixAndRetry.as_str(),
+            "fix_and_retry"
+        );
+        assert_eq!(
+            SessionReportRecommendedAction::InspectManually.as_str(),
+            "inspect_manually"
+        );
+        assert_eq!(
+            SessionReportRecommendedAction::CleanupRequired.as_str(),
+            "cleanup_required"
+        );
+        assert_eq!(
+            SessionReportRecommendedAction::CleanupRequired.to_string(),
+            "cleanup_required"
+        );
     }
 
     /// Verifies the JSON contract for check result status values.
