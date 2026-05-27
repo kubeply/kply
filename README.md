@@ -49,7 +49,8 @@ codes.
 ## Gateway API
 
 See [docs/gateway-api.md](docs/gateway-api.md) for Gateway API routing
-permissions and ownership constraints.
+permissions, ownership constraints, and fallback guidance when Gateway API is
+unavailable.
 
 ## Local Demo
 
