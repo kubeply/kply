@@ -1,0 +1,9 @@
+---
+source: crates/kply-cli/src/main.rs
+expression: render_report_unavailable_text(&report)
+---
+kply report show checkout-plan
+namespace: shop
+session_status: active
+report: not_available
+reason: session_report_persistence_not_implemented
