@@ -43,6 +43,9 @@ outputs:
   config-path:
     description: Absolute path to the resolved kply.yaml config file.
     value: ${{ steps.config.outputs.config_path }}
+  app:
+    description: Configured app name validated by kply app inspect.
+    value: ${{ steps.app.outputs.app }}
 
 runs:
   using: composite
@@ -294,3 +297,30 @@ runs:
 
         echo "config_path=${resolved_config_path}" >> "${GITHUB_OUTPUT}"
         echo "Using Kply config at ${resolved_config_path}"
+
+    - name: Validate Kply app
+      id: app
+      shell: bash
+      env:
+        INPUT_APP: ${{ inputs.app }}
+        KPLY_PATH: ${{ steps.install.outputs.kply_path }}
+        CONFIG_PATH: ${{ steps.config.outputs.config_path }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${INPUT_APP}" ]]; then
+          echo "::error::app must not be empty."
+          exit 1
+        fi
+
+        app_inspect_json="$(mktemp "${RUNNER_TEMP}/kply-app.XXXXXX.json")"
+        trap 'rm -f "${app_inspect_json}"' EXIT
+        "${KPLY_PATH}" \
+          app inspect "${INPUT_APP}" \
+          --config "${CONFIG_PATH}" \
+          --json \
+          --quiet \
+          --no-color > "${app_inspect_json}"
+
+        echo "app=${INPUT_APP}" >> "${GITHUB_OUTPUT}"
+        echo "Validated Kply app ${INPUT_APP}"
