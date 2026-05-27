@@ -1,0 +1,13 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply route plan checkout-plan
+status: planned
+mutation: not_applied
+apply: false
+route_kind: HTTPRoute
+planned_resource: shop/HTTPRoute/checkout-plan-route
+cleanup_selector: 2
+  label: kply.dev/managed-by=kply
+  label: kply.dev/session-id=checkout-plan

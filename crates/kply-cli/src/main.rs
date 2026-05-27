@@ -9,7 +9,7 @@ use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Service;
 use kply_cli::cli::{
     AppCommand, CheckCommand, Cli, ClusterCommand, Command, ConfigCommand, DemoCommand,
-    SessionCommand,
+    RouteCommand, SessionCommand,
 };
 use kply_config::{
     AppConfig, ConfigLoadError, ConfigValidationErrors, KplyConfig, RouteStrategy, load_config_path,
@@ -25,6 +25,10 @@ use kply_core::{
 use kply_k8s::{
     DeploymentRolloutPhase, DeploymentSummary, DiscoveryError, KubeconfigError, MutationError,
     MutationErrorCode, ResourceDeletionSummary, ServiceSummary, SessionSummary,
+};
+use kply_routing::{
+    GatewayHttpRouteCleanupTarget, GatewayRouteCleanupSelector, gateway_http_route_cleanup_target,
+    gateway_route_cleanup_selector,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -175,6 +179,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Check {
             command: Some(CheckCommand::Run { session, namespace }),
         }) => return render_check_run(&cli, session, namespace.as_deref()),
+        Some(Command::Route {
+            command: Some(RouteCommand::Plan { session, namespace }),
+        }) => return render_route_plan(&cli, session, namespace.as_deref()),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -667,6 +674,46 @@ fn render_session_cleanup(
     Ok(ExitCode::SUCCESS)
 }
 
+/// Render a deterministic dry-run route plan for one sandbox session.
+fn render_route_plan(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_route_plan_error(&error.to_string(), cli.json),
+    };
+    let route_plan = match route_plan_from_session(session_id.as_str(), namespace) {
+        Ok(route_plan) => route_plan,
+        Err(error) => return render_route_plan_error(&error.to_string(), cli.json),
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&route_plan)?);
+    } else if !cli.quiet {
+        println!("kply route plan {}", route_plan.session_id);
+        println!("status: {}", route_plan.status);
+        println!("mutation: {}", route_plan.mutation);
+        println!("apply: {}", route_plan.apply);
+        println!("route_kind: {}", route_plan.route_kind);
+        match &route_plan.planned_resource {
+            Some(resource) => {
+                println!(
+                    "planned_resource: {}/{}/{}",
+                    resource.namespace, resource.kind, resource.name
+                );
+            }
+            None => println!("planned_resource: <namespace required>"),
+        }
+        println!(
+            "cleanup_selector: {}",
+            route_plan.cleanup_selector.match_labels.len()
+        );
+        for (key, value) in &route_plan.cleanup_selector.match_labels {
+            println!("  label: {key}={value}");
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Convert Kubernetes cleanup failures into CLI cleanup apply failures.
 fn session_cleanup_error_from_cleanup_error(
     error: kply_k8s::CleanupError,
@@ -884,6 +931,19 @@ struct CheckRunStatusCounts {
     failed: usize,
     warning: usize,
     skipped: usize,
+}
+
+/// Dry-run route plan emitted by `kply route plan`.
+#[derive(Debug, Serialize)]
+struct RoutePlanOutput {
+    session_id: String,
+    status: &'static str,
+    mutation: &'static str,
+    apply: bool,
+    route_kind: &'static str,
+    planned_resource: Option<SessionManifestSummary>,
+    cleanup_target: Option<GatewayHttpRouteCleanupTarget>,
+    cleanup_selector: GatewayRouteCleanupSelector,
 }
 
 impl CheckRunStatusCounts {
@@ -1927,6 +1987,66 @@ fn supported_route_strategies() -> String {
         .join(", ")
 }
 
+/// Build a dry-run route plan from a session id and optional namespace.
+fn route_plan_from_session(
+    session_id: &str,
+    namespace: Option<&str>,
+) -> std::result::Result<RoutePlanOutput, String> {
+    let labels = route_plan_ownership_labels(session_id)?;
+    let cleanup_selector =
+        gateway_route_cleanup_selector(&labels).map_err(|error| error.to_string())?;
+    let (planned_resource, cleanup_target) = match namespace {
+        Some(namespace) => {
+            let route = KubernetesResourceRef::new(
+                namespace,
+                "HTTPRoute",
+                planned_resource_token(session_id, "route"),
+            )
+            .map_err(|error| format!("invalid planned route resource: {error}"))?;
+            let cleanup_target = gateway_http_route_cleanup_target(&route, &labels)
+                .map_err(|error| error.to_string())?;
+            (
+                Some(SessionManifestSummary {
+                    kind: "HTTPRoute".to_owned(),
+                    namespace: route.namespace().to_owned(),
+                    name: route.name().to_owned(),
+                }),
+                Some(cleanup_target),
+            )
+        }
+        None => (None, None),
+    };
+
+    Ok(RoutePlanOutput {
+        session_id: session_id.to_owned(),
+        status: "planned",
+        mutation: "not_applied",
+        apply: false,
+        route_kind: "HTTPRoute",
+        planned_resource,
+        cleanup_target,
+        cleanup_selector,
+    })
+}
+
+/// Build ownership labels required for route planning.
+fn route_plan_ownership_labels(
+    session_id: &str,
+) -> std::result::Result<Vec<MetadataEntry>, String> {
+    [
+        ("kply.dev/app", "unknown"),
+        ("kply.dev/managed-by", "kply"),
+        ("kply.dev/session-id", session_id),
+        ("kply.dev/session-name", session_id),
+    ]
+    .into_iter()
+    .map(|(key, value)| {
+        MetadataEntry::new_label(key, value)
+            .map_err(|error| format!("invalid route ownership label `{key}`: {error}"))
+    })
+    .collect()
+}
+
 /// Derive a stable Kubernetes-compatible session token from an app name.
 fn session_token(app_name: &str, suffix: &str) -> String {
     unique_token(app_name, suffix)
@@ -2280,6 +2400,24 @@ fn render_check_run_error(message: &str, wants_json: bool) -> Result<ExitCode> {
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: check run\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render route plan input errors.
+fn render_route_plan_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "route_plan",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: route plan\n\n{message}");
     }
 
     Ok(exit_code(EXIT_USAGE))

@@ -85,6 +85,12 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<CheckCommand>,
     },
+    /// Plan and manage temporary route changes.
+    Route {
+        /// Optional route command.
+        #[command(subcommand)]
+        command: Option<RouteCommand>,
+    },
     /// Manage the local Kply demo.
     Demo {
         /// Required demo command.
@@ -105,6 +111,7 @@ impl Command {
         Self::Config { command: None },
         Self::Cluster { command: None },
         Self::Check { command: None },
+        Self::Route { command: None },
         Self::Completion,
         Self::Report,
     ];
@@ -118,9 +125,32 @@ impl Command {
             Self::Config { .. } => "config",
             Self::Cluster { .. } => "cluster",
             Self::Check { .. } => "check",
+            Self::Route { .. } => "route",
             Self::Demo { .. } => "demo",
             Self::Completion => "completion",
             Self::Report => "report",
+        }
+    }
+}
+
+/// Temporary route commands.
+#[derive(Clone, Debug, Subcommand)]
+pub enum RouteCommand {
+    /// Plan temporary routing for one sandbox session.
+    Plan {
+        /// Session id to route.
+        session: String,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
+}
+
+impl RouteCommand {
+    /// Return the stable command name used in CLI output.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Plan { .. } => "plan",
         }
     }
 }
