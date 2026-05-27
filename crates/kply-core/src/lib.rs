@@ -2358,6 +2358,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
 pub struct SessionReport {
     metadata: SessionReportMetadata,
     app_graph_summary: Option<SessionReportAppGraphSummary>,
+    checks: Vec<SessionReportCheck>,
     created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
     route_strategy: SessionReportRouteStrategy,
@@ -2377,6 +2378,7 @@ impl SessionReport {
         Ok(Self {
             metadata,
             app_graph_summary: None,
+            checks: Vec::new(),
             created_resources: Vec::new(),
             plan,
             route_strategy,
@@ -2412,6 +2414,12 @@ impl SessionReport {
         self
     }
 
+    /// Return a copy of this report with executed check results and evidence.
+    pub fn with_checks(mut self, checks: impl IntoIterator<Item = SessionReportCheck>) -> Self {
+        self.checks = deduplicate_report_checks_by_check(checks);
+        self
+    }
+
     /// Borrow the top-level [`SessionReportMetadata`].
     pub fn metadata(&self) -> &SessionReportMetadata {
         &self.metadata
@@ -2420,6 +2428,11 @@ impl SessionReport {
     /// Borrow the optional summarized [`AppGraph`].
     pub fn app_graph_summary(&self) -> Option<&SessionReportAppGraphSummary> {
         self.app_graph_summary.as_ref()
+    }
+
+    /// Borrow executed check results and evidence in deterministic order.
+    pub fn checks(&self) -> &[SessionReportCheck] {
+        &self.checks
     }
 
     /// Borrow resources created for the session in deterministic order.
@@ -2440,6 +2453,54 @@ impl SessionReport {
     /// Return the final report [`SessionStatus`].
     pub const fn status(&self) -> SessionStatus {
         self.status
+    }
+}
+
+/// Result and evidence for one verification check in a [`SessionReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct SessionReportCheck {
+    check: PlannedCheck,
+    status: CheckResultStatus,
+    evidence: Vec<MetadataEntry>,
+}
+
+impl SessionReportCheck {
+    /// Create a [`SessionReportCheck`] from a planned check, status, and evidence entries.
+    pub fn new(
+        check: PlannedCheck,
+        status: CheckResultStatus,
+        evidence: impl IntoIterator<Item = MetadataEntry>,
+    ) -> Self {
+        Self {
+            check,
+            status,
+            evidence: deduplicate_metadata_by_key(evidence),
+        }
+    }
+
+    /// Borrow the executed planned check.
+    pub fn check(&self) -> &PlannedCheck {
+        &self.check
+    }
+
+    /// Return the check result status.
+    pub const fn status(&self) -> CheckResultStatus {
+        self.status
+    }
+
+    /// Borrow stable evidence key/value entries for this check.
+    pub fn evidence(&self) -> &[MetadataEntry] {
+        &self.evidence
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionReportCheck {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = SessionReportCheckFields::deserialize(deserializer)?;
+        Ok(Self::new(fields.check, fields.status, fields.evidence))
     }
 }
 
@@ -2700,6 +2761,7 @@ impl<'de> Deserialize<'de> for SessionReport {
         }
 
         let report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
+        let report = report.with_checks(fields.checks);
         let report = report.with_created_resources(fields.created_resources);
         match fields.app_graph_summary {
             Some(app_graph_summary) => report
@@ -4293,6 +4355,8 @@ struct SessionReportFields {
     #[serde(default)]
     app_graph_summary: Option<SessionReportAppGraphSummary>,
     #[serde(default)]
+    checks: Vec<SessionReportCheck>,
+    #[serde(default)]
     created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
     #[serde(default)]
@@ -4311,6 +4375,15 @@ struct SessionReportAppGraphSummaryFields {
     service_routes: Vec<ServiceRouteRef>,
     #[serde(default)]
     warnings: Vec<AppGraphWarning>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionReportCheckFields {
+    check: PlannedCheck,
+    status: CheckResultStatus,
+    #[serde(default)]
+    evidence: Vec<MetadataEntry>,
 }
 
 #[derive(Deserialize)]
@@ -5173,6 +5246,17 @@ fn deduplicate_metadata_by_key(
         .collect()
 }
 
+fn deduplicate_report_checks_by_check(
+    checks: impl IntoIterator<Item = SessionReportCheck>,
+) -> Vec<SessionReportCheck> {
+    checks
+        .into_iter()
+        .map(|check| (check.check.clone(), check))
+        .collect::<BTreeMap<_, _>>()
+        .into_values()
+        .collect()
+}
+
 fn validate_planned_label_entry(entry: MetadataEntry) -> Result<MetadataEntry, MetadataEntryError> {
     MetadataEntry::new_label(entry.key, entry.value)
 }
@@ -5335,9 +5419,9 @@ mod tests {
         SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
         SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportAppGraphSummary, SessionReportError, SessionReportMetadata,
-        SessionReportRouteStrategy, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
-        TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
+        SessionReportAppGraphSummary, SessionReportCheck, SessionReportError,
+        SessionReportMetadata, SessionReportRouteStrategy, SessionStatus, SessionTransitionError,
+        TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
         UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
         UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
         WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
@@ -5365,6 +5449,7 @@ mod tests {
                 .expect("route strategy annotation")])
     }
 
+    /// Build deterministic resources created by a routed test session.
     fn test_created_resources() -> Vec<KubernetesResourceRef> {
         vec![
             KubernetesResourceRef::new("checkout", "Deployment", "session-123-workload")
@@ -5376,6 +5461,31 @@ mod tests {
         ]
     }
 
+    /// Build deterministic check results with stable agent evidence.
+    fn test_report_checks() -> Vec<SessionReportCheck> {
+        vec![
+            SessionReportCheck::new(
+                PlannedCheck::new("route_ready", "header").expect("planned check"),
+                CheckResultStatus::Warning,
+                [
+                    MetadataEntry::new("reason", "preview_routing_not_installed")
+                        .expect("evidence"),
+                    MetadataEntry::new("selector", "header:x-kply-session").expect("evidence"),
+                ],
+            ),
+            SessionReportCheck::new(
+                PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api")
+                    .expect("planned check"),
+                CheckResultStatus::Passed,
+                [
+                    MetadataEntry::new("available_replicas", "2").expect("evidence"),
+                    MetadataEntry::new("ready_replicas", "2").expect("evidence"),
+                ],
+            ),
+        ]
+    }
+
+    /// Build a deterministic app graph for report summary tests.
     fn test_app_graph() -> AppGraph {
         AppGraph::new(
             WorkloadRef::new("checkout", "Deployment", "checkout-api").expect("workload ref"),
@@ -7880,6 +7990,7 @@ mod tests {
             .expect("session report")
             .with_app_graph_summary(&test_app_graph())
             .expect("app graph summary")
+            .with_checks(test_report_checks())
             .with_created_resources(test_created_resources());
         let value = serde_json::to_value(&report).expect("session report should serialize");
         let deserialized: SessionReport =
@@ -7895,6 +8006,7 @@ mod tests {
             .expect("session report")
             .with_app_graph_summary(&test_app_graph())
             .expect("app graph summary")
+            .with_checks(test_report_checks())
             .with_created_resources(test_created_resources());
         let value = serde_json::to_value(report).expect("session report should serialize");
 
@@ -7946,6 +8058,7 @@ mod tests {
                 .expect("session report should be valid")
         );
         assert_eq!(report.app_graph_summary(), None);
+        assert_eq!(report.checks(), []);
         assert_eq!(report.created_resources(), []);
         assert_eq!(report.route_strategy().strategy(), "none");
         assert_eq!(report.route_strategy().selector(), None);
@@ -8466,6 +8579,7 @@ mod tests {
 
             assert_eq!(report.metadata(), &SessionReportMetadata::from_plan(&plan));
             assert_eq!(report.app_graph_summary(), None);
+            assert_eq!(report.checks(), []);
             assert_eq!(report.created_resources(), []);
             assert_eq!(
                 report.route_strategy(),
@@ -8531,6 +8645,40 @@ mod tests {
             .with_created_resources(created_resources);
 
         assert_eq!(report.created_resources(), test_created_resources());
+    }
+
+    #[test]
+    /// Verify session reports expose check results with deterministic evidence.
+    fn creates_session_report_with_checks_and_evidence() {
+        let mut checks = test_report_checks();
+        checks.push(SessionReportCheck::new(
+            PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api")
+                .expect("planned check"),
+            CheckResultStatus::Passed,
+            [
+                MetadataEntry::new("ready_replicas", "1").expect("evidence"),
+                MetadataEntry::new("ready_replicas", "2").expect("evidence"),
+                MetadataEntry::new("available_replicas", "2").expect("evidence"),
+            ],
+        ));
+        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report should be valid")
+            .with_checks(checks);
+
+        assert_eq!(report.checks(), test_report_checks());
+        assert_eq!(
+            report.checks()[1].check(),
+            &PlannedCheck::new("workload_ready", "checkout/Deployment/checkout-api")
+                .expect("planned check")
+        );
+        assert_eq!(report.checks()[1].status(), CheckResultStatus::Passed);
+        assert_eq!(
+            report.checks()[1].evidence(),
+            [
+                MetadataEntry::new("available_replicas", "2").expect("evidence"),
+                MetadataEntry::new("ready_replicas", "2").expect("evidence"),
+            ]
+        );
     }
 
     #[test]

@@ -88,6 +88,42 @@ expression: value
       "namespace": "checkout"
     }
   },
+  "checks": [
+    {
+      "check": {
+        "name": "route_ready",
+        "target": "header"
+      },
+      "evidence": [
+        {
+          "key": "reason",
+          "value": "preview_routing_not_installed"
+        },
+        {
+          "key": "selector",
+          "value": "header:x-kply-session"
+        }
+      ],
+      "status": "warning"
+    },
+    {
+      "check": {
+        "name": "workload_ready",
+        "target": "checkout/Deployment/checkout-api"
+      },
+      "evidence": [
+        {
+          "key": "available_replicas",
+          "value": "2"
+        },
+        {
+          "key": "ready_replicas",
+          "value": "2"
+        }
+      ],
+      "status": "passed"
+    }
+  ],
   "created_resources": [
     {
       "kind": "Deployment",
