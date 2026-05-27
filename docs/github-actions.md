@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Kply plan
-        uses: kubeply/kply@<full-commit-sha> # v0.1.0
+        uses: kubeply/kply@<REPLACE_WITH_COMMIT_SHA> # v0.1.0
         with:
           version: v0.1.0
           config-path: kply.yaml
@@ -57,7 +57,7 @@ reproducible.
 | --- | --- | --- | --- |
 | `version` | no | `latest` | Kply release version to install. |
 | `config-path` | no | `kply.yaml` | Path to the project config file. |
-| `app` | no | none | Configured app name to plan; current action versions fail when this is omitted. |
+| `app` | conditional | none | Configured app name to plan. Required when not inferable from config; omission may cause failures in current action versions. |
 | `image` | no | none | Candidate image reference for the sandbox workload. |
 | `mode` | no | `plan` | Action mode. Only `plan` is supported today. |
 | `output-path` | no | `kply-report.json` | Workspace-local JSON report path. |
