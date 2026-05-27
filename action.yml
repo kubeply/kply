@@ -40,6 +40,9 @@ outputs:
   kply-version:
     description: Version string reported by the installed kply binary.
     value: ${{ steps.install.outputs.kply_version }}
+  config-path:
+    description: Absolute path to the resolved kply.yaml config file.
+    value: ${{ steps.config.outputs.config_path }}
 
 runs:
   using: composite
@@ -252,3 +255,42 @@ runs:
         echo "kply_path=${kply_path}" >> "${GITHUB_OUTPUT}"
         echo "kply_version=${kply_version}" >> "${GITHUB_OUTPUT}"
         echo "Installed ${kply_version} at ${kply_path}"
+
+    - name: Resolve Kply config path
+      id: config
+      shell: bash
+      env:
+        INPUT_CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${INPUT_CONFIG_PATH}" ]]; then
+          echo "::error::config-path must not be empty."
+          exit 1
+        fi
+
+        workspace="${GITHUB_WORKSPACE:-${PWD}}"
+        case "${INPUT_CONFIG_PATH}" in
+          /*)
+            config_path="${INPUT_CONFIG_PATH}"
+            ;;
+          *)
+            config_path="${workspace}/${INPUT_CONFIG_PATH}"
+            ;;
+        esac
+
+        if [[ ! -f "${config_path}" ]]; then
+          echo "::error::Kply config file was not found at ${config_path}."
+          exit 1
+        fi
+
+        resolved_config_path="$(python3 - "${config_path}" <<'PY'
+        import os
+        import sys
+
+        print(os.path.abspath(sys.argv[1]))
+        PY
+        )"
+
+        echo "config_path=${resolved_config_path}" >> "${GITHUB_OUTPUT}"
+        echo "Using Kply config at ${resolved_config_path}"
