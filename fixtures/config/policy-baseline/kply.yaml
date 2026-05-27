@@ -19,3 +19,4 @@ policies:
       - header
       - preview
     max_session_ttl: 2h
+    mutation_mode: sandbox-only
