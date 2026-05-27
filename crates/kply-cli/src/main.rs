@@ -182,6 +182,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Route {
             command: Some(RouteCommand::Plan { session, namespace }),
         }) => return render_route_plan(&cli, session, namespace.as_deref()),
+        Some(Command::Route {
+            command: Some(RouteCommand::Apply { session, namespace }),
+        }) => return render_route_apply(&cli, session, namespace.as_deref()),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -714,6 +717,36 @@ fn render_route_plan(cli: &Cli, session: &str, namespace: Option<&str>) -> Resul
     Ok(ExitCode::SUCCESS)
 }
 
+/// Render a guarded route apply placeholder without mutating Kubernetes.
+fn render_route_apply(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_route_apply_error(&error.to_string(), cli.json),
+    };
+    let output = RouteApplyOutput {
+        session_id: session_id.as_str().to_owned(),
+        namespace: namespace.map(ToOwned::to_owned),
+        status: "not_implemented",
+        mutation: "not_applied",
+        apply: false,
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if !cli.quiet {
+        println!("kply route apply {}", output.session_id);
+        println!(
+            "namespace: {}",
+            output.namespace.as_deref().unwrap_or("<default>")
+        );
+        println!("status: {}", output.status);
+        println!("mutation: {}", output.mutation);
+        println!("apply: {}", output.apply);
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Convert Kubernetes cleanup failures into CLI cleanup apply failures.
 fn session_cleanup_error_from_cleanup_error(
     error: kply_k8s::CleanupError,
@@ -944,6 +977,16 @@ struct RoutePlanOutput {
     planned_resource: Option<SessionManifestSummary>,
     cleanup_target: Option<GatewayHttpRouteCleanupTarget>,
     cleanup_selector: GatewayRouteCleanupSelector,
+}
+
+/// Guarded route apply output emitted before route mutation is implemented.
+#[derive(Debug, Serialize)]
+struct RouteApplyOutput {
+    session_id: String,
+    namespace: Option<String>,
+    status: &'static str,
+    mutation: &'static str,
+    apply: bool,
 }
 
 impl CheckRunStatusCounts {
@@ -2418,6 +2461,24 @@ fn render_route_plan_error(message: &str, wants_json: bool) -> Result<ExitCode> 
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: route plan\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render route apply input errors.
+fn render_route_apply_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "route_apply",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: route apply\n\n{message}");
     }
 
     Ok(exit_code(EXIT_USAGE))

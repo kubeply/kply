@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "apply": false,
+  "mutation": "not_applied",
+  "namespace": "shop",
+  "session_id": "checkout-plan",
+  "status": "not_implemented"
+}

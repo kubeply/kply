@@ -1,0 +1,9 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: output
+---
+kply route apply checkout-plan
+namespace: shop
+status: not_implemented
+mutation: not_applied
+apply: false
