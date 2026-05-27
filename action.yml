@@ -49,6 +49,12 @@ outputs:
   image:
     description: Candidate image reference validated by kply session plan, when provided.
     value: ${{ steps.image.outputs.image }}
+  mode:
+    description: Action mode that was executed.
+    value: ${{ steps.run.outputs.mode }}
+  output-path:
+    description: Absolute path to the JSON report written by the action.
+    value: ${{ steps.run.outputs.output_path }}
 
 runs:
   using: composite
@@ -362,3 +368,74 @@ runs:
 
         echo "image=${INPUT_IMAGE}" >> "${GITHUB_OUTPUT}"
         echo "Validated Kply image override ${INPUT_IMAGE}"
+
+    - name: Run Kply plan
+      id: run
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_OUTPUT_PATH: ${{ inputs.output-path }}
+        KPLY_PATH: ${{ steps.install.outputs.kply_path }}
+        CONFIG_PATH: ${{ steps.config.outputs.config_path }}
+        APP: ${{ steps.app.outputs.app }}
+        IMAGE: ${{ steps.image.outputs.image }}
+      run: |
+        set -euo pipefail
+
+        if [[ "${INPUT_MODE}" != "plan" ]]; then
+          echo "::error::Unsupported Kply action mode ${INPUT_MODE}. Only mode=plan is supported right now."
+          exit 1
+        fi
+
+        if [[ -z "${INPUT_OUTPUT_PATH}" ]]; then
+          echo "::error::output-path must not be empty."
+          exit 1
+        fi
+        if [[ "${INPUT_OUTPUT_PATH}" == *$'\n'* || "${INPUT_OUTPUT_PATH}" == *$'\r'* ]]; then
+          echo "::error::output-path must be a single-line path."
+          exit 1
+        fi
+
+        workspace="${GITHUB_WORKSPACE:-${PWD}}"
+        case "${INPUT_OUTPUT_PATH}" in
+          /*)
+            output_path="${INPUT_OUTPUT_PATH}"
+            ;;
+          *)
+            output_path="${workspace}/${INPUT_OUTPUT_PATH}"
+            ;;
+        esac
+
+        resolved_output_path="$(python3 - "${output_path}" "${workspace}" <<'PY'
+        import os
+        import sys
+
+        candidate = os.path.abspath(sys.argv[1])
+        workspace = os.path.abspath(sys.argv[2])
+        if os.path.commonpath([candidate, workspace]) != workspace:
+            print(
+                f"::error::output-path must resolve inside {workspace}, got {candidate}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(candidate)
+        PY
+        )"
+        mkdir -p "$(dirname "${resolved_output_path}")"
+
+        plan_args=(
+          session plan "${APP}"
+          --config "${CONFIG_PATH}"
+          --json
+          --quiet
+          --no-color
+        )
+        if [[ -n "${IMAGE}" ]]; then
+          plan_args+=(--image "${IMAGE}")
+        fi
+
+        "${KPLY_PATH}" "${plan_args[@]}" > "${resolved_output_path}"
+
+        echo "mode=plan" >> "${GITHUB_OUTPUT}"
+        echo "output_path=${resolved_output_path}" >> "${GITHUB_OUTPUT}"
+        echo "Wrote Kply plan JSON to ${resolved_output_path}"
