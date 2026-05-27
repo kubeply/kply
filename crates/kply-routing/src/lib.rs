@@ -16,7 +16,13 @@ use serde::Serialize;
 const GATEWAY_API_VERSION: &str = "gateway.networking.k8s.io/v1";
 const HTTP_ROUTE_KIND: &str = "HTTPRoute";
 const GATEWAY_KIND: &str = "Gateway";
+const INGRESS_API_VERSION: &str = "networking.k8s.io/v1";
+const INGRESS_KIND: &str = "Ingress";
 const SERVICE_KIND: &str = "Service";
+const NGINX_CANARY_ANNOTATION: &str = "nginx.ingress.kubernetes.io/canary";
+const NGINX_CANARY_BY_HEADER_ANNOTATION: &str = "nginx.ingress.kubernetes.io/canary-by-header";
+const NGINX_CANARY_BY_HEADER_VALUE_ANNOTATION: &str =
+    "nginx.ingress.kubernetes.io/canary-by-header-value";
 
 /// Successful or missing Gateway API discovery lists.
 #[derive(Clone, Copy, Debug)]
@@ -255,6 +261,25 @@ pub struct GatewayHttpRouteManifestInput<'a> {
     pub annotations: &'a [MetadataEntry],
 }
 
+/// Input for planning a temporary ingress-nginx canary Ingress.
+#[derive(Clone, Copy, Debug)]
+pub struct NginxIngressRoutePlanInput<'a> {
+    /// Existing NGINX Ingress whose HTTP rules should be mirrored.
+    pub source_ingress: &'a IngressSummary,
+    /// Planned canary Ingress resource to create for the sandbox session.
+    pub route: &'a KubernetesResourceRef,
+    /// Service backend that should receive matching sandbox traffic.
+    pub backend_service: &'a KubernetesResourceRef,
+    /// Backend Service port used by the temporary route.
+    pub backend_port: &'a str,
+    /// Request selector that isolates sandbox traffic from normal users.
+    pub selector: &'a RouteSelector,
+    /// Metadata labels to attach to the temporary Ingress.
+    pub labels: &'a [MetadataEntry],
+    /// Metadata annotations to attach to the temporary Ingress.
+    pub annotations: &'a [MetadataEntry],
+}
+
 /// Temporary Gateway API HTTPRoute manifest for a sandbox session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -267,6 +292,20 @@ pub struct GatewayHttpRouteManifest {
     pub metadata: GatewayHttpRouteMetadata,
     /// Gateway API HTTPRoute specification.
     pub spec: GatewayHttpRouteSpec,
+}
+
+/// Temporary ingress-nginx canary Ingress manifest for a sandbox session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NginxIngressCanaryManifest {
+    /// Kubernetes API version for the Ingress resource.
+    pub api_version: &'static str,
+    /// Kubernetes resource kind for this manifest.
+    pub kind: &'static str,
+    /// Kubernetes metadata for the generated canary Ingress.
+    pub metadata: NginxIngressCanaryMetadata,
+    /// Kubernetes Ingress specification for mirrored canary routing.
+    pub spec: NginxIngressCanarySpec,
 }
 
 /// Kubernetes metadata for a temporary Gateway API HTTPRoute.
@@ -284,6 +323,21 @@ pub struct GatewayHttpRouteMetadata {
     pub annotations: BTreeMap<String, String>,
 }
 
+/// Kubernetes metadata for a temporary ingress-nginx canary Ingress.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NginxIngressCanaryMetadata {
+    /// Namespace that contains the temporary canary Ingress.
+    pub namespace: String,
+    /// Name of the temporary canary Ingress.
+    pub name: String,
+    /// Labels attached to the temporary canary Ingress.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// Annotations attached to the temporary canary Ingress.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub annotations: BTreeMap<String, String>,
+}
+
 /// Gateway API HTTPRoute spec for a sandbox session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -297,6 +351,16 @@ pub struct GatewayHttpRouteSpec {
     pub rules: Vec<GatewayHttpRouteRule>,
 }
 
+/// Kubernetes Ingress spec for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NginxIngressCanarySpec {
+    /// IngressClass copied from the source NGINX Ingress.
+    pub ingress_class_name: String,
+    /// HTTP host/path rules mirrored from the source Ingress.
+    pub rules: Vec<NginxIngressCanaryRule>,
+}
+
 /// Gateway API parent reference for a temporary HTTPRoute.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -308,6 +372,68 @@ pub struct GatewayHttpRouteParentRef {
     /// Referenced parent Gateway namespace when it differs from the route.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+}
+
+/// Host rule for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NginxIngressCanaryRule {
+    /// Optional host matched by the source Ingress rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// HTTP paths for the mirrored source rule.
+    pub http: NginxIngressCanaryHttpRule,
+}
+
+/// HTTP rule body for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NginxIngressCanaryHttpRule {
+    /// HTTP paths mirrored from the source Ingress.
+    pub paths: Vec<NginxIngressCanaryPath>,
+}
+
+/// HTTP path for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NginxIngressCanaryPath {
+    /// Optional path copied from the source Ingress path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Path type copied from the source Ingress path.
+    pub path_type: String,
+    /// Sandbox backend that receives matched canary traffic.
+    pub backend: NginxIngressCanaryBackend,
+}
+
+/// Backend for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NginxIngressCanaryBackend {
+    /// Service backend for matched traffic.
+    pub service: NginxIngressCanaryBackendService,
+}
+
+/// Service backend for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NginxIngressCanaryBackendService {
+    /// Backend Service name.
+    pub name: String,
+    /// Backend Service port.
+    pub port: NginxIngressCanaryServicePort,
+}
+
+/// Service port for a temporary ingress-nginx canary route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum NginxIngressCanaryServicePort {
+    /// Numeric Service port.
+    Number {
+        /// Service port number.
+        number: u16,
+    },
+    /// Named Service port.
+    Name {
+        /// Service port name.
+        name: String,
+    },
 }
 
 /// Gateway API HTTPRoute rule for sandbox traffic.
@@ -403,6 +529,30 @@ pub enum GatewayHttpRouteManifestError {
     MissingOwnershipLabel { key: &'static str },
 }
 
+/// Error returned while planning a temporary ingress-nginx canary Ingress.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NginxIngressRoutePlanError {
+    /// The planned route resource is not an Ingress.
+    RouteKind { kind: String },
+    /// The backend resource is not a Service.
+    BackendKind { kind: String },
+    /// The backend Service requires unsupported cross-namespace routing.
+    BackendNamespace {
+        route_namespace: String,
+        backend_namespace: String,
+    },
+    /// The source Ingress is not explicitly owned by ingress-nginx.
+    UnsupportedIngressClass { class_name: Option<String> },
+    /// The route selector is not a header selector.
+    HeaderSelectorRequired { kind: String },
+    /// The source Ingress does not have HTTP paths to mirror.
+    MissingHttpPaths,
+    /// The backend Service port is empty or invalid.
+    BackendPort { port: String },
+    /// A required route ownership label is missing.
+    MissingOwnershipLabel { key: &'static str },
+}
+
 impl GatewayRouteCapabilityLimitation {
     /// Return the stable snake_case string form of this limitation.
     pub const fn as_str(self) -> &'static str {
@@ -472,6 +622,56 @@ impl fmt::Display for GatewayHttpRouteManifestError {
 }
 
 impl Error for GatewayHttpRouteManifestError {}
+
+impl fmt::Display for NginxIngressRoutePlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RouteKind { kind } => {
+                write!(formatter, "expected Ingress route resource, found {kind}")
+            }
+            Self::BackendKind { kind } => {
+                write!(formatter, "expected Service backend resource, found {kind}")
+            }
+            Self::BackendNamespace {
+                route_namespace,
+                backend_namespace,
+            } => write!(
+                formatter,
+                "Ingress backend service must be in route namespace {route_namespace}, found {backend_namespace}"
+            ),
+            Self::UnsupportedIngressClass { class_name } => match class_name {
+                Some(class_name) => {
+                    write!(
+                        formatter,
+                        "expected ingress-nginx IngressClass, found {class_name}"
+                    )
+                }
+                None => write!(
+                    formatter,
+                    "expected explicit ingress-nginx IngressClass, found none"
+                ),
+            },
+            Self::HeaderSelectorRequired { kind } => {
+                write!(formatter, "expected header route selector, found {kind}")
+            }
+            Self::MissingHttpPaths => write!(
+                formatter,
+                "source Ingress has no HTTP paths to mirror for canary routing"
+            ),
+            Self::BackendPort { port } => {
+                write!(formatter, "backend Service port is invalid: {port}")
+            }
+            Self::MissingOwnershipLabel { key } => {
+                write!(
+                    formatter,
+                    "NGINX canary Ingress is missing ownership label `{key}`"
+                )
+            }
+        }
+    }
+}
+
+impl Error for NginxIngressRoutePlanError {}
 
 /// Detect Gateway API routing inventory from Kubernetes discovery summaries.
 pub fn detect_gateway_api_resources(
@@ -597,6 +797,45 @@ pub fn generate_gateway_host_http_route_manifest(
     generate_gateway_http_route_manifest(input)
 }
 
+/// Generate a temporary ingress-nginx canary Ingress manifest for sandbox traffic.
+///
+/// The generated manifest mirrors source Ingress host/path rules and adds
+/// ingress-nginx canary-by-header annotations so only matching agent traffic
+/// reaches the sandbox backend.
+pub fn generate_nginx_ingress_canary_manifest(
+    input: NginxIngressRoutePlanInput<'_>,
+) -> Result<NginxIngressCanaryManifest, NginxIngressRoutePlanError> {
+    validate_nginx_ingress_route_plan_input(input)?;
+    let (header_name, header_value) = input.selector.header_parts().ok_or_else(|| {
+        NginxIngressRoutePlanError::HeaderSelectorRequired {
+            kind: input.selector.kind().to_owned(),
+        }
+    })?;
+
+    Ok(NginxIngressCanaryManifest {
+        api_version: INGRESS_API_VERSION,
+        kind: INGRESS_KIND,
+        metadata: NginxIngressCanaryMetadata {
+            namespace: input.route.namespace().to_owned(),
+            name: input.route.name().to_owned(),
+            labels: nginx_ingress_labels(input.labels)?,
+            annotations: nginx_canary_annotations(input.annotations, header_name, header_value),
+        },
+        spec: NginxIngressCanarySpec {
+            ingress_class_name: input
+                .source_ingress
+                .ingress_class_name
+                .clone()
+                .ok_or(NginxIngressRoutePlanError::UnsupportedIngressClass { class_name: None })?,
+            rules: nginx_canary_rules(
+                input.source_ingress,
+                input.backend_service,
+                input.backend_port,
+            )?,
+        },
+    })
+}
+
 /// Generate a [`GatewayHttpRouteCleanupTarget`] for a temporary Gateway API HTTPRoute.
 ///
 /// The cleanup target is derived from a [`KubernetesResourceRef`] and ownership
@@ -663,12 +902,67 @@ fn validate_gateway_http_route_manifest_input(
     Ok(())
 }
 
+/// Validate typed inputs used to plan an ingress-nginx canary Ingress.
+fn validate_nginx_ingress_route_plan_input(
+    input: NginxIngressRoutePlanInput<'_>,
+) -> Result<(), NginxIngressRoutePlanError> {
+    if input.route.kind() != INGRESS_KIND {
+        return Err(NginxIngressRoutePlanError::RouteKind {
+            kind: input.route.kind().to_owned(),
+        });
+    }
+    if input.backend_service.kind() != SERVICE_KIND {
+        return Err(NginxIngressRoutePlanError::BackendKind {
+            kind: input.backend_service.kind().to_owned(),
+        });
+    }
+    if input.route.namespace() != input.backend_service.namespace() {
+        return Err(NginxIngressRoutePlanError::BackendNamespace {
+            route_namespace: input.route.namespace().to_owned(),
+            backend_namespace: input.backend_service.namespace().to_owned(),
+        });
+    }
+    if !is_nginx_ingress_class(input.source_ingress.ingress_class_name.as_deref()) {
+        return Err(NginxIngressRoutePlanError::UnsupportedIngressClass {
+            class_name: input.source_ingress.ingress_class_name.clone(),
+        });
+    }
+    if input.selector.header_parts().is_none() {
+        return Err(NginxIngressRoutePlanError::HeaderSelectorRequired {
+            kind: input.selector.kind().to_owned(),
+        });
+    }
+    if service_port(input.backend_port).is_none() {
+        return Err(NginxIngressRoutePlanError::BackendPort {
+            port: input.backend_port.to_owned(),
+        });
+    }
+    if !ingress_has_http_paths(input.source_ingress) {
+        return Err(NginxIngressRoutePlanError::MissingHttpPaths);
+    }
+
+    Ok(())
+}
+
 /// Return the safe label set for generated Gateway API routes.
 fn route_labels(
     labels: &[MetadataEntry],
 ) -> Result<BTreeMap<String, String>, GatewayHttpRouteManifestError> {
     let labels = metadata_entries_to_map(labels);
     ensure_route_ownership_labels(&labels)?;
+
+    Ok(labels
+        .into_iter()
+        .filter(|(key, _)| should_preserve_route_label(key))
+        .collect())
+}
+
+/// Return the safe label set for generated ingress-nginx canary routes.
+fn nginx_ingress_labels(
+    labels: &[MetadataEntry],
+) -> Result<BTreeMap<String, String>, NginxIngressRoutePlanError> {
+    let labels = metadata_entries_to_map(labels);
+    ensure_nginx_ingress_ownership_labels(&labels)?;
 
     Ok(labels
         .into_iter()
@@ -683,6 +977,19 @@ fn ensure_route_ownership_labels(
     for key in REQUIRED_OWNERSHIP_LABELS {
         if !labels.contains_key(key) {
             return Err(GatewayHttpRouteManifestError::MissingOwnershipLabel { key });
+        }
+    }
+
+    Ok(())
+}
+
+/// Ensure all NGINX canary Ingress ownership labels are present.
+fn ensure_nginx_ingress_ownership_labels(
+    labels: &BTreeMap<String, String>,
+) -> Result<(), NginxIngressRoutePlanError> {
+    for key in REQUIRED_OWNERSHIP_LABELS {
+        if !labels.contains_key(key) {
+            return Err(NginxIngressRoutePlanError::MissingOwnershipLabel { key });
         }
     }
 
@@ -743,6 +1050,104 @@ fn metadata_entries_to_map(entries: &[MetadataEntry]) -> BTreeMap<String, String
         .iter()
         .map(|entry| (entry.key().to_owned(), entry.value().to_owned()))
         .collect()
+}
+
+/// Return ingress-nginx canary annotations for header-selected sandbox traffic.
+fn nginx_canary_annotations(
+    annotations: &[MetadataEntry],
+    header_name: &str,
+    header_value: &str,
+) -> BTreeMap<String, String> {
+    let mut annotations = metadata_entries_to_map(annotations);
+    annotations.insert(NGINX_CANARY_ANNOTATION.to_owned(), "true".to_owned());
+    annotations.insert(
+        NGINX_CANARY_BY_HEADER_ANNOTATION.to_owned(),
+        header_name.to_owned(),
+    );
+    annotations.insert(
+        NGINX_CANARY_BY_HEADER_VALUE_ANNOTATION.to_owned(),
+        header_value.to_owned(),
+    );
+    annotations
+}
+
+/// Return mirrored canary HTTP rules from a source Ingress.
+fn nginx_canary_rules(
+    source_ingress: &IngressSummary,
+    backend_service: &KubernetesResourceRef,
+    backend_port: &str,
+) -> Result<Vec<NginxIngressCanaryRule>, NginxIngressRoutePlanError> {
+    let port =
+        service_port(backend_port).ok_or_else(|| NginxIngressRoutePlanError::BackendPort {
+            port: backend_port.to_owned(),
+        })?;
+    let rules = source_ingress
+        .rules
+        .iter()
+        .filter_map(|rule| {
+            let paths = rule
+                .paths
+                .iter()
+                .filter(|path| path.backend.is_some())
+                .map(|path| NginxIngressCanaryPath {
+                    path: path.path.clone(),
+                    path_type: path
+                        .path_type
+                        .clone()
+                        .unwrap_or_else(|| "ImplementationSpecific".to_owned()),
+                    backend: NginxIngressCanaryBackend {
+                        service: NginxIngressCanaryBackendService {
+                            name: backend_service.name().to_owned(),
+                            port: port.clone(),
+                        },
+                    },
+                })
+                .collect::<Vec<_>>();
+
+            (!paths.is_empty()).then(|| NginxIngressCanaryRule {
+                host: rule.host.clone(),
+                http: NginxIngressCanaryHttpRule { paths },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if rules.is_empty() {
+        return Err(NginxIngressRoutePlanError::MissingHttpPaths);
+    }
+
+    Ok(rules)
+}
+
+/// Return true when the source Ingress has at least one HTTP path backend.
+fn ingress_has_http_paths(source_ingress: &IngressSummary) -> bool {
+    source_ingress
+        .rules
+        .iter()
+        .any(|rule| rule.paths.iter().any(|path| path.backend.is_some()))
+}
+
+/// Return true when the Ingress class clearly belongs to ingress-nginx.
+fn is_nginx_ingress_class(class_name: Option<&str>) -> bool {
+    class_name.is_some_and(|class_name| {
+        class_name.eq_ignore_ascii_case("nginx")
+            || class_name.eq_ignore_ascii_case("ingress-nginx")
+            || class_name.eq_ignore_ascii_case("nginx-ingress")
+    })
+}
+
+/// Convert a Service port string into a Kubernetes Ingress backend port.
+fn service_port(port: &str) -> Option<NginxIngressCanaryServicePort> {
+    if port.is_empty() {
+        return None;
+    }
+
+    match port.parse::<u16>() {
+        Ok(number) if number > 0 => Some(NginxIngressCanaryServicePort::Number { number }),
+        Ok(_) => None,
+        Err(_) => Some(NginxIngressCanaryServicePort::Name {
+            name: port.to_owned(),
+        }),
+    }
 }
 
 /// Return the parent namespace only when the Gateway is cross-namespace.
@@ -1095,11 +1500,13 @@ mod tests {
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
         GatewayHttpRouteManifestError, GatewayHttpRouteManifestInput, GatewayRouteCapabilities,
         GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus, IngressRouteDetection,
-        RouteStrategy, RoutingCapabilityDetection, RoutingCapabilityInput,
-        RoutingCapabilityLimitation, detect_gateway_api_resources, detect_routing_capabilities,
+        NginxIngressRoutePlanError, NginxIngressRoutePlanInput, RouteStrategy,
+        RoutingCapabilityDetection, RoutingCapabilityInput, RoutingCapabilityLimitation,
+        detect_gateway_api_resources, detect_routing_capabilities,
         gateway_http_route_cleanup_target, gateway_route_cleanup_selector,
         generate_gateway_header_http_route_manifest, generate_gateway_host_http_route_manifest,
-        generate_gateway_http_route_manifest, model_gateway_route_capabilities,
+        generate_gateway_http_route_manifest, generate_nginx_ingress_canary_manifest,
+        model_gateway_route_capabilities,
     };
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
     use kply_k8s::{
@@ -1483,6 +1890,194 @@ mod tests {
             RoutingCapabilityLimitation::GatewayApiPartial.as_str(),
             "gateway_api_partial"
         );
+    }
+
+    #[test]
+    /// Generates an ingress-nginx header canary Ingress manifest.
+    fn generates_nginx_ingress_canary_manifest() {
+        let source = ingress("shop", "checkout", Some("nginx"));
+        let route = resource("shop", "Ingress", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+        let labels = ownership_labels();
+        let annotations =
+            vec![MetadataEntry::new("kply.dev/route-strategy", "nginx-ingress").unwrap()];
+
+        let manifest = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &labels,
+            annotations: &annotations,
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(manifest).unwrap(),
+            json!({
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "Ingress",
+                "metadata": {
+                    "namespace": "shop",
+                    "name": "checkout-session-123",
+                    "labels": {
+                        "kply.dev/app": "checkout",
+                        "kply.dev/managed-by": "kply",
+                        "kply.dev/session-id": "session-123",
+                        "kply.dev/session-name": "checkout-test"
+                    },
+                    "annotations": {
+                        "kply.dev/route-strategy": "nginx-ingress",
+                        "nginx.ingress.kubernetes.io/canary": "true",
+                        "nginx.ingress.kubernetes.io/canary-by-header": "x-kply-session",
+                        "nginx.ingress.kubernetes.io/canary-by-header-value": "session-123"
+                    }
+                },
+                "spec": {
+                    "ingressClassName": "nginx",
+                    "rules": [
+                        {
+                            "host": "checkout.example.com",
+                            "http": {
+                                "paths": [
+                                    {
+                                        "path": "/",
+                                        "pathType": "Prefix",
+                                        "backend": {
+                                            "service": {
+                                                "name": "checkout-sandbox",
+                                                "port": {
+                                                    "number": 8080
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[test]
+    /// Generates an ingress-nginx canary manifest with a named Service port.
+    fn generates_nginx_ingress_canary_manifest_with_named_port() {
+        let source = ingress("shop", "checkout", Some("ingress-nginx"));
+        let route = resource("shop", "Ingress", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let manifest = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "http",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&manifest.spec.rules[0].http.paths[0].backend.service.port)
+                .unwrap(),
+            json!({ "name": "http" })
+        );
+    }
+
+    #[test]
+    /// Rejects ingress-nginx canary planning for non-NGINX Ingress classes.
+    fn rejects_nginx_ingress_canary_manifest_for_non_nginx_class() {
+        let source = ingress("shop", "checkout", Some("alb"));
+        let route = resource("shop", "Ingress", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            NginxIngressRoutePlanError::UnsupportedIngressClass {
+                class_name: Some("alb".to_owned())
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected ingress-nginx IngressClass, found alb"
+        );
+    }
+
+    #[test]
+    /// Rejects ingress-nginx canary planning for non-header selectors.
+    fn rejects_nginx_ingress_canary_manifest_for_host_selector() {
+        let source = ingress("shop", "checkout", Some("nginx"));
+        let route = resource("shop", "Ingress", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+
+        let error = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            NginxIngressRoutePlanError::HeaderSelectorRequired {
+                kind: "host".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected header route selector, found host"
+        );
+    }
+
+    #[test]
+    /// Rejects ingress-nginx canary planning when there are no HTTP paths to mirror.
+    fn rejects_nginx_ingress_canary_manifest_without_http_paths() {
+        let source = IngressSummary {
+            namespace: "shop".to_owned(),
+            name: "checkout".to_owned(),
+            ingress_class_name: Some("nginx".to_owned()),
+            default_backend: None,
+            rules: Vec::new(),
+            tls: Vec::new(),
+        };
+        let route = resource("shop", "Ingress", "checkout-session-123");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(error, NginxIngressRoutePlanError::MissingHttpPaths);
     }
 
     #[test]

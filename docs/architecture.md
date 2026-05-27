@@ -198,7 +198,8 @@ Current provisional pre-`1.0.0` routing capability detection fields:
   details.
 - `ingress`: Ingress inventory detected in the target namespace, including
   Ingress names, class names, hostnames, and backend Service names. Ingress
-  planning is detected as future work until controller-specific adapters land.
+  planning is provisionally implemented for ingress-nginx header canary routes
+  when the source Ingress class is `nginx`, `ingress-nginx`, or `nginx-ingress`.
 - `preview_service_available`: boolean indicating that direct preview Service
   checks can be considered as an explicit fallback.
 - `candidate_strategies`: deterministic list of route strategies with enough
@@ -208,6 +209,17 @@ Current provisional pre-`1.0.0` routing capability detection fields:
   selecting a strategy as executable.
 - `limitations`: stable limitation codes explaining unavailable or incomplete
   routing paths.
+
+Current provisional pre-`1.0.0` NGINX Ingress planning behavior:
+
+- `kply-routing` can generate a session-owned ingress-nginx canary `Ingress`
+  manifest from an existing source `Ingress`.
+- The source `Ingress` must declare an IngressClass name of `nginx`,
+  `ingress-nginx`, or `nginx-ingress`.
+- Only header-selected sandbox traffic is planned. The generated manifest adds
+  ingress-nginx canary annotations for the configured header name and value.
+- Host/path rules are mirrored from the source `Ingress`, but backends point to
+  the sandbox Service. Production `Ingress` resources are not patched.
 
 Current provisional pre-`1.0.0` unsupported feature warning fields:
 
