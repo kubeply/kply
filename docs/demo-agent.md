@@ -80,6 +80,9 @@ Useful commands:
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app list
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app inspect checkout
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session plan checkout --image hashicorp/http-echo:1.0
+- cargo run --locked --bin kply -- route plan checkout-plan --namespace kply-demo
+- cargo run --locked --bin kply -- route apply checkout-plan --namespace kply-demo
+- cargo run --locked --bin kply -- route cleanup checkout-plan --namespace kply-demo
 - kubectl -n kply-demo get deployment,service,pod
 - kubectl -n kply-demo logs deployment/checkout-api
 - curl http://127.0.0.1:18080
@@ -87,6 +90,8 @@ Useful commands:
 Expected outcome:
 - Explain what is broken.
 - Show the kply plan output you used.
+- Show the route plan output and note that route apply is currently a guarded
+  no-op.
 - Apply fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml only if you
   need to verify the repair.
 - Verify the checkout response returns healthy JSON.

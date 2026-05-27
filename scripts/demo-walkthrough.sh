@@ -110,6 +110,11 @@ kply --config "${CONFIG_PATH}" app inspect checkout
 step "Plan the future sandbox session"
 kply --config "${CONFIG_PATH}" session plan checkout --image hashicorp/http-echo:1.0
 
+step "Plan temporary Gateway API routing"
+kply route plan checkout-plan --namespace "${NAMESPACE}"
+kply route apply checkout-plan --namespace "${NAMESPACE}"
+kply route cleanup checkout-plan --namespace "${NAMESPACE}"
+
 step "Create the simulated sandbox candidate"
 printf 'kply session create is not implemented yet; applying the fixed demo backend variant as a local stand-in.\n'
 kubectl delete -f "${BROKEN_BACKEND}" --ignore-not-found
