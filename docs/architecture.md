@@ -396,6 +396,10 @@ evaluation:
 - `secret_handling`: optional Secret reference handling. Config files accept
   `metadata-only` and `deny-references`; no policy mode permits reading Secret
   contents.
+- `database_risk_warnings`: optional database-risk warning behavior. Config
+  files accept `metadata-only` and `disabled`; metadata-only warnings use
+  configured app names, workload names, service names, and image references,
+  never live database inspection.
 
 Application config entries define these fields:
 
@@ -422,7 +426,8 @@ required app fields, plus policy scalar fields and policy lists such as
 `max_session_ttl`. Image registry allowlists accept lowercase host values with
 optional non-zero ports, not full image references. Mutation mode values are
 stable kebab-case strings. Secret handling values are conservative and never
-authorize Secret content reads.
+authorize Secret content reads. Database-risk warnings are metadata labels for
+review; they do not connect to databases, inspect schemas, or query data.
 
 Resolved config JSON serializes the top-level model with `apps`, `checks`, and
 `policies` as arrays, `routing` as an object, `version` as a number, and route

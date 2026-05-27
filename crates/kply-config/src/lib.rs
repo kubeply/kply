@@ -562,6 +562,8 @@ pub enum PolicyConfigField {
     MutationMode,
     /// Policy `secret_handling` field.
     SecretHandling,
+    /// Policy `database_risk_warnings` field.
+    DatabaseRiskWarnings,
 }
 
 impl PolicyConfigField {
@@ -577,6 +579,7 @@ impl PolicyConfigField {
             Self::MaxSessionTtl => "max_session_ttl",
             Self::MutationMode => "mutation_mode",
             Self::SecretHandling => "secret_handling",
+            Self::DatabaseRiskWarnings => "database_risk_warnings",
         }
     }
 }
@@ -827,6 +830,27 @@ impl SecretHandlingPolicy {
     }
 }
 
+/// Database-risk warning behavior allowed by a policy entry.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DatabaseRiskWarningPolicy {
+    /// Emit warnings from configured app metadata only.
+    MetadataOnly,
+    /// Disable database-risk warning metadata for this policy.
+    Disabled,
+}
+
+impl DatabaseRiskWarningPolicy {
+    /// Return the stable config spelling for this [`DatabaseRiskWarningPolicy`].
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::MetadataOnly => "metadata-only",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
 /// Top-level routing config section.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingConfig;
@@ -972,6 +996,8 @@ pub struct PolicyConfig {
     mutation_mode: Option<MutationModePolicy>,
     #[serde(default)]
     secret_handling: Option<SecretHandlingPolicy>,
+    #[serde(default)]
+    database_risk_warnings: Option<DatabaseRiskWarningPolicy>,
 }
 
 impl PolicyConfig {
@@ -988,6 +1014,7 @@ impl PolicyConfig {
             max_session_ttl: None,
             mutation_mode: None,
             secret_handling: None,
+            database_risk_warnings: None,
         }
     }
 
@@ -1113,6 +1140,20 @@ impl PolicyConfig {
     /// Return a copy of this policy entry with secret handling behavior.
     pub fn with_secret_handling(mut self, secret_handling: SecretHandlingPolicy) -> Self {
         self.secret_handling = Some(secret_handling);
+        self
+    }
+
+    /// Return the database-risk warning behavior this policy will use.
+    pub const fn database_risk_warnings(&self) -> Option<DatabaseRiskWarningPolicy> {
+        self.database_risk_warnings
+    }
+
+    /// Return a copy of this policy entry with database-risk warning behavior.
+    pub fn with_database_risk_warnings(
+        mut self,
+        database_risk_warnings: DatabaseRiskWarningPolicy,
+    ) -> Self {
+        self.database_risk_warnings = Some(database_risk_warnings);
         self
     }
 
@@ -1487,10 +1528,10 @@ mod tests {
     use super::{
         AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
         CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
-        ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig,
-        MutationModePolicy, PolicyConfig, PolicyConfigField, PolicyConfigs, PolicyDurationError,
-        PolicyImageRegistryError, RouteStrategy, RoutingConfig, SecretHandlingPolicy,
-        discover_config_path_from, load_config_path,
+        ConfigVersion, ConfigVersionError, DatabaseRiskWarningPolicy, EmptyConfigValidationErrors,
+        KplyConfig, MutationModePolicy, PolicyConfig, PolicyConfigField, PolicyConfigs,
+        PolicyDurationError, PolicyImageRegistryError, RouteStrategy, RoutingConfig,
+        SecretHandlingPolicy, discover_config_path_from, load_config_path,
     };
     use std::env;
     use std::fs;
@@ -2112,6 +2153,10 @@ apps:
             PolicyConfigField::SecretHandling.as_str(),
             "secret_handling"
         );
+        assert_eq!(
+            PolicyConfigField::DatabaseRiskWarnings.as_str(),
+            "database_risk_warnings"
+        );
     }
 
     #[test]
@@ -2152,6 +2197,10 @@ apps:
             config.secret_handling(),
             Some(SecretHandlingPolicy::MetadataOnly)
         );
+        assert_eq!(
+            config.database_risk_warnings(),
+            Some(DatabaseRiskWarningPolicy::MetadataOnly)
+        );
     }
 
     #[test]
@@ -2168,6 +2217,7 @@ apps:
         assert_eq!(config.max_session_ttl(), None);
         assert_eq!(config.mutation_mode(), None);
         assert_eq!(config.secret_handling(), None);
+        assert_eq!(config.database_risk_warnings(), None);
     }
 
     #[test]
@@ -2189,6 +2239,7 @@ policies:
     max_session_ttl: 30m
     mutation_mode: sandbox-only
     secret_handling: metadata-only
+    database_risk_warnings: metadata-only
 "#,
         )
         .expect("valid policy config YAML");
@@ -2202,7 +2253,8 @@ policies:
                 .with_allowed_route_strategies([RouteStrategy::Header])
                 .with_max_session_ttl("30m")
                 .with_mutation_mode(MutationModePolicy::SandboxOnly)
-                .with_secret_handling(SecretHandlingPolicy::MetadataOnly)]
+                .with_secret_handling(SecretHandlingPolicy::MetadataOnly)
+                .with_database_risk_warnings(DatabaseRiskWarningPolicy::MetadataOnly)]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -2473,6 +2525,7 @@ policies:
                 "max_session_ttl": "2h",
                 "mutation_mode": "sandbox-only",
                 "secret_handling": "metadata-only",
+                "database_risk_warnings": "metadata-only",
             })
         );
     }
@@ -2545,6 +2598,15 @@ policies:
             SecretHandlingPolicy::DenyReferences.as_str(),
             "deny-references"
         );
+    }
+
+    #[test]
+    fn renders_database_risk_warning_policy_names() {
+        assert_eq!(
+            DatabaseRiskWarningPolicy::MetadataOnly.as_str(),
+            "metadata-only"
+        );
+        assert_eq!(DatabaseRiskWarningPolicy::Disabled.as_str(), "disabled");
     }
 
     #[test]
@@ -2662,5 +2724,6 @@ policies:
             .with_max_session_ttl("2h")
             .with_mutation_mode(MutationModePolicy::SandboxOnly)
             .with_secret_handling(SecretHandlingPolicy::MetadataOnly)
+            .with_database_risk_warnings(DatabaseRiskWarningPolicy::MetadataOnly)
     }
 }
