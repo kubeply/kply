@@ -1,0 +1,67 @@
+{
+  "apiVersion": "gateway.networking.k8s.io/v1",
+  "kind": "GatewayList",
+  "metadata": {
+    "resourceVersion": "2002"
+  },
+  "items": [
+    {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "Gateway",
+      "metadata": {
+        "name": "public-gateway",
+        "namespace": "shop"
+      },
+      "spec": {
+        "gatewayClassName": "istio",
+        "listeners": [
+          {
+            "name": "http",
+            "hostname": "checkout.example.com",
+            "port": 80,
+            "protocol": "HTTP"
+          },
+          {
+            "name": "https",
+            "hostname": "checkout.example.com",
+            "port": 443,
+            "protocol": "HTTPS",
+            "tls": {
+              "mode": "Terminate",
+              "certificateRefs": [
+                {
+                  "kind": "Secret",
+                  "name": "checkout-tls"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "Gateway",
+      "metadata": {
+        "name": "shared-gateway",
+        "namespace": "platform"
+      },
+      "spec": {
+        "gatewayClassName": "envoy",
+        "listeners": [
+          {
+            "name": "preview",
+            "hostname": "*.preview.example.com",
+            "port": 8080,
+            "protocol": "HTTP",
+            "allowedRoutes": {
+              "namespaces": {
+                "from": "All"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
