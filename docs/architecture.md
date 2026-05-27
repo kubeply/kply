@@ -440,6 +440,11 @@ strategies as stable snake_case strings.
 `kply config validate` validates the currently resolved config model from a
 file specified with `--config`, or the default config shape if not provided.
 
+`kply policy check` validates the currently resolved config model and reports
+the number of configured and enabled policy entries. It is a policy-boundary
+configuration check; later policy roadmap milestones wire those validated
+boundaries into session planning and mutation.
+
 Current CLI config precedence is:
 
 1. An explicit `--config <path>` is loaded with `load_config_path()` through

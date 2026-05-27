@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "errors": [
+    "policies[0].allowed_image_registries: invalid value `GHCR.io/acme`: registry contains invalid character `G`"
+  ],
+  "status": "invalid"
+}
