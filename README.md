@@ -46,6 +46,11 @@ See [docs/implementation-roadmap.md](docs/implementation-roadmap.md).
 See [docs/cli.md](docs/cli.md) for command contract notes, including exit
 codes.
 
+## Gateway API
+
+See [docs/gateway-api.md](docs/gateway-api.md) for Gateway API routing
+permissions and ownership constraints.
+
 ## Local Demo
 
 See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup
