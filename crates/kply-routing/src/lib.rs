@@ -6,7 +6,9 @@ use std::{
     fmt,
 };
 
-use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
+use kply_core::{
+    KubernetesResourceRef, MetadataEntry, REQUIRED_OWNERSHIP_LABELS, RouteSelector, SAFE_APP_LABELS,
+};
 use kply_k8s::{GatewayClassSummary, GatewaySummary, HttpRouteSummary};
 use serde::Serialize;
 
@@ -14,18 +16,6 @@ const GATEWAY_API_VERSION: &str = "gateway.networking.k8s.io/v1";
 const HTTP_ROUTE_KIND: &str = "HTTPRoute";
 const GATEWAY_KIND: &str = "Gateway";
 const SERVICE_KIND: &str = "Service";
-const REQUIRED_ROUTE_OWNERSHIP_LABELS: [&str; 4] = [
-    "kply.dev/app",
-    "kply.dev/managed-by",
-    "kply.dev/session-id",
-    "kply.dev/session-name",
-];
-const SAFE_ROUTE_APP_LABELS: [&str; 4] = [
-    "app.kubernetes.io/component",
-    "app.kubernetes.io/instance",
-    "app.kubernetes.io/name",
-    "app.kubernetes.io/part-of",
-];
 
 /// Successful or missing Gateway API discovery lists.
 #[derive(Clone, Copy, Debug)]
@@ -512,7 +502,7 @@ fn route_labels(
 fn ensure_route_ownership_labels(
     labels: &BTreeMap<String, String>,
 ) -> Result<(), GatewayHttpRouteManifestError> {
-    for key in REQUIRED_ROUTE_OWNERSHIP_LABELS {
+    for key in REQUIRED_OWNERSHIP_LABELS {
         if !labels.contains_key(key) {
             return Err(GatewayHttpRouteManifestError::MissingOwnershipLabel { key });
         }
@@ -523,7 +513,7 @@ fn ensure_route_ownership_labels(
 
 /// Return true when a label should be preserved on generated Gateway routes.
 fn should_preserve_route_label(key: &str) -> bool {
-    REQUIRED_ROUTE_OWNERSHIP_LABELS.contains(&key) || SAFE_ROUTE_APP_LABELS.contains(&key)
+    REQUIRED_OWNERSHIP_LABELS.contains(&key) || SAFE_APP_LABELS.contains(&key)
 }
 
 /// Validate that Gateway capabilities allow a header-based route selector.
