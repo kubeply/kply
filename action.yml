@@ -22,7 +22,7 @@ inputs:
     description: Candidate image reference for the sandbox workload.
     required: false
   mode:
-    description: Action mode to run. Plan mode is the first supported target.
+    description: Action mode to run. Plan mode is supported; check mode is reserved for a later runtime.
     required: false
     default: plan
   output-path:
@@ -382,10 +382,18 @@ runs:
       run: |
         set -euo pipefail
 
-        if [[ "${INPUT_MODE}" != "plan" ]]; then
-          echo "::error::Unsupported Kply action mode ${INPUT_MODE}. Only mode=plan is supported right now."
-          exit 1
-        fi
+        case "${INPUT_MODE}" in
+          plan)
+            ;;
+          check)
+            echo "::error::mode=check is reserved for the later live-check action runtime. Use mode=plan for now."
+            exit 1
+            ;;
+          *)
+            echo "::error::Unsupported Kply action mode ${INPUT_MODE}. Use mode=plan."
+            exit 1
+            ;;
+        esac
 
         if [[ -z "${INPUT_OUTPUT_PATH}" ]]; then
           echo "::error::output-path must not be empty."
