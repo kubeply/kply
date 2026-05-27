@@ -142,6 +142,16 @@ expression: value
       "namespace": "checkout"
     }
   ],
+  "limitations": [
+    {
+      "feature": "preview_routing",
+      "reason": "route_strategy_preview_not_implemented"
+    },
+    {
+      "feature": "promotion",
+      "reason": "promotion_execution_not_integrated"
+    }
+  ],
   "metadata": {
     "session_id": "session-123",
     "session_name": "checkout-test",

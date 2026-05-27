@@ -2361,6 +2361,7 @@ pub struct SessionReport {
     checks: Vec<SessionReportCheck>,
     cleanup_status: SessionReportCleanupStatus,
     created_resources: Vec<KubernetesResourceRef>,
+    limitations: Vec<UnsupportedFeatureWarning>,
     plan: SessionPlan,
     route_strategy: SessionReportRouteStrategy,
     status: SessionStatus,
@@ -2375,6 +2376,7 @@ impl SessionReport {
 
         let metadata = SessionReportMetadata::from_plan(&plan);
         let route_strategy = SessionReportRouteStrategy::from_plan(&plan);
+        let limitations = plan.unsupported_feature_warnings().to_vec();
 
         Ok(Self {
             metadata,
@@ -2386,6 +2388,7 @@ impl SessionReport {
                 &[],
             ),
             created_resources: Vec::new(),
+            limitations,
             plan,
             route_strategy,
             status,
@@ -2431,6 +2434,17 @@ impl SessionReport {
         self
     }
 
+    /// Return a copy of this report with explicit report limitations.
+    pub fn with_limitations(
+        mut self,
+        limitations: impl IntoIterator<Item = UnsupportedFeatureWarning>,
+    ) -> Self {
+        self.limitations = limitations.into_iter().collect();
+        self.limitations.sort_unstable();
+        self.limitations.dedup();
+        self
+    }
+
     /// Return a copy of this report with an explicit cleanup status.
     pub fn with_cleanup_status(mut self, cleanup_status: SessionReportCleanupStatus) -> Self {
         self.cleanup_status = cleanup_status;
@@ -2460,6 +2474,11 @@ impl SessionReport {
     /// Borrow resources created for the session in deterministic order.
     pub fn created_resources(&self) -> &[KubernetesResourceRef] {
         &self.created_resources
+    }
+
+    /// Borrow report limitations in deterministic order.
+    pub fn limitations(&self) -> &[UnsupportedFeatureWarning] {
+        &self.limitations
     }
 
     /// Borrow the original [`SessionPlan`].
@@ -2847,6 +2866,10 @@ impl<'de> Deserialize<'de> for SessionReport {
         let report = report.with_created_resources(fields.created_resources);
         let report = match fields.cleanup_status {
             Some(cleanup_status) => report.with_cleanup_status(cleanup_status),
+            None => report,
+        };
+        let report = match fields.limitations {
+            Some(limitations) => report.with_limitations(limitations),
             None => report,
         };
         match fields.app_graph_summary {
@@ -4446,6 +4469,8 @@ struct SessionReportFields {
     cleanup_status: Option<SessionReportCleanupStatus>,
     #[serde(default)]
     created_resources: Vec<KubernetesResourceRef>,
+    #[serde(default)]
+    limitations: Option<Vec<UnsupportedFeatureWarning>>,
     plan: SessionPlan,
     #[serde(default)]
     route_strategy: Option<SessionReportRouteStrategy>,
@@ -5570,6 +5595,19 @@ mod tests {
                     MetadataEntry::new("ready_replicas", "2").expect("evidence"),
                 ],
             ),
+        ]
+    }
+
+    /// Build deterministic report limitations for agent-facing report tests.
+    fn test_report_limitations() -> Vec<UnsupportedFeatureWarning> {
+        vec![
+            UnsupportedFeatureWarning::new(
+                "preview_routing",
+                "route_strategy_preview_not_implemented",
+            )
+            .expect("limitation"),
+            UnsupportedFeatureWarning::new("promotion", "promotion_execution_not_integrated")
+                .expect("limitation"),
         ]
     }
 
@@ -8079,7 +8117,8 @@ mod tests {
             .with_app_graph_summary(&test_app_graph())
             .expect("app graph summary")
             .with_checks(test_report_checks())
-            .with_created_resources(test_created_resources());
+            .with_created_resources(test_created_resources())
+            .with_limitations(test_report_limitations());
         let value = serde_json::to_value(&report).expect("session report should serialize");
         let deserialized: SessionReport =
             serde_json::from_value(value).expect("session report should deserialize");
@@ -8095,7 +8134,8 @@ mod tests {
             .with_app_graph_summary(&test_app_graph())
             .expect("app graph summary")
             .with_checks(test_report_checks())
-            .with_created_resources(test_created_resources());
+            .with_created_resources(test_created_resources())
+            .with_limitations(test_report_limitations());
         let value = serde_json::to_value(report).expect("session report should serialize");
 
         insta::assert_json_snapshot!("session_report_json_contract", value);
@@ -8152,6 +8192,7 @@ mod tests {
             SessionReportCleanupStatus::NotRequired
         );
         assert_eq!(report.created_resources(), []);
+        assert_eq!(report.limitations(), []);
         assert_eq!(report.route_strategy().strategy(), "none");
         assert_eq!(report.route_strategy().selector(), None);
     }
@@ -8681,6 +8722,7 @@ mod tests {
                 }
             );
             assert_eq!(report.created_resources(), []);
+            assert_eq!(report.limitations(), []);
             assert_eq!(
                 report.route_strategy(),
                 &SessionReportRouteStrategy::from_plan(&plan)
@@ -8804,6 +8846,20 @@ mod tests {
                 .with_cleanup_status(SessionReportCleanupStatus::Failed)
                 .cleanup_status(),
             SessionReportCleanupStatus::Failed
+        );
+    }
+
+    #[test]
+    /// Verify session reports expose derived and explicit limitations.
+    fn creates_session_report_with_limitations() {
+        let plan = test_session_plan().with_unsupported_feature_warnings(test_report_limitations());
+        let report =
+            SessionReport::new(plan, SessionStatus::Ready).expect("session report should be valid");
+
+        assert_eq!(report.limitations(), test_report_limitations());
+        assert_eq!(
+            report.with_limitations([]).limitations(),
+            &[] as &[UnsupportedFeatureWarning]
         );
     }
 
