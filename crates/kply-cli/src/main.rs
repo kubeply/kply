@@ -185,6 +185,9 @@ fn run() -> Result<ExitCode> {
         Some(Command::Route {
             command: Some(RouteCommand::Apply { session, namespace }),
         }) => return render_route_apply(&cli, session, namespace.as_deref()),
+        Some(Command::Route {
+            command: Some(RouteCommand::Cleanup { session, namespace }),
+        }) => return render_route_cleanup(&cli, session, namespace.as_deref()),
         Some(Command::Demo {
             command: DemoCommand::Doctor,
         }) => return demo::doctor::render_demo_doctor(&cli),
@@ -747,6 +750,46 @@ fn render_route_apply(cli: &Cli, session: &str, namespace: Option<&str>) -> Resu
     Ok(ExitCode::SUCCESS)
 }
 
+/// Render a non-mutating route cleanup plan for one sandbox session.
+fn render_route_cleanup(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+    let session_id = match SessionId::new(session) {
+        Ok(session_id) => session_id,
+        Err(error) => return render_route_cleanup_error(&error.to_string(), cli.json),
+    };
+    let route_cleanup = match route_cleanup_from_session(session_id.as_str(), namespace) {
+        Ok(route_cleanup) => route_cleanup,
+        Err(error) => return render_route_cleanup_error(&error.to_string(), cli.json),
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&route_cleanup)?);
+    } else if !cli.quiet {
+        println!("kply route cleanup {}", route_cleanup.session_id);
+        println!("status: {}", route_cleanup.status);
+        println!("mutation: {}", route_cleanup.mutation);
+        println!("cleanup: {}", route_cleanup.cleanup);
+        println!("route_kind: {}", route_cleanup.route_kind);
+        match &route_cleanup.cleanup_target {
+            Some(target) => {
+                println!(
+                    "cleanup_target: {}/{}/{}",
+                    target.namespace, target.kind, target.name
+                );
+            }
+            None => println!("cleanup_target: <namespace required>"),
+        }
+        println!(
+            "cleanup_selector: {}",
+            route_cleanup.cleanup_selector.match_labels.len()
+        );
+        for (key, value) in &route_cleanup.cleanup_selector.match_labels {
+            println!("  label: {key}={value}");
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Convert Kubernetes cleanup failures into CLI cleanup apply failures.
 fn session_cleanup_error_from_cleanup_error(
     error: kply_k8s::CleanupError,
@@ -987,6 +1030,18 @@ struct RouteApplyOutput {
     status: &'static str,
     mutation: &'static str,
     apply: bool,
+}
+
+/// Dry-run route cleanup emitted by `kply route cleanup`.
+#[derive(Debug, Serialize)]
+struct RouteCleanupOutput {
+    session_id: String,
+    status: &'static str,
+    mutation: &'static str,
+    cleanup: bool,
+    route_kind: &'static str,
+    cleanup_target: Option<GatewayHttpRouteCleanupTarget>,
+    cleanup_selector: GatewayRouteCleanupSelector,
 }
 
 impl CheckRunStatusCounts {
@@ -2072,6 +2127,24 @@ fn route_plan_from_session(
     })
 }
 
+/// Build a dry-run route cleanup plan from a session id and optional namespace.
+fn route_cleanup_from_session(
+    session_id: &str,
+    namespace: Option<&str>,
+) -> std::result::Result<RouteCleanupOutput, String> {
+    let route_plan = route_plan_from_session(session_id, namespace)?;
+
+    Ok(RouteCleanupOutput {
+        session_id: route_plan.session_id,
+        status: "planned",
+        mutation: "not_applied",
+        cleanup: false,
+        route_kind: route_plan.route_kind,
+        cleanup_target: route_plan.cleanup_target,
+        cleanup_selector: route_plan.cleanup_selector,
+    })
+}
+
 /// Build ownership labels required for route planning.
 fn route_plan_ownership_labels(
     session_id: &str,
@@ -2479,6 +2552,24 @@ fn render_route_apply_error(message: &str, wants_json: bool) -> Result<ExitCode>
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: route apply\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+/// Render route cleanup input errors.
+fn render_route_cleanup_error(message: &str, wants_json: bool) -> Result<ExitCode> {
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "route_cleanup",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: route cleanup\n\n{message}");
     }
 
     Ok(exit_code(EXIT_USAGE))

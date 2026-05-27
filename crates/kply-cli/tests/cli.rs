@@ -1862,6 +1862,95 @@ fn rejects_invalid_route_apply_session_id_json() {
 }
 
 #[test]
+fn prints_route_cleanup_text() {
+    let output = kply_cmd()
+        .args(["route", "cleanup", "checkout-plan", "--namespace", "shop"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("route_cleanup_text", output);
+}
+
+#[test]
+fn prints_route_cleanup_json() {
+    let output = kply_cmd()
+        .args([
+            "route",
+            "cleanup",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("route_cleanup_json", value);
+}
+
+#[test]
+fn prints_route_cleanup_without_namespace_json() {
+    let output = kply_cmd()
+        .args(["route", "cleanup", "checkout-plan", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("route_cleanup_without_namespace_json", value);
+}
+
+#[test]
+fn suppresses_route_cleanup_text_when_quiet() {
+    kply_cmd()
+        .args(["route", "cleanup", "checkout-plan", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rejects_invalid_route_cleanup_session_id() {
+    let output = assert_kply_exit_code(&["route", "cleanup", "Checkout_Plan"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid route cleanup session id should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!(
+        "route_cleanup_invalid_session_id",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_invalid_route_cleanup_session_id_json() {
+    let output =
+        assert_kply_exit_code(&["route", "cleanup", "Checkout_Plan", "--json"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid route cleanup session id JSON should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("route_cleanup_invalid_session_id_json", value);
+}
+
+#[test]
 fn prints_session_manifests_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -3135,7 +3224,7 @@ fn covers_every_route_command() {
 
     assert_eq!(
         command_names,
-        ["apply", "plan"],
+        ["apply", "cleanup", "plan"],
         "update route command tests when the route command surface changes"
     );
 
@@ -3143,6 +3232,18 @@ fn covers_every_route_command() {
         .args([
             "route",
             RouteCommand::Apply {
+                session: String::new(),
+                namespace: None,
+            }
+            .name(),
+            "checkout-plan",
+        ])
+        .assert()
+        .success();
+    kply_cmd()
+        .args([
+            "route",
+            RouteCommand::Cleanup {
                 session: String::new(),
                 namespace: None,
             }

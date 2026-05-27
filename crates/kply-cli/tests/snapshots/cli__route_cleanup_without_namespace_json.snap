@@ -1,0 +1,18 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "cleanup": false,
+  "cleanup_selector": {
+    "matchLabels": {
+      "kply.dev/managed-by": "kply",
+      "kply.dev/session-id": "checkout-plan"
+    }
+  },
+  "cleanup_target": null,
+  "mutation": "not_applied",
+  "route_kind": "HTTPRoute",
+  "session_id": "checkout-plan",
+  "status": "planned"
+}
