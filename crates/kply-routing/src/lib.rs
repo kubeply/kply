@@ -633,6 +633,8 @@ pub enum NginxIngressRoutePlanError {
         route_namespace: String,
         backend_namespace: String,
     },
+    /// The planned canary Ingress would target the source production Ingress.
+    SourceIngressConflict { namespace: String, name: String },
     /// The source Ingress is not explicitly owned by ingress-nginx.
     UnsupportedIngressClass { class_name: Option<String> },
     /// The route selector is not a header selector.
@@ -756,6 +758,10 @@ impl fmt::Display for NginxIngressRoutePlanError {
             } => write!(
                 formatter,
                 "Ingress backend service must be in route namespace {route_namespace}, found {backend_namespace}"
+            ),
+            Self::SourceIngressConflict { namespace, name } => write!(
+                formatter,
+                "refusing to plan canary Ingress over source Ingress {namespace}/{name}; use a distinct session-owned route resource"
             ),
             Self::UnsupportedIngressClass { class_name } => match class_name {
                 Some(class_name) => {
@@ -1130,6 +1136,14 @@ fn validate_nginx_ingress_route_plan_input(
         return Err(NginxIngressRoutePlanError::BackendNamespace {
             route_namespace: input.route.namespace().to_owned(),
             backend_namespace: input.backend_service.namespace().to_owned(),
+        });
+    }
+    if input.route.namespace() == input.source_ingress.namespace
+        && input.route.name() == input.source_ingress.name
+    {
+        return Err(NginxIngressRoutePlanError::SourceIngressConflict {
+            namespace: input.source_ingress.namespace.clone(),
+            name: input.source_ingress.name.clone(),
         });
     }
     if !is_nginx_ingress_class(input.source_ingress.ingress_class_name.as_deref()) {
@@ -2464,6 +2478,38 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "expected ingress-nginx IngressClass, found alb"
+        );
+    }
+
+    #[test]
+    /// Rejects ingress-nginx canary planning over the source production Ingress.
+    fn rejects_nginx_ingress_canary_manifest_for_source_ingress_conflict() {
+        let source = ingress("shop", "checkout", Some("nginx"));
+        let route = resource("shop", "Ingress", "checkout");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_nginx_ingress_canary_manifest(NginxIngressRoutePlanInput {
+            source_ingress: &source,
+            route: &route,
+            backend_service: &service,
+            backend_port: "8080",
+            selector: &selector,
+            labels: &ownership_labels(),
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            NginxIngressRoutePlanError::SourceIngressConflict {
+                namespace: "shop".to_owned(),
+                name: "checkout".to_owned(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "refusing to plan canary Ingress over source Ingress shop/checkout; use a distinct session-owned route resource"
         );
     }
 
