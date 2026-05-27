@@ -241,6 +241,15 @@ Current provisional pre-`1.0.0` preview Service fallback behavior:
 - Preview checks target the sandbox Service directly, so they can validate the
   isolated workload and Service endpoints without proving edge routing behavior.
 
+Current provisional pre-`1.0.0` no-route behavior:
+
+- `--route-strategy none` is a CLI-only override that plans the sandbox workload
+  and sandbox Service without a route selector.
+- No-route sessions do not create, delete, or require permissions for
+  `HTTPRoute` resources.
+- No-route checks skip route readiness and only validate image pull, sandbox
+  Service endpoints, and workload readiness.
+
 Current provisional pre-`1.0.0` unsupported feature warning fields:
 
 - `feature`: stable unsupported feature identifier.
@@ -367,7 +376,8 @@ Application config entries define these fields:
 - `route_strategy`: requested sandbox route strategy. Config files accept
   concrete strategies such as `header`, `host`, and `preview`; CLI session
   commands also accept `--route-strategy auto`, which resolves to the configured
-  app strategy until live capability-based selection is wired in.
+  app strategy until live capability-based selection is wired in, and
+  `--route-strategy none`, which disables route planning for that command.
 
 Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and

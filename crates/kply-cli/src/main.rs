@@ -42,6 +42,7 @@ const EXIT_INTERNAL: i32 = 3;
 const EXIT_BLOCKING: i32 = 1;
 const SESSION_HEADER_NAME: &str = "x-kply-session";
 const ROUTE_STRATEGY_AUTO: &str = "auto";
+const ROUTE_STRATEGY_NONE: &str = "none";
 const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
@@ -1782,6 +1783,8 @@ fn session_plan_from_config(
         }
         // Preview routing is represented by future planned resources, not a request selector.
         "preview" => None,
+        // No routing keeps the sandbox reachable only through its direct Service.
+        ROUTE_STRATEGY_NONE => None,
         value => {
             return Err(SessionPlanBuildError::Usage(format!(
                 "unsupported route strategy `{value}`; expected {}",
@@ -1882,7 +1885,7 @@ fn planned_session_resources(
         ),
         ("Service", planned_resource_token(session_id, "service")),
     ];
-    if route_strategy != "preview" {
+    if route_strategy_creates_route_object(route_strategy) {
         resources.push(("HTTPRoute", planned_resource_token(session_id, "route")));
     }
 
@@ -1942,20 +1945,24 @@ fn planned_session_checks(
     let service = ServiceRef::new(namespace, planned_resource_token(session_id, "service"))
         .map_err(|error| error.to_string())?
         .to_string();
-    let route_ready_target = if route_strategy == "preview" {
-        service.as_str()
-    } else {
-        route_strategy
-    };
-    [
+    let route_ready_target =
+        route_strategy_has_route_check(route_strategy).then_some(if route_strategy == "preview" {
+            service.as_str()
+        } else {
+            route_strategy
+        });
+    let mut checks = vec![
         ("image_pull", image.as_str()),
-        ("route_ready", route_ready_target),
         ("service_endpoints", service.as_str()),
         ("workload_ready", workload.as_str()),
-    ]
-    .into_iter()
-    .map(|(name, target)| PlannedCheck::new(name, target).map_err(|error| error.to_string()))
-    .collect()
+    ];
+    if let Some(route_ready_target) = route_ready_target {
+        checks.insert(1, ("route_ready", route_ready_target));
+    }
+    checks
+        .into_iter()
+        .map(|(name, target)| PlannedCheck::new(name, target).map_err(|error| error.to_string()))
+        .collect()
 }
 
 /// Build cleanup steps for resources created by one planned sandbox session.
@@ -1984,7 +1991,7 @@ fn planned_session_cleanup_steps(
         ("delete_workload", workload.as_str()),
     ];
     let route;
-    if route_strategy != "preview" {
+    if route_strategy_creates_route_object(route_strategy) {
         route = KubernetesResourceRef::new(
             namespace,
             "HTTPRoute",
@@ -2018,7 +2025,7 @@ fn required_session_permissions(
         ("", "pods", vec!["get", "list", "watch"]),
         ("", "services", vec!["create", "delete", "get", "patch"]),
     ];
-    if route_strategy != "preview" {
+    if route_strategy_creates_route_object(route_strategy) {
         permission_inputs.push((
             "gateway.networking.k8s.io",
             "httproutes",
@@ -2117,7 +2124,8 @@ fn planned_resource_token(session_id: &str, suffix: &str) -> String {
 }
 
 fn supported_route_strategies() -> String {
-    std::iter::once(ROUTE_STRATEGY_AUTO)
+    [ROUTE_STRATEGY_AUTO, ROUTE_STRATEGY_NONE]
+        .into_iter()
         .chain(SUPPORTED_ROUTE_STRATEGIES.iter().map(RouteStrategy::as_str))
         .collect::<Vec<_>>()
         .join(", ")
@@ -2132,6 +2140,16 @@ fn resolve_session_route_strategy<'a>(
         Some(ROUTE_STRATEGY_AUTO) | None => app.route_strategy().as_str(),
         Some(route_strategy) => route_strategy,
     }
+}
+
+/// Return whether a strategy should plan a Kubernetes route object.
+fn route_strategy_creates_route_object(route_strategy: &str) -> bool {
+    !matches!(route_strategy, "preview" | ROUTE_STRATEGY_NONE)
+}
+
+/// Return whether a strategy has a route readiness check.
+fn route_strategy_has_route_check(route_strategy: &str) -> bool {
+    route_strategy != ROUTE_STRATEGY_NONE
 }
 
 /// Build a dry-run route plan from a session id and optional namespace.
@@ -3008,6 +3026,7 @@ mod tests {
         planned_session_cleanup_steps, planned_session_labels, planned_session_resources,
         planned_session_risk_notes, render_check_evidence, render_check_run_json_report,
         render_check_run_text_report, required_session_permissions, resolve_session_route_strategy,
+        route_strategy_creates_route_object, route_strategy_has_route_check,
         session_plan_from_config, session_state_annotations, session_state_check_status,
         session_token, unsupported_session_feature_warnings, workload_permission_resource,
     };
@@ -3798,6 +3817,12 @@ mod tests {
         assert_eq!(preview_resources.len(), 2);
         assert_eq!(preview_resources[0].kind(), "Workload");
         assert_eq!(preview_resources[1].kind(), "Service");
+
+        let none_resources =
+            planned_session_resources("ns", "Workload", "sess", "none").expect("none resources");
+        assert_eq!(none_resources.len(), 2);
+        assert_eq!(none_resources[0].kind(), "Workload");
+        assert_eq!(none_resources[1].kind(), "Service");
     }
 
     #[test]
@@ -3884,6 +3909,13 @@ mod tests {
             preview_checks[1].target(),
             &format!("ns/{}", planned_resource_token("sess", "service"))
         );
+
+        let none_checks =
+            planned_session_checks("ns", &workload, &image, "none", "sess").expect("checks");
+        assert_eq!(none_checks.len(), 3);
+        assert_eq!(none_checks[0].name(), "image_pull");
+        assert_eq!(none_checks[1].name(), "service_endpoints");
+        assert_eq!(none_checks[2].name(), "workload_ready");
     }
 
     #[test]
@@ -3926,6 +3958,12 @@ mod tests {
         assert_eq!(preview_steps.len(), 2);
         assert_eq!(preview_steps[0].action(), "delete_service");
         assert_eq!(preview_steps[1].action(), "delete_workload");
+
+        let none_steps = planned_session_cleanup_steps("ns", "Deployment", "sess", "none")
+            .expect("none cleanup steps");
+        assert_eq!(none_steps.len(), 2);
+        assert_eq!(none_steps[0].action(), "delete_service");
+        assert_eq!(none_steps[1].action(), "delete_workload");
     }
 
     #[test]
@@ -3960,6 +3998,15 @@ mod tests {
         assert_eq!(preview_permissions.len(), 3);
         assert!(
             preview_permissions
+                .iter()
+                .all(|permission| permission.resource() != "httproutes")
+        );
+
+        let none_permissions =
+            required_session_permissions("Deployment", "none").expect("none permissions");
+        assert_eq!(none_permissions.len(), 3);
+        assert!(
+            none_permissions
                 .iter()
                 .all(|permission| permission.resource() != "httproutes")
         );
@@ -4026,6 +4073,9 @@ mod tests {
             "preview"
         );
         assert_eq!(resolve_session_route_strategy(&app, Some("host")), "host");
+        assert_eq!(resolve_session_route_strategy(&app, Some("none")), "none");
+        assert!(!route_strategy_creates_route_object("none"));
+        assert!(!route_strategy_has_route_check("none"));
     }
 
     #[test]
