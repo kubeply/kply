@@ -192,6 +192,23 @@ Gateway API routing permissions are documented in
 `gateway.networking.k8s.io/httproutes` with `create`, `delete`, and `get` when
 temporary routes may be part of the sandbox session.
 
+Current provisional pre-`1.0.0` routing capability detection fields:
+
+- `gateway_api`: Gateway API resource and temporary `HTTPRoute` capability
+  details.
+- `ingress`: Ingress inventory detected in the target namespace, including
+  Ingress names, class names, hostnames, and backend Service names. Ingress
+  planning is detected as future work until controller-specific adapters land.
+- `preview_service_available`: boolean indicating that direct preview Service
+  checks can be considered as an explicit fallback.
+- `candidate_strategies`: deterministic list of route strategies with enough
+  detected input to consider, currently `gateway_api`, `ingress`, and
+  `preview_service`.
+  This list is informational only; consumers must evaluate `limitations` before
+  selecting a strategy as executable.
+- `limitations`: stable limitation codes explaining unavailable or incomplete
+  routing paths.
+
 Current provisional pre-`1.0.0` unsupported feature warning fields:
 
 - `feature`: stable unsupported feature identifier.
