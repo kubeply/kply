@@ -33,6 +33,10 @@ inputs:
     description: GitHub Actions artifact name for the Kply JSON report.
     required: false
     default: kply-report
+  write-summary:
+    description: Whether to append a Markdown summary to the GitHub Actions step summary.
+    required: false
+    default: "true"
   github-token:
     description: GitHub token used to read Kply release metadata.
     required: false
@@ -62,6 +66,9 @@ outputs:
   artifact-name:
     description: GitHub Actions artifact name used for the uploaded JSON report.
     value: ${{ inputs.artifact-name }}
+  write-summary:
+    description: Whether the action wrote a Markdown step summary.
+    value: ${{ steps.summary.outputs.write_summary }}
 
 runs:
   using: composite
@@ -461,3 +468,92 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.run.outputs.output_path }}
         if-no-files-found: error
+
+    - name: Write Kply Markdown summary
+      id: summary
+      shell: bash
+      env:
+        INPUT_WRITE_SUMMARY: ${{ inputs.write-summary }}
+        APP: ${{ steps.app.outputs.app }}
+        MODE: ${{ steps.run.outputs.mode }}
+        OUTPUT_PATH: ${{ steps.run.outputs.output_path }}
+      run: |
+        set -euo pipefail
+
+        case "${INPUT_WRITE_SUMMARY}" in
+          true)
+            ;;
+          false)
+            echo "Kply Markdown summary disabled"
+            echo "write_summary=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+            ;;
+          *)
+            echo "::error::write-summary must be true or false."
+            exit 1
+            ;;
+        esac
+
+        if [[ -z "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          echo "GitHub step summary is unavailable"
+          echo "write_summary=false" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        python3 - "${OUTPUT_PATH}" "${GITHUB_STEP_SUMMARY}" "${APP}" "${MODE}" <<'PY'
+        import json
+        import sys
+
+        output_path, summary_path, app, mode = sys.argv[1:5]
+
+        def scalar(value):
+            if value is None:
+                return "none"
+            text = str(value).replace("\r", " ").replace("\n", " ").strip()
+            return text.replace("`", "\\`") or "none"
+
+        with open(output_path, encoding="utf-8") as handle:
+            report = json.load(handle)
+
+        workload = report.get("workload") or {}
+        workload_parts = [
+            scalar(workload.get("namespace")),
+            scalar(workload.get("kind")),
+            scalar(workload.get("name")),
+        ]
+        workload_name = "/".join(workload_parts)
+
+        route_selector = report.get("route_selector") or {}
+        route_label = scalar(route_selector.get("kind"))
+        route_name = scalar(route_selector.get("name"))
+        route_value = scalar(route_selector.get("value"))
+        route_summary = f"{route_label} {route_name}={route_value}"
+
+        planned_resources = report.get("planned_resources") or []
+        planned_checks = report.get("planned_checks") or []
+        required_permissions = report.get("required_permissions") or []
+        warnings = report.get("unsupported_feature_warnings") or []
+        risk_notes = report.get("risk_notes") or []
+
+        lines = [
+            "## Kply plan",
+            "",
+            f"- Mode: `{scalar(mode)}`",
+            f"- App: `{scalar(app)}`",
+            f"- Status: `{scalar(report.get('status'))}`",
+            f"- Session: `{scalar(report.get('id'))}`",
+            f"- Workload: `{workload_name}`",
+            f"- Image: `{scalar(report.get('image'))}`",
+            f"- Route selector: `{route_summary}`",
+            f"- Planned resources: `{len(planned_resources)}`",
+            f"- Planned checks: `{len(planned_checks)}`",
+            f"- Required permission rules: `{len(required_permissions)}`",
+            f"- Unsupported feature warnings: `{len(warnings)}`",
+            f"- Risk notes: `{len(risk_notes)}`",
+            "",
+        ]
+
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+        PY
+        echo "write_summary=true" >> "${GITHUB_OUTPUT}"
