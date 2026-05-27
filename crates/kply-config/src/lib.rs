@@ -87,6 +87,10 @@ impl KplyConfig {
             errors.extend(app.validation_errors(index));
         }
 
+        for (index, policy) in self.policies.entries().iter().enumerate() {
+            errors.extend(policy.validation_errors(index));
+        }
+
         ConfigValidationErrors::from_errors(errors)
     }
 }
@@ -305,6 +309,13 @@ pub enum ConfigValidationError {
         /// App field that failed validation.
         field: AppConfigField,
     },
+    /// A policy config field is required but blank.
+    EmptyPolicyField {
+        /// Zero-based policy index in the top-level policies list.
+        policy_index: usize,
+        /// Policy field that failed validation.
+        field: PolicyConfigField,
+    },
 }
 
 impl fmt::Display for ConfigValidationError {
@@ -313,6 +324,15 @@ impl fmt::Display for ConfigValidationError {
             Self::UnsupportedVersion(error) => write!(formatter, "version: {error}"),
             Self::EmptyAppField { app_index, field } => {
                 write!(formatter, "apps[{app_index}].{field}: field is required")
+            }
+            Self::EmptyPolicyField {
+                policy_index,
+                field,
+            } => {
+                write!(
+                    formatter,
+                    "policies[{policy_index}].{field}: field is required"
+                )
             }
         }
     }
@@ -353,6 +373,32 @@ impl AppConfigField {
 }
 
 impl fmt::Display for AppConfigField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Field name for a policy config validation error.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PolicyConfigField {
+    /// Policy `name` field.
+    Name,
+    /// Policy `description` field.
+    Description,
+}
+
+impl PolicyConfigField {
+    /// Return the stable config spelling for this [`PolicyConfigField`].
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Description => "description",
+        }
+    }
+}
+
+impl fmt::Display for PolicyConfigField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -675,10 +721,94 @@ impl Serialize for PolicyConfigs {
     }
 }
 
-/// Placeholder for a future policy config entry.
+/// Named policy config entry for future safety enforcement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PolicyConfig;
+pub struct PolicyConfig {
+    name: String,
+    #[serde(default = "default_policy_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+impl PolicyConfig {
+    /// Create an enabled named policy config entry.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            enabled: default_policy_enabled(),
+            description: None,
+        }
+    }
+
+    /// Borrow the stable policy name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Return whether this policy entry is enabled.
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Return a copy of this policy entry with an explicit enabled flag.
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Borrow the optional human-readable policy description.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Return a copy of this policy entry with a description.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    fn validation_errors(&self, policy_index: usize) -> Vec<ConfigValidationError> {
+        let mut errors = Vec::new();
+
+        push_empty_policy_field_error(
+            &mut errors,
+            policy_index,
+            PolicyConfigField::Name,
+            self.name(),
+        );
+
+        if let Some(description) = self.description() {
+            push_empty_policy_field_error(
+                &mut errors,
+                policy_index,
+                PolicyConfigField::Description,
+                description,
+            );
+        }
+
+        errors
+    }
+}
+
+fn default_policy_enabled() -> bool {
+    true
+}
+
+fn push_empty_policy_field_error(
+    errors: &mut Vec<ConfigValidationError>,
+    policy_index: usize,
+    field: PolicyConfigField,
+    value: &str,
+) {
+    if value.trim().is_empty() {
+        errors.push(ConfigValidationError::EmptyPolicyField {
+            policy_index,
+            field,
+        });
+    }
+}
 
 /// Load a Kply project configuration file from disk.
 ///
@@ -768,7 +898,8 @@ mod tests {
         AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
         CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
         ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig,
-        PolicyConfigs, RouteStrategy, RoutingConfig, discover_config_path_from, load_config_path,
+        PolicyConfigField, PolicyConfigs, RouteStrategy, RoutingConfig, discover_config_path_from,
+        load_config_path,
     };
     use std::env;
     use std::fs;
@@ -781,6 +912,7 @@ mod tests {
         "minimal-defaults",
         "complete-single-app",
         "multi-app-route-strategies",
+        "policy-baseline",
     ];
     const INVALID_VALIDATION_CONFIG_FIXTURES: &[(&str, usize)] = &[
         ("invalid-empty-app-fields", 4),
@@ -803,14 +935,14 @@ mod tests {
             AppConfigs::new(vec![app_config()]),
             RoutingConfig,
             CheckConfigs::new(vec![CheckConfig]),
-            PolicyConfigs::new(vec![PolicyConfig]),
+            PolicyConfigs::new(vec![policy_config()]),
         );
 
         assert_eq!(config.version().get(), 7);
         assert_eq!(config.apps().entries(), &[app_config()]);
         assert_eq!(config.routing(), &RoutingConfig);
         assert_eq!(config.checks().entries(), &[CheckConfig]);
-        assert_eq!(config.policies().entries(), &[PolicyConfig]);
+        assert_eq!(config.policies().entries(), &[policy_config()]);
     }
 
     #[test]
@@ -1364,6 +1496,103 @@ apps:
     }
 
     #[test]
+    fn reports_policy_field_names() {
+        assert_eq!(PolicyConfigField::Name.as_str(), "name");
+        assert_eq!(PolicyConfigField::Description.as_str(), "description");
+    }
+
+    #[test]
+    fn creates_policy_config_with_explicit_fields() {
+        let config = policy_config();
+
+        assert_eq!(config.name(), "sandbox-defaults");
+        assert!(!config.enabled());
+        assert_eq!(
+            config.description(),
+            Some("Default sandbox boundaries for local agent sessions")
+        );
+    }
+
+    #[test]
+    fn defaults_policy_config_to_enabled_without_description() {
+        let config = PolicyConfig::new("sandbox-defaults");
+
+        assert_eq!(config.name(), "sandbox-defaults");
+        assert!(config.enabled());
+        assert_eq!(config.description(), None);
+    }
+
+    #[test]
+    fn deserializes_policy_config_yaml_with_defaulted_fields() {
+        let config: KplyConfig = serde_norway::from_str(
+            r#"
+version: 1
+policies:
+  - name: sandbox-defaults
+"#,
+        )
+        .expect("valid policy config YAML");
+
+        assert_eq!(
+            config.policies().entries(),
+            &[PolicyConfig::new("sandbox-defaults")]
+        );
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_empty_policy_fields_with_paths() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::new(vec![
+                PolicyConfig::new(" ").with_description(""),
+                PolicyConfig::new("sandbox-defaults").with_description("\t"),
+            ]),
+        );
+
+        let errors = config.validate().expect_err("empty policy fields");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::EmptyPolicyField {
+                    policy_index: 0,
+                    field: PolicyConfigField::Name,
+                },
+                ConfigValidationError::EmptyPolicyField {
+                    policy_index: 0,
+                    field: PolicyConfigField::Description,
+                },
+                ConfigValidationError::EmptyPolicyField {
+                    policy_index: 1,
+                    field: PolicyConfigField::Description,
+                },
+            ]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "3 config validation errors; first error: policies[0].name: field is required"
+        );
+    }
+
+    #[test]
+    fn serializes_policy_config_to_stable_json() {
+        let value = serde_json::to_value(policy_config()).expect("policy should serialize");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "name": "sandbox-defaults",
+                "enabled": false,
+                "description": "Default sandbox boundaries for local agent sessions",
+            })
+        );
+    }
+
+    #[test]
     fn creates_app_config_with_explicit_fields() {
         let config = app_config();
 
@@ -1519,5 +1748,11 @@ apps:
             Some("registry.example.com/shop/checkout:test".to_string()),
             RouteStrategy::Header,
         )
+    }
+
+    fn policy_config() -> PolicyConfig {
+        PolicyConfig::new("sandbox-defaults")
+            .with_enabled(false)
+            .with_description("Default sandbox boundaries for local agent sessions")
     }
 }

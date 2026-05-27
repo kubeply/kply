@@ -371,6 +371,15 @@ The top-level configuration model has these sections:
 - `checks`: verification checks.
 - `policies`: safety policies.
 
+Policy config entries define the stable outer structure for future policy
+evaluation:
+
+- `name`: policy name used in validation errors, reports, and future policy
+  decisions.
+- `enabled`: optional boolean, defaulting to `true`, that lets teams keep a
+  policy entry documented while disabling its future enforcement.
+- `description`: optional human-readable context for operators and agents.
+
 Application config entries define these fields:
 
 - `name`: Kply app name used by humans and agents.

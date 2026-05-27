@@ -7,6 +7,7 @@ Current valid fixtures:
 - `minimal-defaults`: explicit schema version with defaulted sections.
 - `complete-single-app`: one fully populated app using header routing.
 - `multi-app-route-strategies`: multiple apps covering every route strategy.
+- `policy-baseline`: one named policy entry with explicit status and context.
 
 Current invalid fixtures:
 
