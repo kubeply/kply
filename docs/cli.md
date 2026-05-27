@@ -96,7 +96,7 @@ availability information in a pull-request-friendly format.
 The current report commands discover session metadata but do not yet load
 persisted full reports. Agents must treat `report: not_available` and
 `reason: session_report_persistence_not_implemented` as a conservative fallback,
-then run `kply check run <session>` for current evidence.
+then run `kply check run <session> --json` for current evidence.
 
 For agent-specific handling and handoff wording, see
 [Agent Report Workflow](report-agent.md).
