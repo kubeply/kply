@@ -41,9 +41,6 @@ const EXIT_USAGE: i32 = 2;
 const EXIT_INTERNAL: i32 = 3;
 const EXIT_BLOCKING: i32 = 1;
 const SESSION_HEADER_NAME: &str = "x-kply-session";
-const FEATURE_PREVIEW_ROUTING: &str = "preview_routing";
-const REASON_ROUTE_STRATEGY_PREVIEW_NOT_IMPLEMENTED: &str =
-    "route_strategy_preview_not_implemented";
 const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
@@ -1775,6 +1772,7 @@ fn session_plan_from_config(
         namespace,
         SANDBOX_WORKLOAD_KIND,
         session_id.as_str(),
+        route_strategy,
     )
     .map_err(|error| {
         SessionPlanBuildError::Config(format!("invalid planned kubernetes resource: {error}"))
@@ -1799,15 +1797,17 @@ fn session_plan_from_config(
     .map_err(|error| {
         SessionPlanBuildError::Config(format!("invalid planned check metadata: {error}"))
     })?;
-    let planned_cleanup_steps =
-        planned_session_cleanup_steps(namespace, SANDBOX_WORKLOAD_KIND, session_id.as_str())
-            .map_err(|error| {
-                SessionPlanBuildError::Config(format!(
-                    "invalid planned cleanup step metadata: {error}"
-                ))
-            })?;
-    let required_permissions =
-        required_session_permissions(SANDBOX_WORKLOAD_KIND).map_err(|error| {
+    let planned_cleanup_steps = planned_session_cleanup_steps(
+        namespace,
+        SANDBOX_WORKLOAD_KIND,
+        session_id.as_str(),
+        route_strategy,
+    )
+    .map_err(|error| {
+        SessionPlanBuildError::Config(format!("invalid planned cleanup step metadata: {error}"))
+    })?;
+    let required_permissions = required_session_permissions(SANDBOX_WORKLOAD_KIND, route_strategy)
+        .map_err(|error| {
             SessionPlanBuildError::Config(format!("invalid required permission metadata: {error}"))
         })?;
     let unsupported_feature_warnings = unsupported_session_feature_warnings(route_strategy)
@@ -1847,26 +1847,33 @@ fn session_plan_from_config(
     Ok(plan)
 }
 
+/// Build Kubernetes resource identities created by one planned sandbox session.
 fn planned_session_resources(
     namespace: &str,
     workload_kind: &str,
     session_id: &str,
+    route_strategy: &str,
 ) -> std::result::Result<Vec<KubernetesResourceRef>, String> {
-    [
+    let mut resources = vec![
         (
             workload_kind,
             planned_resource_token(session_id, "workload"),
         ),
         ("Service", planned_resource_token(session_id, "service")),
-        ("HTTPRoute", planned_resource_token(session_id, "route")),
-    ]
-    .into_iter()
-    .map(|(kind, name)| {
-        KubernetesResourceRef::new(namespace, kind, name).map_err(|error| error.to_string())
-    })
-    .collect()
+    ];
+    if route_strategy != "preview" {
+        resources.push(("HTTPRoute", planned_resource_token(session_id, "route")));
+    }
+
+    resources
+        .into_iter()
+        .map(|(kind, name)| {
+            KubernetesResourceRef::new(namespace, kind, name).map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
+/// Build ownership labels shared by all sandbox session resources.
 fn planned_session_labels(
     app_name: &str,
     session_id: &str,
@@ -1883,6 +1890,7 @@ fn planned_session_labels(
     .collect()
 }
 
+/// Build audit and routing annotations shared by all sandbox session resources.
 fn planned_session_annotations(
     workload: &WorkloadRef,
     image: &ImageRef,
@@ -1900,6 +1908,7 @@ fn planned_session_annotations(
     .collect()
 }
 
+/// Build checks expected for one planned sandbox session.
 fn planned_session_checks(
     namespace: &str,
     workload: &WorkloadRef,
@@ -1912,9 +1921,14 @@ fn planned_session_checks(
     let service = ServiceRef::new(namespace, planned_resource_token(session_id, "service"))
         .map_err(|error| error.to_string())?
         .to_string();
+    let route_ready_target = if route_strategy == "preview" {
+        service.as_str()
+    } else {
+        route_strategy
+    };
     [
         ("image_pull", image.as_str()),
-        ("route_ready", route_strategy),
+        ("route_ready", route_ready_target),
         ("service_endpoints", service.as_str()),
         ("workload_ready", workload.as_str()),
     ]
@@ -1923,10 +1937,12 @@ fn planned_session_checks(
     .collect()
 }
 
+/// Build cleanup steps for resources created by one planned sandbox session.
 fn planned_session_cleanup_steps(
     namespace: &str,
     workload_kind: &str,
     session_id: &str,
+    route_strategy: &str,
 ) -> std::result::Result<Vec<PlannedCleanupStep>, String> {
     let workload = KubernetesResourceRef::new(
         namespace,
@@ -1942,30 +1958,37 @@ fn planned_session_cleanup_steps(
     )
     .map_err(|error| error.to_string())?
     .to_string();
-    let route = KubernetesResourceRef::new(
-        namespace,
-        "HTTPRoute",
-        planned_resource_token(session_id, "route"),
-    )
-    .map_err(|error| error.to_string())?
-    .to_string();
-    [
-        ("delete_route", route.as_str()),
+    let mut steps = vec![
         ("delete_service", service.as_str()),
         ("delete_workload", workload.as_str()),
-    ]
-    .into_iter()
-    .map(|(action, target)| {
-        PlannedCleanupStep::new(action, target).map_err(|error| error.to_string())
-    })
-    .collect()
+    ];
+    let route;
+    if route_strategy != "preview" {
+        route = KubernetesResourceRef::new(
+            namespace,
+            "HTTPRoute",
+            planned_resource_token(session_id, "route"),
+        )
+        .map_err(|error| error.to_string())?
+        .to_string();
+        steps.insert(0, ("delete_route", route.as_str()));
+    }
+
+    steps
+        .into_iter()
+        .map(|(action, target)| {
+            PlannedCleanupStep::new(action, target).map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
+/// Build Kubernetes permissions required to create and clean up a session.
 fn required_session_permissions(
     workload_kind: &str,
+    route_strategy: &str,
 ) -> std::result::Result<Vec<RequiredPermission>, String> {
     let workload_resource = workload_permission_resource(workload_kind)?;
-    let mut permissions = [
+    let mut permission_inputs = vec![
         (
             "apps",
             workload_resource.as_str(),
@@ -1973,39 +1996,34 @@ fn required_session_permissions(
         ),
         ("", "pods", vec!["get", "list", "watch"]),
         ("", "services", vec!["create", "delete", "get", "patch"]),
-        (
+    ];
+    if route_strategy != "preview" {
+        permission_inputs.push((
             "gateway.networking.k8s.io",
             "httproutes",
             vec!["create", "delete", "get"],
-        ),
-    ]
-    .into_iter()
-    .map(|(api_group, resource, verbs)| {
-        RequiredPermission::new(api_group, resource, verbs).map_err(|error| error.to_string())
-    })
-    .collect::<std::result::Result<Vec<_>, _>>()?;
+        ));
+    }
+
+    let mut permissions = permission_inputs
+        .into_iter()
+        .map(|(api_group, resource, verbs)| {
+            RequiredPermission::new(api_group, resource, verbs).map_err(|error| error.to_string())
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     permissions.sort_unstable();
     permissions.dedup();
     Ok(permissions)
 }
 
+/// Build unsupported feature warnings for the requested route strategy.
 fn unsupported_session_feature_warnings(
-    route_strategy: &str,
+    _route_strategy: &str,
 ) -> std::result::Result<Vec<UnsupportedFeatureWarning>, String> {
-    let warnings = match route_strategy {
-        "preview" => vec![
-            UnsupportedFeatureWarning::new(
-                FEATURE_PREVIEW_ROUTING,
-                REASON_ROUTE_STRATEGY_PREVIEW_NOT_IMPLEMENTED,
-            )
-            .map_err(|error| error.to_string())?,
-        ],
-        _ => Vec::new(),
-    };
-
-    Ok(warnings)
+    Ok(Vec::new())
 }
 
+/// Build risk notes for app shapes that need human review before promotion.
 fn planned_session_risk_notes(app: &AppConfig) -> std::result::Result<Vec<RiskNote>, String> {
     let target = database_like_app_target(app);
     let notes = match target {
@@ -3710,8 +3728,8 @@ mod tests {
 
     #[test]
     fn builds_planned_session_resources() {
-        let resources =
-            planned_session_resources("ns", "Workload", "sess").expect("planned resources");
+        let resources = planned_session_resources("ns", "Workload", "sess", "header")
+            .expect("planned resources");
 
         assert_eq!(resources.len(), 3);
         assert_eq!(resources[0].namespace(), "ns");
@@ -3732,11 +3750,17 @@ mod tests {
             resources[2].name(),
             &planned_resource_token("sess", "route")
         );
+
+        let preview_resources = planned_session_resources("ns", "Workload", "sess", "preview")
+            .expect("preview planned resources");
+        assert_eq!(preview_resources.len(), 2);
+        assert_eq!(preview_resources[0].kind(), "Workload");
+        assert_eq!(preview_resources[1].kind(), "Service");
     }
 
     #[test]
     fn planned_session_resources_return_validation_errors() {
-        let error = planned_session_resources("Bad_Namespace", "Workload", "sess")
+        let error = planned_session_resources("Bad_Namespace", "Workload", "sess", "header")
             .expect_err("invalid namespace should fail");
 
         assert!(error.contains("namespace"));
@@ -3811,6 +3835,13 @@ mod tests {
         );
         assert_eq!(checks[3].name(), "workload_ready");
         assert_eq!(checks[3].target(), "ns/Deployment/name");
+
+        let preview_checks =
+            planned_session_checks("ns", &workload, &image, "preview", "sess").expect("checks");
+        assert_eq!(
+            preview_checks[1].target(),
+            &format!("ns/{}", planned_resource_token("sess", "service"))
+        );
     }
 
     #[test]
@@ -3825,7 +3856,7 @@ mod tests {
 
     #[test]
     fn builds_planned_session_cleanup_steps() {
-        let steps = planned_session_cleanup_steps("ns", "Deployment", "sess")
+        let steps = planned_session_cleanup_steps("ns", "Deployment", "sess", "header")
             .expect("planned cleanup steps");
 
         assert_eq!(steps.len(), 3);
@@ -3847,11 +3878,17 @@ mod tests {
                 planned_resource_token("sess", "workload")
             )
         );
+
+        let preview_steps = planned_session_cleanup_steps("ns", "Deployment", "sess", "preview")
+            .expect("preview cleanup steps");
+        assert_eq!(preview_steps.len(), 2);
+        assert_eq!(preview_steps[0].action(), "delete_service");
+        assert_eq!(preview_steps[1].action(), "delete_workload");
     }
 
     #[test]
     fn planned_session_cleanup_steps_return_validation_errors() {
-        let error = planned_session_cleanup_steps("Bad_Namespace", "Deployment", "sess")
+        let error = planned_session_cleanup_steps("Bad_Namespace", "Deployment", "sess", "header")
             .expect_err("invalid cleanup resource should fail");
 
         assert!(error.contains("namespace"));
@@ -3859,7 +3896,8 @@ mod tests {
 
     #[test]
     fn builds_required_session_permissions() {
-        let permissions = required_session_permissions("Deployment").expect("required permissions");
+        let permissions =
+            required_session_permissions("Deployment", "header").expect("required permissions");
 
         assert_eq!(permissions.len(), 4);
         assert_eq!(permissions[0].api_group(), "");
@@ -3874,11 +3912,20 @@ mod tests {
         assert_eq!(permissions[3].api_group(), "gateway.networking.k8s.io");
         assert_eq!(permissions[3].resource(), "httproutes");
         assert_eq!(permissions[3].verbs(), ["create", "delete", "get"]);
+
+        let preview_permissions = required_session_permissions("Deployment", "preview")
+            .expect("preview required permissions");
+        assert_eq!(preview_permissions.len(), 3);
+        assert!(
+            preview_permissions
+                .iter()
+                .all(|permission| permission.resource() != "httproutes")
+        );
     }
 
     #[test]
     fn required_session_permissions_return_validation_errors() {
-        let error = required_session_permissions("Bad_Workload")
+        let error = required_session_permissions("Bad_Workload", "header")
             .expect_err("invalid workload resource should fail");
 
         assert!(error.contains("unsupported workload kind"));
@@ -3917,12 +3964,7 @@ mod tests {
             unsupported_session_feature_warnings("preview").expect("unsupported warnings");
 
         assert!(header_warnings.is_empty());
-        assert_eq!(preview_warnings.len(), 1);
-        assert_eq!(preview_warnings[0].feature(), "preview_routing");
-        assert_eq!(
-            preview_warnings[0].reason(),
-            "route_strategy_preview_not_implemented"
-        );
+        assert!(preview_warnings.is_empty());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 991
+assertion_line: 993
 expression: value
 ---
 {
@@ -28,7 +28,7 @@ expression: value
     },
     {
       "name": "route_ready",
-      "target": "preview"
+      "target": "shop/checkout-db-plan-service"
     },
     {
       "name": "service_endpoints",
@@ -40,10 +40,6 @@ expression: value
     }
   ],
   "planned_cleanup_steps": [
-    {
-      "action": "delete_route",
-      "target": "shop/HTTPRoute/checkout-db-plan-route"
-    },
     {
       "action": "delete_service",
       "target": "shop/Service/checkout-db-plan-service"
@@ -75,11 +71,6 @@ expression: value
     {
       "kind": "Deployment",
       "name": "checkout-db-plan-workload",
-      "namespace": "shop"
-    },
-    {
-      "kind": "HTTPRoute",
-      "name": "checkout-db-plan-route",
       "namespace": "shop"
     },
     {
@@ -127,15 +118,6 @@ expression: value
         "get",
         "patch"
       ]
-    },
-    {
-      "api_group": "gateway.networking.k8s.io",
-      "resource": "httproutes",
-      "verbs": [
-        "create",
-        "delete",
-        "get"
-      ]
     }
   ],
   "risk_notes": [
@@ -149,12 +131,7 @@ expression: value
   "route_selector": null,
   "status": "planned",
   "ttl": null,
-  "unsupported_feature_warnings": [
-    {
-      "feature": "preview_routing",
-      "reason": "route_strategy_preview_not_implemented"
-    }
-  ],
+  "unsupported_feature_warnings": [],
   "workload": {
     "kind": "Deployment",
     "name": "checkout-postgres",

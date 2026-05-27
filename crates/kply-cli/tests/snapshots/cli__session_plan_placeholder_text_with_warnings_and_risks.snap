@@ -1,6 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 964
+assertion_line: 966
 expression: output
 ---
 kply session plan checkout-db
@@ -8,9 +8,8 @@ id: checkout-db-plan
 name: checkout-db-session
 workload: shop/Deployment/checkout-postgres
 image: postgres:16
-planned_resources: 3
+planned_resources: 2
   resource: shop/Deployment/checkout-db-plan-workload
-  resource: shop/HTTPRoute/checkout-db-plan-route
   resource: shop/Service/checkout-db-plan-service
 planned_labels: 4
   label: kply.dev/app=checkout-db
@@ -23,20 +22,17 @@ planned_annotations: 3
   annotation: kply.dev/workload=shop/Deployment/checkout-postgres
 planned_checks: 4
   check: image_pull -> postgres:16
-  check: route_ready -> preview
+  check: route_ready -> shop/checkout-db-plan-service
   check: service_endpoints -> shop/checkout-db-plan-service
   check: workload_ready -> shop/Deployment/checkout-postgres
-planned_cleanup_steps: 3
-  cleanup: delete_route -> shop/HTTPRoute/checkout-db-plan-route
+planned_cleanup_steps: 2
   cleanup: delete_service -> shop/Service/checkout-db-plan-service
   cleanup: delete_workload -> shop/Deployment/checkout-db-plan-workload
-required_permissions: 4
+required_permissions: 3
   permission: core/pods [get,list,watch]
   permission: core/services [create,delete,get,patch]
   permission: apps/deployments [create,delete,get,patch]
-  permission: gateway.networking.k8s.io/httproutes [create,delete,get]
-unsupported_feature_warnings: 1
-  unsupported: preview_routing: route_strategy_preview_not_implemented
+unsupported_feature_warnings: 0
 risk_notes: 1
   risk: warning:database -> app:checkout-db (database_reference_requires_manual_review)
 route_selector: <none>

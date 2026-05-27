@@ -232,6 +232,14 @@ Current provisional pre-`1.0.0` Traefik IngressRoute planning behavior:
 - Host/path rules are mirrored from the source `Ingress`, but backends point to
   the sandbox Service. Production `Ingress` resources are not patched.
 
+Current provisional pre-`1.0.0` preview Service fallback behavior:
+
+- `route_strategy: preview` plans only the sandbox workload and sandbox Service.
+- Preview sessions do not create, delete, or require permissions for
+  `HTTPRoute` resources.
+- Preview checks target the sandbox Service directly, so they can validate the
+  isolated workload and Service endpoints without proving edge routing behavior.
+
 Current provisional pre-`1.0.0` unsupported feature warning fields:
 
 - `feature`: stable unsupported feature identifier.
