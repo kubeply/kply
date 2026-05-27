@@ -614,6 +614,7 @@ dependencies = [
  "kply-config",
  "kply-core",
  "kply-k8s",
+ "kply-routing",
  "kply-test",
  "serde",
  "serde_json",

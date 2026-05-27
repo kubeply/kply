@@ -8,6 +8,7 @@ use kply_cli::cli::ClusterCommand;
 use kply_cli::cli::Command;
 use kply_cli::cli::ConfigCommand;
 use kply_cli::cli::DemoCommand;
+use kply_cli::cli::RouteCommand;
 use kply_cli::cli::SessionCommand;
 use kply_test::{
     EXIT_BLOCKING, EXIT_USAGE, assert_kply_exit_code, kply_cmd, normalize_output, temp_workspace,
@@ -1706,6 +1707,91 @@ fn rejects_invalid_session_cleanup_id_json() {
 }
 
 #[test]
+fn prints_route_plan_text() {
+    let output = kply_cmd()
+        .args(["route", "plan", "checkout-plan", "--namespace", "shop"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("route_plan_text", output);
+}
+
+#[test]
+fn prints_route_plan_json() {
+    let output = kply_cmd()
+        .args([
+            "route",
+            "plan",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("route_plan_json", value);
+}
+
+#[test]
+fn prints_route_plan_without_namespace_json() {
+    let output = kply_cmd()
+        .args(["route", "plan", "checkout-plan", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("route_plan_without_namespace_json", value);
+}
+
+#[test]
+fn suppresses_route_plan_text_when_quiet() {
+    kply_cmd()
+        .args(["route", "plan", "checkout-plan", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rejects_invalid_route_plan_session_id() {
+    let output = assert_kply_exit_code(&["route", "plan", "Checkout_Plan"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid route plan session id should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("route_plan_invalid_session_id", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_invalid_route_plan_session_id_json() {
+    let output = assert_kply_exit_code(&["route", "plan", "Checkout_Plan", "--json"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "invalid route plan session id JSON should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("route_plan_invalid_session_id_json", value);
+}
+
+#[test]
 fn prints_session_manifests_text() {
     let output = with_session_plan_config(|config_path| {
         kply_cmd()
@@ -2922,6 +3008,7 @@ fn covers_every_top_level_command() {
             "demo",
             "help",
             "report",
+            "route",
             "session"
         ],
         "update CLI command tests when the top-level command surface changes"
@@ -2964,6 +3051,36 @@ fn covers_every_check_command() {
         ])
         .assert()
         .code(EXIT_USAGE);
+}
+
+#[test]
+fn covers_every_route_command() {
+    let mut command_names = Cli::command()
+        .find_subcommand("route")
+        .expect("route command")
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+
+    assert_eq!(
+        command_names,
+        ["plan"],
+        "update route command tests when the route command surface changes"
+    );
+
+    kply_cmd()
+        .args([
+            "route",
+            RouteCommand::Plan {
+                session: String::new(),
+                namespace: None,
+            }
+            .name(),
+            "checkout-plan",
+        ])
+        .assert()
+        .success();
 }
 
 #[test]

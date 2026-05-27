@@ -1,0 +1,34 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "apply": false,
+  "cleanup_selector": {
+    "matchLabels": {
+      "kply.dev/managed-by": "kply",
+      "kply.dev/session-id": "checkout-plan"
+    }
+  },
+  "cleanup_target": {
+    "apiVersion": "gateway.networking.k8s.io/v1",
+    "kind": "HTTPRoute",
+    "name": "checkout-plan-route",
+    "namespace": "shop",
+    "selector": {
+      "matchLabels": {
+        "kply.dev/managed-by": "kply",
+        "kply.dev/session-id": "checkout-plan"
+      }
+    }
+  },
+  "mutation": "not_applied",
+  "planned_resource": {
+    "kind": "HTTPRoute",
+    "name": "checkout-plan-route",
+    "namespace": "shop"
+  },
+  "route_kind": "HTTPRoute",
+  "session_id": "checkout-plan",
+  "status": "planned"
+}
