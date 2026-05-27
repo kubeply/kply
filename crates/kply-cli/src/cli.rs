@@ -144,6 +144,14 @@ pub enum RouteCommand {
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,
     },
+    /// Apply temporary routing for one sandbox session.
+    Apply {
+        /// Session id to route.
+        session: String,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
 }
 
 impl RouteCommand {
@@ -151,6 +159,7 @@ impl RouteCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Plan { .. } => "plan",
+            Self::Apply { .. } => "apply",
         }
     }
 }
