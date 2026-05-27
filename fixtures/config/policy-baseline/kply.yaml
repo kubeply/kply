@@ -15,3 +15,4 @@ policies:
     allowed_route_strategies:
       - header
       - preview
+    max_session_ttl: 2h

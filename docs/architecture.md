@@ -386,6 +386,8 @@ evaluation:
   mutation.
 - `allowed_route_strategies`: optional list of route strategies the policy will
   allow once policy evaluation is wired into route planning and mutation.
+- `max_session_ttl`: optional compact duration such as `30m` or `2h` that caps
+  future sandbox session lifetime once policy evaluation is wired in.
 
 Application config entries define these fields:
 
@@ -408,7 +410,8 @@ Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and
 required app fields, plus policy scalar fields and policy lists such as
 `allowed_namespaces`, `allowed_workload_kinds`, and
-`allowed_route_strategies`.
+`allowed_route_strategies`, plus compact policy durations such as
+`max_session_ttl`.
 
 Resolved config JSON serializes the top-level model with `apps`, `checks`, and
 `policies` as arrays, `routing` as an object, `version` as a number, and route
