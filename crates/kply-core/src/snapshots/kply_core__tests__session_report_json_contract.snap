@@ -1,9 +1,17 @@
 ---
 source: crates/kply-core/src/lib.rs
-assertion_line: 7526
 expression: value
 ---
 {
+  "metadata": {
+    "session_id": "session-123",
+    "session_name": "checkout-test",
+    "workload": {
+      "kind": "Deployment",
+      "name": "checkout-api",
+      "namespace": "checkout"
+    }
+  },
   "plan": {
     "id": "session-123",
     "image": "registry.example.com/checkout/api:v2",
