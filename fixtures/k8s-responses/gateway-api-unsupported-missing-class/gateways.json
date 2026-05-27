@@ -1,0 +1,28 @@
+{
+  "apiVersion": "gateway.networking.k8s.io/v1",
+  "kind": "GatewayList",
+  "metadata": {
+    "resourceVersion": "3002"
+  },
+  "items": [
+    {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "Gateway",
+      "metadata": {
+        "name": "public-gateway",
+        "namespace": "shop"
+      },
+      "spec": {
+        "gatewayClassName": "deleted-class",
+        "listeners": [
+          {
+            "name": "http",
+            "hostname": "checkout.example.com",
+            "port": 80,
+            "protocol": "HTTP"
+          }
+        ]
+      }
+    }
+  ]
+}

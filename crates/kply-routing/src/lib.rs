@@ -1079,17 +1079,17 @@ mod tests {
     #[test]
     /// Models supported Gateway API route capabilities from fixture shapes.
     fn models_supported_gateway_api_fixture_shapes() {
-        let gateway_classes = read_gateway_fixture("gatewayclasses.json")
+        let gateway_classes = read_gateway_fixture("gateway-api-supported", "gatewayclasses.json")
             .items
             .iter()
             .map(gateway_class_summary)
             .collect::<Vec<_>>();
-        let gateways = read_gateway_fixture("gateways.json")
+        let gateways = read_gateway_fixture("gateway-api-supported", "gateways.json")
             .items
             .iter()
             .map(gateway_summary)
             .collect::<Vec<_>>();
-        let http_routes = read_gateway_fixture("httproutes.json")
+        let http_routes = read_gateway_fixture("gateway-api-supported", "httproutes.json")
             .items
             .iter()
             .map(http_route_summary)
@@ -1118,6 +1118,54 @@ mod tests {
             ["shop/checkout-public", "shop/checkout-sandbox-header"]
         );
         assert_eq!(capabilities.limitations, Vec::new());
+    }
+
+    #[test]
+    /// Models missing GatewayClass fixtures as unsupported for route changes.
+    fn models_missing_gateway_class_fixture_shapes() {
+        let capabilities = route_capabilities_from_fixture("gateway-api-unsupported-missing-class");
+
+        assert_eq!(capabilities.status, GatewayRouteCapabilityStatus::Partial);
+        assert!(!capabilities.supports_temporary_http_routes);
+        assert!(!capabilities.supports_header_based_routing);
+        assert!(!capabilities.supports_host_based_routing);
+        assert_eq!(capabilities.resources.gateway_class_count, 0);
+        assert_eq!(capabilities.resources.gateway_count, 1);
+        assert_eq!(capabilities.resources.http_route_count, 0);
+        assert_eq!(
+            capabilities.http_compatible_gateway_names,
+            ["shop/public-gateway"]
+        );
+        assert_eq!(
+            capabilities.limitations,
+            [
+                GatewayRouteCapabilityLimitation::GatewayApiPartial,
+                GatewayRouteCapabilityLimitation::MissingGatewayClass
+            ]
+        );
+    }
+
+    #[test]
+    /// Models TCP-only Gateway fixtures as unsupported for HTTPRoute changes.
+    fn models_tcp_only_gateway_fixture_shapes() {
+        let capabilities = route_capabilities_from_fixture("gateway-api-unsupported-tcp-only");
+
+        assert_eq!(capabilities.status, GatewayRouteCapabilityStatus::Partial);
+        assert!(!capabilities.supports_temporary_http_routes);
+        assert!(!capabilities.supports_header_based_routing);
+        assert!(!capabilities.supports_host_based_routing);
+        assert_eq!(capabilities.resources.gateway_class_count, 1);
+        assert_eq!(capabilities.resources.gateway_count, 1);
+        assert_eq!(capabilities.resources.http_route_count, 0);
+        assert_eq!(
+            capabilities.http_compatible_gateway_names,
+            Vec::<String>::new()
+        );
+        assert_eq!(capabilities.listener_protocols, ["TCP"]);
+        assert_eq!(
+            capabilities.limitations,
+            [GatewayRouteCapabilityLimitation::NoHttpCompatibleListener]
+        );
     }
 
     #[test]
@@ -1748,12 +1796,35 @@ mod tests {
     }
 
     /// Read one supported Gateway API fixture list.
-    fn read_gateway_fixture(name: &str) -> ObjectList<DynamicObject> {
-        let fixture_path = kply_test::fixture_path(
-            Path::new("k8s-responses")
-                .join("gateway-api-supported")
-                .join(name),
-        );
+    /// Build route capabilities from one Gateway API response fixture shape.
+    fn route_capabilities_from_fixture(shape: &str) -> GatewayRouteCapabilities {
+        let gateway_classes = read_gateway_fixture(shape, "gatewayclasses.json")
+            .items
+            .iter()
+            .map(gateway_class_summary)
+            .collect::<Vec<_>>();
+        let gateways = read_gateway_fixture(shape, "gateways.json")
+            .items
+            .iter()
+            .map(gateway_summary)
+            .collect::<Vec<_>>();
+        let http_routes = read_gateway_fixture(shape, "httproutes.json")
+            .items
+            .iter()
+            .map(http_route_summary)
+            .collect::<Vec<_>>();
+
+        model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: Some(&gateway_classes),
+            gateways: Some(&gateways),
+            http_routes: Some(&http_routes),
+        })
+    }
+
+    /// Read one Gateway API fixture list.
+    fn read_gateway_fixture(shape: &str, name: &str) -> ObjectList<DynamicObject> {
+        let fixture_path =
+            kply_test::fixture_path(Path::new("k8s-responses").join(shape).join(name));
         let source = fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
             panic!(
                 "Gateway API fixture {} should be readable: {error}",

@@ -14,3 +14,7 @@ Current fixtures:
   Gateway, and HTTPRoute.
 - `gateway-api-supported/`: synthetic Gateway API responses with HTTP and HTTPS
   listeners plus existing HTTPRoutes that should model as route-capable.
+- `gateway-api-unsupported-missing-class/`: synthetic Gateway API responses
+  where Gateways exist but no GatewayClass resources are discoverable.
+- `gateway-api-unsupported-tcp-only/`: synthetic Gateway API responses where
+  discovered Gateways only expose TCP listeners.
