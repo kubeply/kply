@@ -454,6 +454,10 @@ mutation scope. The session resource apply boundary also checks the planned
 session policy before Kubernetes mutation starts, so read-only policies cannot
 create sandbox resources.
 
+Policy denials render as blocking results. JSON output includes both the
+human-readable error message and a `policy_violation` object that agents can
+inspect without parsing prose.
+
 Current CLI config precedence is:
 
 1. An explicit `--config <path>` is loaded with `load_config_path()` through

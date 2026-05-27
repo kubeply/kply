@@ -21,6 +21,14 @@ configuration, missing credentials, or rejected input.
 Internal errors use `3` only when Kply cannot map the failure to a documented
 user or infrastructure condition.
 
+## Policy Errors
+
+When `--json` is set, policy denials use `error.code: "policy"` and include a
+stable `error.policy_violation` object. Consumers can rely on
+`error.policy_violation.reason: "policy_denied"` and an
+`error.policy_violation.violations` list. The top-level `error.message` remains
+present for terminal agents that only need a human-readable explanation.
+
 ## Global Flags
 
 `--config <path>` accepts an explicit project configuration path. The canonical

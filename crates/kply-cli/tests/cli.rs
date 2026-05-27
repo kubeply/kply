@@ -876,6 +876,39 @@ fn rejects_session_create_apply_when_policy_is_read_only() {
 }
 
 #[test]
+fn rejects_session_create_apply_when_policy_is_read_only_json() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        POLICY_SESSION_CREATE_READ_ONLY_CONFIG,
+    );
+
+    let output = assert_kply_exit_code(
+        &[
+            "--json",
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "session",
+            "create",
+            "checkout",
+            "--apply",
+            "--route-strategy",
+            "none",
+        ],
+        EXIT_BLOCKING,
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "read-only JSON session create apply should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("session_create_apply_read_only_policy_json", value);
+}
+
+#[test]
 fn rejects_session_manifests_denied_by_policy() {
     let workspace = temp_workspace();
     let config_path = write_temp_file(&workspace, "kply.yaml", POLICY_SESSION_PLAN_DENY_CONFIG);

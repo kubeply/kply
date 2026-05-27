@@ -6,12 +6,12 @@ expression: value
   "error": {
     "code": "policy",
     "exit_code": 1,
-    "message": "no enabled policy allows this session plan: policy `warehouse-only` does not allow namespace `shop`",
+    "message": "policy does not allow session creation",
     "policy_violation": {
       "reason": "policy_denied",
       "violations": [
         {
-          "message": "no enabled policy allows this session plan: policy `warehouse-only` does not allow namespace `shop`"
+          "message": "policy does not allow session creation"
         }
       ]
     }
