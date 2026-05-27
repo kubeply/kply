@@ -124,6 +124,7 @@ expression: value
       "status": "passed"
     }
   ],
+  "cleanup_status": "required",
   "created_resources": [
     {
       "kind": "Deployment",

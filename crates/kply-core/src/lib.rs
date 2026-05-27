@@ -2359,6 +2359,7 @@ pub struct SessionReport {
     metadata: SessionReportMetadata,
     app_graph_summary: Option<SessionReportAppGraphSummary>,
     checks: Vec<SessionReportCheck>,
+    cleanup_status: SessionReportCleanupStatus,
     created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
     route_strategy: SessionReportRouteStrategy,
@@ -2379,6 +2380,11 @@ impl SessionReport {
             metadata,
             app_graph_summary: None,
             checks: Vec::new(),
+            cleanup_status: SessionReportCleanupStatus::from_parts(
+                status,
+                plan.planned_cleanup_steps(),
+                &[],
+            ),
             created_resources: Vec::new(),
             plan,
             route_strategy,
@@ -2411,12 +2417,23 @@ impl SessionReport {
         self.created_resources = created_resources.into_iter().collect();
         self.created_resources.sort_unstable();
         self.created_resources.dedup();
+        self.cleanup_status = SessionReportCleanupStatus::from_parts(
+            self.status,
+            self.plan.planned_cleanup_steps(),
+            &self.created_resources,
+        );
         self
     }
 
     /// Return a copy of this report with executed check results and evidence.
     pub fn with_checks(mut self, checks: impl IntoIterator<Item = SessionReportCheck>) -> Self {
         self.checks = deduplicate_report_checks_by_check(checks);
+        self
+    }
+
+    /// Return a copy of this report with an explicit cleanup status.
+    pub fn with_cleanup_status(mut self, cleanup_status: SessionReportCleanupStatus) -> Self {
+        self.cleanup_status = cleanup_status;
         self
     }
 
@@ -2433,6 +2450,11 @@ impl SessionReport {
     /// Borrow executed check results and evidence in deterministic order.
     pub fn checks(&self) -> &[SessionReportCheck] {
         &self.checks
+    }
+
+    /// Return whether session-owned resources still require cleanup.
+    pub const fn cleanup_status(&self) -> SessionReportCleanupStatus {
+        self.cleanup_status
     }
 
     /// Borrow resources created for the session in deterministic order.
@@ -2453,6 +2475,66 @@ impl SessionReport {
     /// Return the final report [`SessionStatus`].
     pub const fn status(&self) -> SessionStatus {
         self.status
+    }
+}
+
+/// Agent-facing cleanup status included in a [`SessionReport`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionReportCleanupStatus {
+    /// No session-owned resource cleanup is known to be required.
+    NotRequired,
+    /// Session-owned resources or planned cleanup steps still need cleanup.
+    Required,
+    /// Session-owned resources were cleaned up.
+    CleanedUp,
+    /// A cleanup attempt failed and needs operator attention.
+    Failed,
+}
+
+impl SessionReportCleanupStatus {
+    /// Derive a cleanup status from report status, planned cleanup, and created resources.
+    pub fn from_parts(
+        report_status: SessionStatus,
+        planned_cleanup_steps: &[PlannedCleanupStep],
+        created_resources: &[KubernetesResourceRef],
+    ) -> Self {
+        if report_status == SessionStatus::CleanedUp {
+            return Self::CleanedUp;
+        }
+
+        if planned_cleanup_steps.is_empty() && created_resources.is_empty() {
+            Self::NotRequired
+        } else {
+            Self::Required
+        }
+    }
+
+    /// Return every cleanup status in declaration order.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::NotRequired,
+            Self::Required,
+            Self::CleanedUp,
+            Self::Failed,
+        ]
+    }
+
+    /// Return the stable snake_case status name used in agent-readable output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::NotRequired => "not_required",
+            Self::Required => "required",
+            Self::CleanedUp => "cleaned_up",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl fmt::Display for SessionReportCleanupStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -2763,6 +2845,10 @@ impl<'de> Deserialize<'de> for SessionReport {
         let report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
         let report = report.with_checks(fields.checks);
         let report = report.with_created_resources(fields.created_resources);
+        let report = match fields.cleanup_status {
+            Some(cleanup_status) => report.with_cleanup_status(cleanup_status),
+            None => report,
+        };
         match fields.app_graph_summary {
             Some(app_graph_summary) => report
                 .with_app_graph_summary_value(app_graph_summary)
@@ -4357,6 +4443,8 @@ struct SessionReportFields {
     #[serde(default)]
     checks: Vec<SessionReportCheck>,
     #[serde(default)]
+    cleanup_status: Option<SessionReportCleanupStatus>,
+    #[serde(default)]
     created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
     #[serde(default)]
@@ -5419,13 +5507,13 @@ mod tests {
         SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
         SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportAppGraphSummary, SessionReportCheck, SessionReportError,
-        SessionReportMetadata, SessionReportRouteStrategy, SessionStatus, SessionTransitionError,
-        TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
-        UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
-        UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
-        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
-        WorkloadTokenError,
+        SessionReportAppGraphSummary, SessionReportCheck, SessionReportCleanupStatus,
+        SessionReportError, SessionReportMetadata, SessionReportRouteStrategy, SessionStatus,
+        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
+        UNSUPPORTED_FEATURE_NAME_MAX_LEN, UNSUPPORTED_FEATURE_REASON_MAX_LEN,
+        UnsupportedFeatureNameError, UnsupportedFeatureReasonError, UnsupportedFeatureWarning,
+        UnsupportedFeatureWarningError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
+        WorkloadRefError, WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -8059,6 +8147,10 @@ mod tests {
         );
         assert_eq!(report.app_graph_summary(), None);
         assert_eq!(report.checks(), []);
+        assert_eq!(
+            report.cleanup_status(),
+            SessionReportCleanupStatus::NotRequired
+        );
         assert_eq!(report.created_resources(), []);
         assert_eq!(report.route_strategy().strategy(), "none");
         assert_eq!(report.route_strategy().selector(), None);
@@ -8580,6 +8672,14 @@ mod tests {
             assert_eq!(report.metadata(), &SessionReportMetadata::from_plan(&plan));
             assert_eq!(report.app_graph_summary(), None);
             assert_eq!(report.checks(), []);
+            assert_eq!(
+                report.cleanup_status(),
+                if status == SessionStatus::CleanedUp {
+                    SessionReportCleanupStatus::CleanedUp
+                } else {
+                    SessionReportCleanupStatus::NotRequired
+                }
+            );
             assert_eq!(report.created_resources(), []);
             assert_eq!(
                 report.route_strategy(),
@@ -8645,6 +8745,10 @@ mod tests {
             .with_created_resources(created_resources);
 
         assert_eq!(report.created_resources(), test_created_resources());
+        assert_eq!(
+            report.cleanup_status(),
+            SessionReportCleanupStatus::Required
+        );
     }
 
     #[test]
@@ -8678,6 +8782,28 @@ mod tests {
                 MetadataEntry::new("available_replicas", "2").expect("evidence"),
                 MetadataEntry::new("ready_replicas", "2").expect("evidence"),
             ]
+        );
+    }
+
+    #[test]
+    /// Verify session reports expose derived and explicit cleanup status.
+    fn creates_session_report_with_cleanup_status() {
+        let cleanup_step =
+            PlannedCleanupStep::new("delete_service", "checkout/Service/session-123-service")
+                .expect("cleanup step");
+        let plan = test_session_plan().with_planned_cleanup_steps([cleanup_step]);
+        let report =
+            SessionReport::new(plan, SessionStatus::Ready).expect("session report should be valid");
+
+        assert_eq!(
+            report.cleanup_status(),
+            SessionReportCleanupStatus::Required
+        );
+        assert_eq!(
+            report
+                .with_cleanup_status(SessionReportCleanupStatus::Failed)
+                .cleanup_status(),
+            SessionReportCleanupStatus::Failed
         );
     }
 
@@ -9312,6 +9438,28 @@ mod tests {
         assert!(!CheckResultStatus::Warning.is_blocking());
         assert!(!CheckResultStatus::Skipped.is_blocking());
         assert!(!CheckResultStatus::Passed.is_blocking());
+    }
+
+    /// Verifies stable cleanup status names for session reports.
+    #[test]
+    fn renders_session_report_cleanup_statuses() {
+        assert_eq!(
+            SessionReportCleanupStatus::all(),
+            [
+                SessionReportCleanupStatus::NotRequired,
+                SessionReportCleanupStatus::Required,
+                SessionReportCleanupStatus::CleanedUp,
+                SessionReportCleanupStatus::Failed,
+            ]
+        );
+        assert_eq!(
+            SessionReportCleanupStatus::NotRequired.as_str(),
+            "not_required"
+        );
+        assert_eq!(SessionReportCleanupStatus::Required.as_str(), "required");
+        assert_eq!(SessionReportCleanupStatus::CleanedUp.as_str(), "cleaned_up");
+        assert_eq!(SessionReportCleanupStatus::Failed.as_str(), "failed");
+        assert_eq!(SessionReportCleanupStatus::Required.to_string(), "required");
     }
 
     /// Verifies the JSON contract for check result status values.
