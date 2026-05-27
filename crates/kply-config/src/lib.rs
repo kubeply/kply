@@ -316,6 +316,24 @@ pub enum ConfigValidationError {
         /// Policy field that failed validation.
         field: PolicyConfigField,
     },
+    /// A policy list entry is required but blank.
+    EmptyPolicyListEntry {
+        /// Zero-based policy index in the top-level policies list.
+        policy_index: usize,
+        /// Policy field that failed validation.
+        field: PolicyConfigField,
+        /// Zero-based entry index in the policy list field.
+        entry_index: usize,
+    },
+    /// A policy list contains the same value more than once.
+    DuplicatePolicyListEntry {
+        /// Zero-based policy index in the top-level policies list.
+        policy_index: usize,
+        /// Policy field that failed validation.
+        field: PolicyConfigField,
+        /// Duplicate list value.
+        value: String,
+    },
 }
 
 impl fmt::Display for ConfigValidationError {
@@ -332,6 +350,26 @@ impl fmt::Display for ConfigValidationError {
                 write!(
                     formatter,
                     "policies[{policy_index}].{field}: field is required"
+                )
+            }
+            Self::EmptyPolicyListEntry {
+                policy_index,
+                field,
+                entry_index,
+            } => {
+                write!(
+                    formatter,
+                    "policies[{policy_index}].{field}[{entry_index}]: field is required"
+                )
+            }
+            Self::DuplicatePolicyListEntry {
+                policy_index,
+                field,
+                value,
+            } => {
+                write!(
+                    formatter,
+                    "policies[{policy_index}].{field}: duplicate value `{value}`"
                 )
             }
         }
@@ -386,6 +424,8 @@ pub enum PolicyConfigField {
     Name,
     /// Policy `description` field.
     Description,
+    /// Policy `allowed_namespaces` field.
+    AllowedNamespaces,
 }
 
 impl PolicyConfigField {
@@ -394,6 +434,7 @@ impl PolicyConfigField {
         match self {
             Self::Name => "name",
             Self::Description => "description",
+            Self::AllowedNamespaces => "allowed_namespaces",
         }
     }
 }
@@ -730,6 +771,8 @@ pub struct PolicyConfig {
     enabled: bool,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    allowed_namespaces: Vec<String>,
 }
 
 impl PolicyConfig {
@@ -739,6 +782,7 @@ impl PolicyConfig {
             name: name.into(),
             enabled: default_policy_enabled(),
             description: None,
+            allowed_namespaces: Vec::new(),
         }
     }
 
@@ -769,6 +813,24 @@ impl PolicyConfig {
         self
     }
 
+    /// Borrow the Kubernetes namespaces this policy will allow.
+    pub fn allowed_namespaces(&self) -> &[String] {
+        &self.allowed_namespaces
+    }
+
+    /// Return a copy of this policy entry with allowed namespaces.
+    pub fn with_allowed_namespaces(
+        mut self,
+        allowed_namespaces: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.allowed_namespaces = allowed_namespaces
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        self
+    }
+
+    /// Return validation errors for this policy entry with top-level index context.
     fn validation_errors(&self, policy_index: usize) -> Vec<ConfigValidationError> {
         let mut errors = Vec::new();
 
@@ -788,14 +850,23 @@ impl PolicyConfig {
             );
         }
 
+        push_policy_list_entry_errors(
+            &mut errors,
+            policy_index,
+            PolicyConfigField::AllowedNamespaces,
+            self.allowed_namespaces(),
+        );
+
         errors
     }
 }
 
+/// Return the default enabled flag for policy entries.
 fn default_policy_enabled() -> bool {
     true
 }
 
+/// Push a field-scoped error when a scalar policy field is blank.
 fn push_empty_policy_field_error(
     errors: &mut Vec<ConfigValidationError>,
     policy_index: usize,
@@ -807,6 +878,32 @@ fn push_empty_policy_field_error(
             policy_index,
             field,
         });
+    }
+}
+
+/// Push field-scoped errors for blank or duplicate policy list values.
+fn push_policy_list_entry_errors(
+    errors: &mut Vec<ConfigValidationError>,
+    policy_index: usize,
+    field: PolicyConfigField,
+    values: &[String],
+) {
+    let mut seen = std::collections::BTreeSet::new();
+
+    for (entry_index, value) in values.iter().enumerate() {
+        if value.trim().is_empty() {
+            errors.push(ConfigValidationError::EmptyPolicyListEntry {
+                policy_index,
+                field,
+                entry_index,
+            });
+        } else if !seen.insert(value) {
+            errors.push(ConfigValidationError::DuplicatePolicyListEntry {
+                policy_index,
+                field,
+                value: value.clone(),
+            });
+        }
     }
 }
 
@@ -1499,6 +1596,10 @@ apps:
     fn reports_policy_field_names() {
         assert_eq!(PolicyConfigField::Name.as_str(), "name");
         assert_eq!(PolicyConfigField::Description.as_str(), "description");
+        assert_eq!(
+            PolicyConfigField::AllowedNamespaces.as_str(),
+            "allowed_namespaces"
+        );
     }
 
     #[test]
@@ -1511,6 +1612,10 @@ apps:
             config.description(),
             Some("Default sandbox boundaries for local agent sessions")
         );
+        assert_eq!(
+            config.allowed_namespaces(),
+            &["shop".to_string(), "kply-demo".to_string()]
+        );
     }
 
     #[test]
@@ -1520,6 +1625,7 @@ apps:
         assert_eq!(config.name(), "sandbox-defaults");
         assert!(config.enabled());
         assert_eq!(config.description(), None);
+        assert!(config.allowed_namespaces().is_empty());
     }
 
     #[test]
@@ -1529,13 +1635,15 @@ apps:
 version: 1
 policies:
   - name: sandbox-defaults
+    allowed_namespaces:
+      - shop
 "#,
         )
         .expect("valid policy config YAML");
 
         assert_eq!(
             config.policies().entries(),
-            &[PolicyConfig::new("sandbox-defaults")]
+            &[PolicyConfig::new("sandbox-defaults").with_allowed_namespaces(["shop"])]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -1579,6 +1687,44 @@ policies:
     }
 
     #[test]
+    fn rejects_empty_and_duplicate_policy_allowed_namespaces() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::new(vec![
+                PolicyConfig::new("sandbox-defaults")
+                    .with_allowed_namespaces(["shop", " ", "shop"]),
+            ]),
+        );
+
+        let errors = config
+            .validate()
+            .expect_err("invalid allowed namespaces should fail");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::EmptyPolicyListEntry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedNamespaces,
+                    entry_index: 1,
+                },
+                ConfigValidationError::DuplicatePolicyListEntry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedNamespaces,
+                    value: "shop".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "2 config validation errors; first error: policies[0].allowed_namespaces[1]: field is required"
+        );
+    }
+
+    #[test]
     fn serializes_policy_config_to_stable_json() {
         let value = serde_json::to_value(policy_config()).expect("policy should serialize");
 
@@ -1588,6 +1734,7 @@ policies:
                 "name": "sandbox-defaults",
                 "enabled": false,
                 "description": "Default sandbox boundaries for local agent sessions",
+                "allowed_namespaces": ["shop", "kply-demo"],
             })
         );
     }
@@ -1754,5 +1901,6 @@ policies:
         PolicyConfig::new("sandbox-defaults")
             .with_enabled(false)
             .with_description("Default sandbox boundaries for local agent sessions")
+            .with_allowed_namespaces(["shop", "kply-demo"])
     }
 }

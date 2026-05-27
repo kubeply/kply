@@ -379,6 +379,8 @@ evaluation:
 - `enabled`: optional boolean, defaulting to `true`, that lets teams keep a
   policy entry documented while disabling its future enforcement.
 - `description`: optional human-readable context for operators and agents.
+- `allowed_namespaces`: optional list of Kubernetes namespaces the policy will
+  allow once policy evaluation is wired into session planning and mutation.
 
 Application config entries define these fields:
 

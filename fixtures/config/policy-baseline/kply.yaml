@@ -6,3 +6,6 @@ policies:
   - name: sandbox-defaults
     enabled: true
     description: Default sandbox boundaries for local agent sessions.
+    allowed_namespaces:
+      - shop
+      - kply-demo
