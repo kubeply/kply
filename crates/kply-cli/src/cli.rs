@@ -152,6 +152,14 @@ pub enum RouteCommand {
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,
     },
+    /// Plan cleanup of temporary routing for one sandbox session.
+    Cleanup {
+        /// Session id to clean up.
+        session: String,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+    },
 }
 
 impl RouteCommand {
@@ -160,6 +168,7 @@ impl RouteCommand {
         match self {
             Self::Plan { .. } => "plan",
             Self::Apply { .. } => "apply",
+            Self::Cleanup { .. } => "cleanup",
         }
     }
 }
