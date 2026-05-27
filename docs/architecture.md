@@ -188,7 +188,8 @@ Current provisional pre-`1.0.0` required permission fields:
   resource, serialized in deterministic order.
 
 Gateway API routing permissions are documented in
-[gateway-api.md](gateway-api.md). Session plans currently include
+[gateway-api.md](gateway-api.md), which also defines what each route strategy
+can and cannot test. Session plans currently include
 `gateway.networking.k8s.io/httproutes` with `create`, `delete`, and `get` when
 temporary routes may be part of the sandbox session.
 
