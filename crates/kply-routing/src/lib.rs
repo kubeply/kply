@@ -36,6 +36,8 @@ pub struct RoutingCapabilityInput<'a> {
     pub gateway_api: GatewayApiDiscoveryInput<'a>,
     /// Ingress list when the API resource was discovered.
     pub ingresses: Option<&'a [IngressSummary]>,
+    /// Whether preview Service fallback checks are explicitly available.
+    pub preview_service_enabled: bool,
 }
 
 /// Detected routing capabilities across supported and fallback route strategies.
@@ -99,6 +101,8 @@ impl RouteStrategy {
 pub enum RoutingCapabilityLimitation {
     /// Gateway API did not expose enough resources for temporary HTTPRoute routing.
     GatewayApiUnavailable,
+    /// Gateway API is present but incomplete for temporary HTTPRoute routing.
+    GatewayApiPartial,
     /// Ingress objects were not available in the target namespace.
     IngressUnavailable,
     /// Ingress resources exist, but controller-specific route planning is future work.
@@ -112,6 +116,7 @@ impl RoutingCapabilityLimitation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::GatewayApiUnavailable => "gateway_api_unavailable",
+            Self::GatewayApiPartial => "gateway_api_partial",
             Self::IngressUnavailable => "ingress_unavailable",
             Self::IngressPlanningNotImplemented => "ingress_planning_not_implemented",
             Self::PreviewServiceBypassesEdgeRouting => "preview_service_bypasses_edge_routing",
@@ -523,15 +528,18 @@ pub fn model_gateway_route_capabilities(
 pub fn detect_routing_capabilities(
     input: RoutingCapabilityInput<'_>,
 ) -> RoutingCapabilityDetection {
+    let preview_service_available = detect_preview_service_available(&input);
     let gateway_api = model_gateway_route_capabilities(input.gateway_api);
     let ingress = detect_ingress_routes(input.ingresses);
-    let candidate_strategies = routing_candidate_strategies(&gateway_api, &ingress);
-    let limitations = routing_capability_limitations(&gateway_api, &ingress);
+    let candidate_strategies =
+        routing_candidate_strategies(&gateway_api, &ingress, preview_service_available);
+    let limitations =
+        routing_capability_limitations(&gateway_api, &ingress, preview_service_available);
 
     RoutingCapabilityDetection {
         gateway_api,
         ingress,
-        preview_service_available: true,
+        preview_service_available,
         candidate_strategies,
         limitations,
     }
@@ -951,6 +959,7 @@ fn detect_ingress_routes(ingresses: Option<&[IngressSummary]>) -> IngressRouteDe
 fn routing_candidate_strategies(
     gateway_api: &GatewayRouteCapabilities,
     ingress: &IngressRouteDetection,
+    preview_service_available: bool,
 ) -> Vec<RouteStrategy> {
     let mut strategies = Vec::new();
 
@@ -960,27 +969,43 @@ fn routing_candidate_strategies(
     if ingress.ingress_count > 0 {
         strategies.push(RouteStrategy::Ingress);
     }
-    strategies.push(RouteStrategy::PreviewService);
+    if preview_service_available {
+        strategies.push(RouteStrategy::PreviewService);
+    }
 
     strategies
+}
+
+/// Detect whether direct preview Service fallback checks are explicitly available.
+fn detect_preview_service_available(input: &RoutingCapabilityInput<'_>) -> bool {
+    input.preview_service_enabled
 }
 
 /// Return stable high-level routing capability limitation codes.
 fn routing_capability_limitations(
     gateway_api: &GatewayRouteCapabilities,
     ingress: &IngressRouteDetection,
+    preview_service_available: bool,
 ) -> Vec<RoutingCapabilityLimitation> {
     let mut limitations = Vec::new();
 
-    if !gateway_api.supports_temporary_http_routes {
-        limitations.push(RoutingCapabilityLimitation::GatewayApiUnavailable);
+    match gateway_api.status {
+        GatewayRouteCapabilityStatus::Supported => {}
+        GatewayRouteCapabilityStatus::Partial => {
+            limitations.push(RoutingCapabilityLimitation::GatewayApiPartial);
+        }
+        GatewayRouteCapabilityStatus::Unsupported => {
+            limitations.push(RoutingCapabilityLimitation::GatewayApiUnavailable);
+        }
     }
     if ingress.ingress_count == 0 {
         limitations.push(RoutingCapabilityLimitation::IngressUnavailable);
     } else {
         limitations.push(RoutingCapabilityLimitation::IngressPlanningNotImplemented);
     }
-    limitations.push(RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting);
+    if preview_service_available {
+        limitations.push(RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting);
+    }
 
     limitations
 }
@@ -1320,6 +1345,7 @@ mod tests {
                 http_routes: Some(&http_routes),
             },
             ingresses: Some(&ingresses),
+            preview_service_enabled: true,
         });
 
         assert_eq!(
@@ -1367,6 +1393,7 @@ mod tests {
                 http_routes: None,
             },
             ingresses: None,
+            preview_service_enabled: true,
         });
 
         assert_eq!(
@@ -1396,6 +1423,65 @@ mod tests {
                 RoutingCapabilityLimitation::IngressUnavailable,
                 RoutingCapabilityLimitation::PreviewServiceBypassesEdgeRouting,
             ]
+        );
+    }
+
+    #[test]
+    /// Does not advertise preview Service fallback unless explicitly enabled.
+    fn detects_routing_capabilities_without_preview_service_fallback() {
+        let detection = detect_routing_capabilities(RoutingCapabilityInput {
+            gateway_api: GatewayApiDiscoveryInput {
+                gateway_classes: None,
+                gateways: None,
+                http_routes: None,
+            },
+            ingresses: None,
+            preview_service_enabled: false,
+        });
+
+        assert!(!detection.preview_service_available);
+        assert_eq!(detection.candidate_strategies, Vec::<RouteStrategy>::new());
+        assert_eq!(
+            detection.limitations,
+            [
+                RoutingCapabilityLimitation::GatewayApiUnavailable,
+                RoutingCapabilityLimitation::IngressUnavailable,
+            ]
+        );
+    }
+
+    #[test]
+    /// Reports partial Gateway API limitations without labeling Gateway API unavailable.
+    fn detects_routing_capabilities_with_partial_gateway_api() {
+        let gateway_classes = vec![gateway_class("mesh", Some("example.com/controller"))];
+        let gateways = vec![gateway_with_protocol("shop", "mesh", "mesh", Some("TCP"))];
+        let http_routes: Vec<HttpRouteSummary> = Vec::new();
+
+        let detection = detect_routing_capabilities(RoutingCapabilityInput {
+            gateway_api: GatewayApiDiscoveryInput {
+                gateway_classes: Some(&gateway_classes),
+                gateways: Some(&gateways),
+                http_routes: Some(&http_routes),
+            },
+            ingresses: Some(&[]),
+            preview_service_enabled: false,
+        });
+
+        assert_eq!(
+            detection.gateway_api.status,
+            GatewayRouteCapabilityStatus::Partial
+        );
+        assert_eq!(detection.candidate_strategies, Vec::<RouteStrategy>::new());
+        assert_eq!(
+            detection.limitations,
+            [
+                RoutingCapabilityLimitation::GatewayApiPartial,
+                RoutingCapabilityLimitation::IngressUnavailable,
+            ]
+        );
+        assert_eq!(
+            RoutingCapabilityLimitation::GatewayApiPartial.as_str(),
+            "gateway_api_partial"
         );
     }
 

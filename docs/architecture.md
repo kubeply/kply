@@ -204,6 +204,8 @@ Current provisional pre-`1.0.0` routing capability detection fields:
 - `candidate_strategies`: deterministic list of route strategies with enough
   detected input to consider, currently `gateway_api`, `ingress`, and
   `preview_service`.
+  This list is informational only; consumers must evaluate `limitations` before
+  selecting a strategy as executable.
 - `limitations`: stable limitation codes explaining unavailable or incomplete
   routing paths.
 
