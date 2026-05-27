@@ -1,6 +1,6 @@
 //! CLI argument placeholders for the future Kply command surface.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Top-level placeholder CLI options.
@@ -148,6 +148,17 @@ pub enum ReportCommand {
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,
     },
+    /// Export the report for one sandbox session.
+    Export {
+        /// Session id to export.
+        session: String,
+        /// Namespace containing the Kply sandbox session.
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+        /// Report export format.
+        #[arg(long, value_enum, value_name = "FORMAT")]
+        format: ReportExportFormat,
+    },
 }
 
 impl ReportCommand {
@@ -155,8 +166,16 @@ impl ReportCommand {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Show { .. } => "show",
+            Self::Export { .. } => "export",
         }
     }
+}
+
+/// Supported session report export formats.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ReportExportFormat {
+    /// Export the report as JSON.
+    Json,
 }
 
 /// Temporary route commands.
