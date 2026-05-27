@@ -29,13 +29,226 @@ inputs:
     description: Path where the action will write the JSON output artifact.
     required: false
     default: kply-report.json
+  github-token:
+    description: GitHub token used to read Kply release metadata.
+    required: false
+
+outputs:
+  kply-path:
+    description: Absolute path to the installed kply binary.
+    value: ${{ steps.install.outputs.kply_path }}
+  kply-version:
+    description: Version string reported by the installed kply binary.
+    value: ${{ steps.install.outputs.kply_version }}
 
 runs:
   using: composite
   steps:
-    - name: Stop until action runtime is implemented
+    - name: Resolve Kply release asset
+      id: resolve
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        KPLY_RELEASE_REPOSITORY: kubeply/kply
       run: |
-        echo "::error::The Kply GitHub Action metadata is present, but binary download and execution are not implemented yet."
-        echo "::error::Use the kply CLI directly until the action runtime lands in the next roadmap subtasks."
-        exit 1
+        set -euo pipefail
+
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)
+            target="x86_64-unknown-linux-gnu"
+            ;;
+          Linux-ARM64)
+            target="aarch64-unknown-linux-gnu"
+            ;;
+          macOS-X64)
+            target="x86_64-apple-darwin"
+            ;;
+          macOS-ARM64)
+            target="aarch64-apple-darwin"
+            ;;
+          *)
+            echo "::error::Unsupported runner platform ${RUNNER_OS}-${RUNNER_ARCH}; use Linux or macOS x64/arm64."
+            exit 1
+            ;;
+        esac
+
+        if [[ "${INPUT_VERSION}" == "latest" ]]; then
+          release_api="https://api.github.com/repos/${KPLY_RELEASE_REPOSITORY}/releases/latest"
+        else
+          version="${INPUT_VERSION}"
+          if [[ "${version}" != v* ]]; then
+            version="v${version}"
+          fi
+          release_api="https://api.github.com/repos/${KPLY_RELEASE_REPOSITORY}/releases/tags/${version}"
+        fi
+
+        auth_args=()
+        if [[ -n "${INPUT_GITHUB_TOKEN}" ]]; then
+          auth_args=(-H "Authorization: Bearer ${INPUT_GITHUB_TOKEN}")
+        fi
+
+        release_json="${RUNNER_TEMP}/kply-release.json"
+        curl --fail --location --silent --show-error \
+          --connect-timeout 30 \
+          --max-time 60 \
+          --retry 3 \
+          --retry-delay 2 \
+          -H "Accept: application/vnd.github+json" \
+          "${auth_args[@]}" \
+          "${release_api}" > "${release_json}"
+
+        asset_info="$(python3 - "${release_json}" "${target}" <<'PY'
+        import json
+        import sys
+
+        release_path, target = sys.argv[1], sys.argv[2]
+        with open(release_path, encoding="utf-8") as handle:
+            release = json.load(handle)
+
+        supported_suffixes = (".tar.xz", ".tar.gz", ".tgz", ".zip")
+        checksum_suffixes = (".sha256", ".sha256sum")
+        assets_by_name = {
+            asset.get("name", ""): asset
+            for asset in release.get("assets", [])
+            if asset.get("name")
+        }
+
+        for asset in release.get("assets", []):
+            name = asset.get("name", "")
+            if target not in name:
+                continue
+            if name.endswith(checksum_suffixes + (".sig", ".pem", ".json")):
+                continue
+            if not name.endswith(supported_suffixes):
+                continue
+            url = asset.get("browser_download_url")
+            checksum_asset = None
+            for checksum_suffix in checksum_suffixes:
+                checksum_asset = assets_by_name.get(f"{name}{checksum_suffix}")
+                if checksum_asset is not None:
+                    break
+            checksum_url = checksum_asset.get("browser_download_url") if checksum_asset else None
+            if url and checksum_url:
+                print(f"{name}\n{url}\n{checksum_asset['name']}\n{checksum_url}")
+                sys.exit(0)
+
+        tag = release.get("tag_name", "<unknown>")
+        print(
+            f"no supported kply release asset with checksum found for target {target} in {tag}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+        PY
+        )"
+
+        archive_name="$(printf '%s\n' "${asset_info}" | sed -n '1p')"
+        archive_url="$(printf '%s\n' "${asset_info}" | sed -n '2p')"
+        checksum_name="$(printf '%s\n' "${asset_info}" | sed -n '3p')"
+        checksum_url="$(printf '%s\n' "${asset_info}" | sed -n '4p')"
+
+        echo "target=${target}" >> "${GITHUB_OUTPUT}"
+        echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
+        echo "archive_url=${archive_url}" >> "${GITHUB_OUTPUT}"
+        echo "checksum_name=${checksum_name}" >> "${GITHUB_OUTPUT}"
+        echo "checksum_url=${checksum_url}" >> "${GITHUB_OUTPUT}"
+
+    - name: Install Kply
+      id: install
+      shell: bash
+      env:
+        ARCHIVE_NAME: ${{ steps.resolve.outputs.archive_name }}
+        ARCHIVE_URL: ${{ steps.resolve.outputs.archive_url }}
+        CHECKSUM_NAME: ${{ steps.resolve.outputs.checksum_name }}
+        CHECKSUM_URL: ${{ steps.resolve.outputs.checksum_url }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+
+        install_dir="$(mktemp -d "${RUNNER_TEMP}/kply-bin.XXXXXX")"
+        archive_path="${install_dir}/${ARCHIVE_NAME}"
+        checksum_path="${install_dir}/${CHECKSUM_NAME}"
+
+        auth_args=()
+        if [[ -n "${INPUT_GITHUB_TOKEN}" ]]; then
+          auth_args=(-H "Authorization: Bearer ${INPUT_GITHUB_TOKEN}")
+        fi
+
+        curl --fail --location --silent --show-error \
+          --connect-timeout 30 \
+          --max-time 300 \
+          --retry 3 \
+          --retry-delay 2 \
+          "${auth_args[@]}" \
+          "${ARCHIVE_URL}" \
+          --output "${archive_path}"
+
+        curl --fail --location --silent --show-error \
+          --connect-timeout 30 \
+          --max-time 60 \
+          --retry 3 \
+          --retry-delay 2 \
+          "${auth_args[@]}" \
+          "${CHECKSUM_URL}" \
+          --output "${checksum_path}"
+
+        python3 - "${archive_path}" "${checksum_path}" <<'PY'
+        import hashlib
+        import re
+        import sys
+
+        archive_path, checksum_path = sys.argv[1], sys.argv[2]
+        with open(checksum_path, encoding="utf-8") as handle:
+            checksum_text = handle.read()
+
+        match = re.search(r"\b([0-9a-fA-F]{64})\b", checksum_text)
+        if match is None:
+            print("checksum file did not contain a SHA-256 digest", file=sys.stderr)
+            sys.exit(1)
+
+        expected = match.group(1).lower()
+        digest = hashlib.sha256()
+        with open(archive_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+
+        actual = digest.hexdigest()
+        if actual != expected:
+            print(
+                f"checksum verification failed: expected {expected}, got {actual}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        PY
+
+        case "${ARCHIVE_NAME}" in
+          *.tar.xz | *.tar.gz | *.tgz)
+            tar -xf "${archive_path}" -C "${install_dir}"
+            ;;
+          *.zip)
+            unzip -q "${archive_path}" -d "${install_dir}"
+            ;;
+          *)
+            echo "::error::Unsupported Kply archive format: ${ARCHIVE_NAME}"
+            exit 1
+            ;;
+        esac
+        rm -f "${archive_path}" "${checksum_path}"
+
+        kply_path="$(find "${install_dir}" -type f -name kply -perm -111 | head -n 1)"
+        if [[ -z "${kply_path}" ]]; then
+          kply_path="$(find "${install_dir}" -type f -name kply | head -n 1)"
+        fi
+        if [[ -z "${kply_path}" ]]; then
+          echo "::error::Downloaded Kply archive did not contain a kply binary."
+          exit 1
+        fi
+
+        chmod +x "${kply_path}"
+        kply_dir="$(dirname "${kply_path}")"
+        echo "${kply_dir}" >> "${GITHUB_PATH}"
+
+        kply_version="$("${kply_path}" --version)"
+        echo "kply_path=${kply_path}" >> "${GITHUB_OUTPUT}"
+        echo "kply_version=${kply_version}" >> "${GITHUB_OUTPUT}"
+        echo "Installed ${kply_version} at ${kply_path}"
