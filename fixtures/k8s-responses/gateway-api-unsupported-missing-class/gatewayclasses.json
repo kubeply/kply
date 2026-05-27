@@ -1,0 +1,8 @@
+{
+  "apiVersion": "gateway.networking.k8s.io/v1",
+  "kind": "GatewayClassList",
+  "metadata": {
+    "resourceVersion": "3001"
+  },
+  "items": []
+}

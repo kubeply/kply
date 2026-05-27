@@ -1,0 +1,27 @@
+{
+  "apiVersion": "gateway.networking.k8s.io/v1",
+  "kind": "GatewayList",
+  "metadata": {
+    "resourceVersion": "3102"
+  },
+  "items": [
+    {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "Gateway",
+      "metadata": {
+        "name": "mesh-gateway",
+        "namespace": "platform"
+      },
+      "spec": {
+        "gatewayClassName": "mesh",
+        "listeners": [
+          {
+            "name": "tcp",
+            "port": 15443,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    }
+  ]
+}
