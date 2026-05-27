@@ -39,7 +39,12 @@ jobs:
           ruby <<'RUBY'
           require "yaml"
 
-          action = YAML.load_file("action.yml")
+          action = YAML.safe_load(
+            File.read("action.yml"),
+            permitted_classes: [],
+            permitted_symbols: [],
+          )
+          raise "action.yml must parse to a mapping" unless action.is_a?(Hash)
 
           def require_field(value, message)
             raise message if value.nil? || value == ""
