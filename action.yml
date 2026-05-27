@@ -190,6 +190,7 @@ runs:
         ARCHIVE_URL: ${{ steps.resolve.outputs.archive_url }}
         CHECKSUM_NAME: ${{ steps.resolve.outputs.checksum_name }}
         CHECKSUM_URL: ${{ steps.resolve.outputs.checksum_url }}
+        INPUT_VERSION: ${{ inputs.version }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
@@ -278,6 +279,20 @@ runs:
         echo "${kply_dir}" >> "${GITHUB_PATH}"
 
         kply_version="$("${kply_path}" --version)"
+        if [[ "${INPUT_VERSION}" != "latest" ]]; then
+          expected_version="${INPUT_VERSION#v}"
+          if [[ "${kply_version}" =~ (v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?) ]]; then
+            installed_version="${BASH_REMATCH[1]#v}"
+          else
+            echo "::error::Unable to parse Kply version from: ${kply_version}"
+            exit 1
+          fi
+          if [[ "${installed_version}" != "${expected_version}" ]]; then
+            echo "::error::Requested Kply ${INPUT_VERSION}, but installed ${kply_version}."
+            exit 1
+          fi
+        fi
+
         echo "kply_path=${kply_path}" >> "${GITHUB_OUTPUT}"
         echo "kply_version=${kply_version}" >> "${GITHUB_OUTPUT}"
         echo "Installed ${kply_version} at ${kply_path}"
