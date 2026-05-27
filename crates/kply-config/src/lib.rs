@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
 const DEFAULT_WORKLOAD_KIND: &str = "Deployment";
+const POLICY_IMAGE_REGISTRY_MAX_LEN: usize = 253;
+const POLICY_IMAGE_REGISTRY_LABEL_MAX_LEN: usize = 63;
 const POLICY_DURATION_MAX_LEN: usize = 32;
 
 /// Canonical Kply project configuration filename.
@@ -344,6 +346,17 @@ pub enum ConfigValidationError {
         /// Duration validation failure.
         reason: PolicyDurationError,
     },
+    /// A policy image registry allowlist value is invalid.
+    InvalidPolicyImageRegistry {
+        /// Zero-based policy index in the top-level policies list.
+        policy_index: usize,
+        /// Policy field that failed validation.
+        field: PolicyConfigField,
+        /// Registry value that failed validation.
+        value: String,
+        /// Registry validation failure.
+        reason: PolicyImageRegistryError,
+    },
 }
 
 impl fmt::Display for ConfigValidationError {
@@ -389,6 +402,17 @@ impl fmt::Display for ConfigValidationError {
             } => {
                 write!(formatter, "policies[{policy_index}].{field}: {reason}")
             }
+            Self::InvalidPolicyImageRegistry {
+                policy_index,
+                field,
+                value,
+                reason,
+            } => {
+                write!(
+                    formatter,
+                    "policies[{policy_index}].{field}: invalid value `{value}`: {reason}"
+                )
+            }
         }
     }
 }
@@ -432,6 +456,51 @@ impl fmt::Display for PolicyDurationError {
 }
 
 impl error::Error for PolicyDurationError {}
+
+/// Error returned when a policy image registry value is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyImageRegistryError {
+    /// Registry values cannot exceed the maximum length.
+    TooLong { max_len: usize },
+    /// Registry values must start and end with an ASCII lowercase letter or digit.
+    InvalidBoundary,
+    /// Registry host values cannot contain empty labels.
+    EmptyLabel,
+    /// Registry host labels cannot exceed the maximum length.
+    LabelTooLong { max_len: usize },
+    /// Registry values only allow lowercase host characters and an optional port.
+    InvalidCharacter { character: char },
+    /// Registry values must use a numeric non-zero port when a port is present.
+    InvalidPort,
+}
+
+impl fmt::Display for PolicyImageRegistryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLong { max_len } => {
+                write!(formatter, "registry cannot exceed {max_len} characters")
+            }
+            Self::InvalidBoundary => formatter
+                .write_str("registry must start and end with a lowercase ASCII letter or digit"),
+            Self::EmptyLabel => formatter.write_str("registry labels cannot be empty"),
+            Self::LabelTooLong { max_len } => {
+                write!(
+                    formatter,
+                    "registry labels cannot exceed {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "registry contains invalid character `{character}`"
+                )
+            }
+            Self::InvalidPort => formatter.write_str("registry port must be a non-zero number"),
+        }
+    }
+}
+
+impl error::Error for PolicyImageRegistryError {}
 
 /// Field name for an app config validation error.
 #[non_exhaustive]
@@ -483,6 +552,8 @@ pub enum PolicyConfigField {
     AllowedNamespaces,
     /// Policy `allowed_workload_kinds` field.
     AllowedWorkloadKinds,
+    /// Policy `allowed_image_registries` field.
+    AllowedImageRegistries,
     /// Policy `allowed_route_strategies` field.
     AllowedRouteStrategies,
     /// Policy `max_session_ttl` field.
@@ -497,6 +568,7 @@ impl PolicyConfigField {
             Self::Description => "description",
             Self::AllowedNamespaces => "allowed_namespaces",
             Self::AllowedWorkloadKinds => "allowed_workload_kinds",
+            Self::AllowedImageRegistries => "allowed_image_registries",
             Self::AllowedRouteStrategies => "allowed_route_strategies",
             Self::MaxSessionTtl => "max_session_ttl",
         }
@@ -840,6 +912,8 @@ pub struct PolicyConfig {
     #[serde(default)]
     allowed_workload_kinds: Vec<String>,
     #[serde(default)]
+    allowed_image_registries: Vec<String>,
+    #[serde(default)]
     allowed_route_strategies: Vec<RouteStrategy>,
     #[serde(default)]
     max_session_ttl: Option<String>,
@@ -854,6 +928,7 @@ impl PolicyConfig {
             description: None,
             allowed_namespaces: Vec::new(),
             allowed_workload_kinds: Vec::new(),
+            allowed_image_registries: Vec::new(),
             allowed_route_strategies: Vec::new(),
             max_session_ttl: None,
         }
@@ -920,6 +995,23 @@ impl PolicyConfig {
         self
     }
 
+    /// Borrow the image registries this policy will allow.
+    pub fn allowed_image_registries(&self) -> &[String] {
+        &self.allowed_image_registries
+    }
+
+    /// Return a copy of this policy entry with allowed image registries.
+    pub fn with_allowed_image_registries(
+        mut self,
+        allowed_image_registries: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.allowed_image_registries = allowed_image_registries
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        self
+    }
+
     /// Borrow the route strategies this policy will allow.
     pub fn allowed_route_strategies(&self) -> &[RouteStrategy] {
         &self.allowed_route_strategies
@@ -976,6 +1068,17 @@ impl PolicyConfig {
             policy_index,
             PolicyConfigField::AllowedWorkloadKinds,
             self.allowed_workload_kinds(),
+        );
+        push_policy_list_entry_errors(
+            &mut errors,
+            policy_index,
+            PolicyConfigField::AllowedImageRegistries,
+            self.allowed_image_registries(),
+        );
+        push_policy_image_registry_errors(
+            &mut errors,
+            policy_index,
+            self.allowed_image_registries(),
         );
         push_policy_route_strategy_errors(
             &mut errors,
@@ -1061,6 +1164,29 @@ fn push_policy_route_strategy_errors(
     }
 }
 
+/// Push field-scoped errors for invalid policy image registries.
+fn push_policy_image_registry_errors(
+    errors: &mut Vec<ConfigValidationError>,
+    policy_index: usize,
+    values: &[String],
+) {
+    for value in values {
+        let normalized_value = value.trim();
+        if normalized_value.is_empty() {
+            continue;
+        }
+
+        if let Err(reason) = validate_policy_image_registry(normalized_value) {
+            errors.push(ConfigValidationError::InvalidPolicyImageRegistry {
+                policy_index,
+                field: PolicyConfigField::AllowedImageRegistries,
+                value: normalized_value.to_owned(),
+                reason,
+            });
+        }
+    }
+}
+
 /// Push a field-scoped error when a policy duration is invalid.
 fn push_policy_duration_error(
     errors: &mut Vec<ConfigValidationError>,
@@ -1104,6 +1230,95 @@ fn validate_policy_duration(value: &str) -> Result<(), PolicyDurationError> {
     }
 
     Ok(())
+}
+
+/// Validate image registry host values with an optional numeric port.
+fn validate_policy_image_registry(value: &str) -> Result<(), PolicyImageRegistryError> {
+    if value.len() > POLICY_IMAGE_REGISTRY_MAX_LEN {
+        return Err(PolicyImageRegistryError::TooLong {
+            max_len: POLICY_IMAGE_REGISTRY_MAX_LEN,
+        });
+    }
+
+    if let Some(character) = value
+        .chars()
+        .find(|character| !is_policy_image_registry_character(*character))
+    {
+        return Err(PolicyImageRegistryError::InvalidCharacter { character });
+    }
+
+    let (host, port) = match value.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (value, None),
+    };
+
+    if let Some(port) = port
+        && (port.is_empty()
+            || !port.chars().all(|character| character.is_ascii_digit())
+            || port.trim_start_matches('0').is_empty())
+    {
+        return Err(PolicyImageRegistryError::InvalidPort);
+    }
+
+    if host.contains(':') {
+        return Err(PolicyImageRegistryError::InvalidCharacter { character: ':' });
+    }
+
+    if host.is_empty() {
+        return Err(PolicyImageRegistryError::InvalidBoundary);
+    }
+
+    let mut characters = host.chars();
+    let first_character = characters
+        .next()
+        .ok_or(PolicyImageRegistryError::InvalidBoundary)?;
+    let last_character = characters.next_back().unwrap_or(first_character);
+
+    if !is_policy_image_registry_boundary(first_character)
+        || !is_policy_image_registry_boundary(last_character)
+    {
+        return Err(PolicyImageRegistryError::InvalidBoundary);
+    }
+
+    for label in host.split('.') {
+        if label.is_empty() {
+            return Err(PolicyImageRegistryError::EmptyLabel);
+        }
+
+        if label.len() > POLICY_IMAGE_REGISTRY_LABEL_MAX_LEN {
+            return Err(PolicyImageRegistryError::LabelTooLong {
+                max_len: POLICY_IMAGE_REGISTRY_LABEL_MAX_LEN,
+            });
+        }
+
+        let mut label_characters = label.chars();
+        let label_first_character = label_characters
+            .next()
+            .ok_or(PolicyImageRegistryError::EmptyLabel)?;
+        let label_last_character = label_characters
+            .next_back()
+            .unwrap_or(label_first_character);
+
+        if !is_policy_image_registry_boundary(label_first_character)
+            || !is_policy_image_registry_boundary(label_last_character)
+        {
+            return Err(PolicyImageRegistryError::InvalidBoundary);
+        }
+    }
+
+    Ok(())
+}
+
+/// Return true for characters allowed in policy image registry values.
+fn is_policy_image_registry_character(character: char) -> bool {
+    character.is_ascii_lowercase()
+        || character.is_ascii_digit()
+        || matches!(character, '-' | '.' | ':')
+}
+
+/// Return true for policy image registry label boundary characters.
+fn is_policy_image_registry_boundary(character: char) -> bool {
+    character.is_ascii_lowercase() || character.is_ascii_digit()
 }
 
 /// Load a Kply project configuration file from disk.
@@ -1194,8 +1409,8 @@ mod tests {
         AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
         CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
         ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig,
-        PolicyConfigField, PolicyConfigs, PolicyDurationError, RouteStrategy, RoutingConfig,
-        discover_config_path_from, load_config_path,
+        PolicyConfigField, PolicyConfigs, PolicyDurationError, PolicyImageRegistryError,
+        RouteStrategy, RoutingConfig, discover_config_path_from, load_config_path,
     };
     use std::env;
     use std::fs;
@@ -1804,6 +2019,10 @@ apps:
             "allowed_workload_kinds"
         );
         assert_eq!(
+            PolicyConfigField::AllowedImageRegistries.as_str(),
+            "allowed_image_registries"
+        );
+        assert_eq!(
             PolicyConfigField::AllowedRouteStrategies.as_str(),
             "allowed_route_strategies"
         );
@@ -1829,6 +2048,13 @@ apps:
             &["Deployment".to_string(), "StatefulSet".to_string()]
         );
         assert_eq!(
+            config.allowed_image_registries(),
+            &[
+                "registry.example.com".to_string(),
+                "localhost:5000".to_string()
+            ]
+        );
+        assert_eq!(
             config.allowed_route_strategies(),
             &[RouteStrategy::Header, RouteStrategy::Preview]
         );
@@ -1844,6 +2070,7 @@ apps:
         assert_eq!(config.description(), None);
         assert!(config.allowed_namespaces().is_empty());
         assert!(config.allowed_workload_kinds().is_empty());
+        assert!(config.allowed_image_registries().is_empty());
         assert!(config.allowed_route_strategies().is_empty());
         assert_eq!(config.max_session_ttl(), None);
     }
@@ -1859,6 +2086,9 @@ policies:
       - shop
     allowed_workload_kinds:
       - Deployment
+    allowed_image_registries:
+      - registry.example.com
+      - localhost:5000
     allowed_route_strategies:
       - header
     max_session_ttl: 30m
@@ -1871,6 +2101,7 @@ policies:
             &[PolicyConfig::new("sandbox-defaults")
                 .with_allowed_namespaces(["shop"])
                 .with_allowed_workload_kinds(["Deployment"])
+                .with_allowed_image_registries(["registry.example.com", "localhost:5000"])
                 .with_allowed_route_strategies([RouteStrategy::Header])
                 .with_max_session_ttl("30m")]
         );
@@ -1995,6 +2226,68 @@ policies:
     }
 
     #[test]
+    fn rejects_invalid_policy_allowed_image_registries() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::new(vec![
+                PolicyConfig::new("sandbox-defaults").with_allowed_image_registries([
+                    "registry.example.com",
+                    " ",
+                    " registry.example.com ",
+                    "REGISTRY.example.com",
+                    "localhost:",
+                    "registry.example.com/team",
+                ]),
+            ]),
+        );
+
+        let errors = config
+            .validate()
+            .expect_err("invalid allowed image registries should fail");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::EmptyPolicyListEntry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedImageRegistries,
+                    entry_index: 1,
+                },
+                ConfigValidationError::DuplicatePolicyListEntry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedImageRegistries,
+                    value: "registry.example.com".to_string(),
+                },
+                ConfigValidationError::InvalidPolicyImageRegistry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedImageRegistries,
+                    value: "REGISTRY.example.com".to_string(),
+                    reason: PolicyImageRegistryError::InvalidCharacter { character: 'R' },
+                },
+                ConfigValidationError::InvalidPolicyImageRegistry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedImageRegistries,
+                    value: "localhost:".to_string(),
+                    reason: PolicyImageRegistryError::InvalidPort,
+                },
+                ConfigValidationError::InvalidPolicyImageRegistry {
+                    policy_index: 0,
+                    field: PolicyConfigField::AllowedImageRegistries,
+                    value: "registry.example.com/team".to_string(),
+                    reason: PolicyImageRegistryError::InvalidCharacter { character: '/' },
+                },
+            ]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "5 config validation errors; first error: policies[0].allowed_image_registries[1]: field is required"
+        );
+    }
+
+    #[test]
     fn rejects_duplicate_policy_allowed_route_strategies() {
         let config = KplyConfig::new(
             ConfigVersion::CURRENT,
@@ -2076,6 +2369,7 @@ policies:
                 "description": "Default sandbox boundaries for local agent sessions",
                 "allowed_namespaces": ["shop", "kply-demo"],
                 "allowed_workload_kinds": ["Deployment", "StatefulSet"],
+                "allowed_image_registries": ["registry.example.com", "localhost:5000"],
                 "allowed_route_strategies": ["header", "preview"],
                 "max_session_ttl": "2h",
             })
@@ -2246,6 +2540,7 @@ policies:
             .with_description("Default sandbox boundaries for local agent sessions")
             .with_allowed_namespaces(["shop", "kply-demo"])
             .with_allowed_workload_kinds(["Deployment", "StatefulSet"])
+            .with_allowed_image_registries(["registry.example.com", "localhost:5000"])
             .with_allowed_route_strategies([RouteStrategy::Header, RouteStrategy::Preview])
             .with_max_session_ttl("2h")
     }

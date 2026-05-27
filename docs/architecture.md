@@ -384,6 +384,9 @@ evaluation:
 - `allowed_workload_kinds`: optional list of Kubernetes workload kinds the
   policy will allow once policy evaluation is wired into session planning and
   mutation.
+- `allowed_image_registries`: optional list of image registry host values such
+  as `registry.example.com` or `localhost:5000` the policy will allow once
+  policy evaluation is wired into session planning and mutation.
 - `allowed_route_strategies`: optional list of route strategies the policy will
   allow once policy evaluation is wired into route planning and mutation.
 - `max_session_ttl`: optional compact duration such as `30m` or `2h` that caps
@@ -409,9 +412,10 @@ Application config entries define these fields:
 Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and
 required app fields, plus policy scalar fields and policy lists such as
-`allowed_namespaces`, `allowed_workload_kinds`, and
+`allowed_namespaces`, `allowed_workload_kinds`, `allowed_image_registries`, and
 `allowed_route_strategies`, plus compact policy durations such as
-`max_session_ttl`.
+`max_session_ttl`. Image registry allowlists accept lowercase host values with
+optional non-zero ports, not full image references.
 
 Resolved config JSON serializes the top-level model with `apps`, `checks`, and
 `policies` as arrays, `routing` as an object, `version` as a number, and route
