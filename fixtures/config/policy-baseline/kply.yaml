@@ -20,3 +20,4 @@ policies:
       - preview
     max_session_ttl: 2h
     mutation_mode: sandbox-only
+    secret_handling: metadata-only
