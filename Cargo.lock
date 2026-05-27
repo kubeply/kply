@@ -663,6 +663,8 @@ version = "0.1.0"
 dependencies = [
  "kply-core",
  "kply-k8s",
+ "kply-test",
+ "kube",
  "serde",
  "serde_json",
 ]

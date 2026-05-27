@@ -12,3 +12,5 @@ Current fixtures:
 - `read-only-app/`: synthetic shop namespace responses for read-only app
   discovery covering Deployments, Services, Pods, Ingress, GatewayClass,
   Gateway, and HTTPRoute.
+- `gateway-api-supported/`: synthetic Gateway API responses with HTTP and HTTPS
+  listeners plus existing HTTPRoutes that should model as route-capable.

@@ -842,6 +842,8 @@ fn qualified_resource_name(namespace: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
     use super::{
         GatewayApiDiscoveryInput, GatewayApiResourceDetection, GatewayApiResourceStatus,
         GatewayHttpRouteManifestError, GatewayHttpRouteManifestInput, GatewayRouteCapabilities,
@@ -852,7 +854,11 @@ mod tests {
         model_gateway_route_capabilities,
     };
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
-    use kply_k8s::{GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary};
+    use kply_k8s::{
+        GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary,
+        gateway_class_summary, gateway_summary, http_route_summary,
+    };
+    use kube::{api::ObjectList, core::DynamicObject};
     use serde_json::json;
 
     #[test]
@@ -1066,6 +1072,50 @@ mod tests {
         assert_eq!(
             capabilities.http_compatible_gateway_names,
             ["shop/public", "shop/secure"]
+        );
+        assert_eq!(capabilities.limitations, Vec::new());
+    }
+
+    #[test]
+    /// Models supported Gateway API route capabilities from fixture shapes.
+    fn models_supported_gateway_api_fixture_shapes() {
+        let gateway_classes = read_gateway_fixture("gatewayclasses.json")
+            .items
+            .iter()
+            .map(gateway_class_summary)
+            .collect::<Vec<_>>();
+        let gateways = read_gateway_fixture("gateways.json")
+            .items
+            .iter()
+            .map(gateway_summary)
+            .collect::<Vec<_>>();
+        let http_routes = read_gateway_fixture("httproutes.json")
+            .items
+            .iter()
+            .map(http_route_summary)
+            .collect::<Vec<_>>();
+
+        let capabilities = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: Some(&gateway_classes),
+            gateways: Some(&gateways),
+            http_routes: Some(&http_routes),
+        });
+
+        assert_eq!(capabilities.status, GatewayRouteCapabilityStatus::Supported);
+        assert!(capabilities.supports_temporary_http_routes);
+        assert!(capabilities.supports_header_based_routing);
+        assert!(capabilities.supports_host_based_routing);
+        assert_eq!(capabilities.resources.gateway_class_count, 2);
+        assert_eq!(capabilities.resources.gateway_count, 2);
+        assert_eq!(capabilities.resources.http_route_count, 2);
+        assert_eq!(
+            capabilities.http_compatible_gateway_names,
+            ["platform/shared-gateway", "shop/public-gateway"]
+        );
+        assert_eq!(capabilities.listener_protocols, ["HTTP", "HTTPS"]);
+        assert_eq!(
+            capabilities.resources.http_route_names,
+            ["shop/checkout-public", "shop/checkout-sandbox-header"]
         );
         assert_eq!(capabilities.limitations, Vec::new());
     }
@@ -1695,6 +1745,28 @@ mod tests {
                 protocol: protocol.map(ToOwned::to_owned),
             }],
         }
+    }
+
+    /// Read one supported Gateway API fixture list.
+    fn read_gateway_fixture(name: &str) -> ObjectList<DynamicObject> {
+        let fixture_path = kply_test::fixture_path(
+            Path::new("k8s-responses")
+                .join("gateway-api-supported")
+                .join(name),
+        );
+        let source = fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
+            panic!(
+                "Gateway API fixture {} should be readable: {error}",
+                fixture_path.display()
+            )
+        });
+
+        serde_json::from_str(&source).unwrap_or_else(|error| {
+            panic!(
+                "Gateway API fixture {} should deserialize: {error}",
+                fixture_path.display()
+            )
+        })
     }
 
     /// Build a Kubernetes resource fixture.

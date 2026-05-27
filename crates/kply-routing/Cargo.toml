@@ -12,4 +12,6 @@ kply-k8s.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+kply-test.workspace = true
+kube.workspace = true
 serde_json.workspace = true
