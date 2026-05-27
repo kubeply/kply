@@ -1881,7 +1881,14 @@ fn rejects_invalid_route_plan_session_id_json() {
 #[test]
 fn prints_route_apply_text() {
     let output = kply_cmd()
-        .args(["route", "apply", "checkout-plan", "--namespace", "shop"])
+        .args([
+            "route",
+            "apply",
+            "checkout-plan",
+            "--namespace",
+            "shop",
+            "--confirm-route-mutation",
+        ])
         .assert()
         .success()
         .get_output()
@@ -1901,6 +1908,7 @@ fn prints_route_apply_json() {
             "checkout-plan",
             "--namespace",
             "shop",
+            "--confirm-route-mutation",
             "--json",
         ])
         .assert()
@@ -1917,10 +1925,44 @@ fn prints_route_apply_json() {
 #[test]
 fn suppresses_route_apply_text_when_quiet() {
     kply_cmd()
-        .args(["route", "apply", "checkout-plan", "--quiet"])
+        .args([
+            "route",
+            "apply",
+            "checkout-plan",
+            "--quiet",
+            "--confirm-route-mutation",
+        ])
         .assert()
         .success()
         .stdout("");
+}
+
+#[test]
+fn rejects_route_apply_without_confirmation() {
+    let output = assert_kply_exit_code(&["route", "apply", "checkout-plan"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "unconfirmed route apply should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!(
+        "route_apply_missing_confirmation",
+        normalize_output(&stderr)
+    );
+}
+
+#[test]
+fn rejects_route_apply_without_confirmation_json() {
+    let output = assert_kply_exit_code(&["route", "apply", "checkout-plan", "--json"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "unconfirmed route apply JSON should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("route_apply_missing_confirmation_json", value);
 }
 
 #[test]
@@ -3321,9 +3363,11 @@ fn covers_every_route_command() {
             RouteCommand::Apply {
                 session: String::new(),
                 namespace: None,
+                confirm_route_mutation: true,
             }
             .name(),
             "checkout-plan",
+            "--confirm-route-mutation",
         ])
         .assert()
         .success();
