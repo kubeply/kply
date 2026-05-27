@@ -2358,6 +2358,7 @@ impl<'de> Deserialize<'de> for SessionPlan {
 pub struct SessionReport {
     metadata: SessionReportMetadata,
     app_graph_summary: Option<SessionReportAppGraphSummary>,
+    created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
     status: SessionStatus,
 }
@@ -2374,6 +2375,7 @@ impl SessionReport {
         Ok(Self {
             metadata,
             app_graph_summary: None,
+            created_resources: Vec::new(),
             plan,
             status,
         })
@@ -2396,6 +2398,17 @@ impl SessionReport {
         self.with_app_graph_summary_value(SessionReportAppGraphSummary::from_app_graph(app_graph))
     }
 
+    /// Return a copy of this report with resources created for the session.
+    pub fn with_created_resources(
+        mut self,
+        created_resources: impl IntoIterator<Item = KubernetesResourceRef>,
+    ) -> Self {
+        self.created_resources = created_resources.into_iter().collect();
+        self.created_resources.sort_unstable();
+        self.created_resources.dedup();
+        self
+    }
+
     /// Borrow the top-level [`SessionReportMetadata`].
     pub fn metadata(&self) -> &SessionReportMetadata {
         &self.metadata
@@ -2404,6 +2417,11 @@ impl SessionReport {
     /// Borrow the optional summarized [`AppGraph`].
     pub fn app_graph_summary(&self) -> Option<&SessionReportAppGraphSummary> {
         self.app_graph_summary.as_ref()
+    }
+
+    /// Borrow resources created for the session in deterministic order.
+    pub fn created_resources(&self) -> &[KubernetesResourceRef] {
+        &self.created_resources
     }
 
     /// Borrow the original [`SessionPlan`].
@@ -2619,6 +2637,7 @@ impl<'de> Deserialize<'de> for SessionReport {
         }
 
         let report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
+        let report = report.with_created_resources(fields.created_resources);
         match fields.app_graph_summary {
             Some(app_graph_summary) => report
                 .with_app_graph_summary_value(app_graph_summary)
@@ -4210,6 +4229,8 @@ struct SessionReportFields {
     metadata: SessionReportMetadata,
     #[serde(default)]
     app_graph_summary: Option<SessionReportAppGraphSummary>,
+    #[serde(default)]
+    created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
     status: SessionStatus,
 }
@@ -5266,6 +5287,17 @@ mod tests {
             ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
             SessionPolicy::sandbox(),
         )
+    }
+
+    fn test_created_resources() -> Vec<KubernetesResourceRef> {
+        vec![
+            KubernetesResourceRef::new("checkout", "Deployment", "session-123-workload")
+                .expect("created workload"),
+            KubernetesResourceRef::new("checkout", "HTTPRoute", "session-123-route")
+                .expect("created route"),
+            KubernetesResourceRef::new("checkout", "Service", "session-123-service")
+                .expect("created service"),
+        ]
     }
 
     fn test_app_graph() -> AppGraph {
@@ -7770,7 +7802,8 @@ mod tests {
         let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
             .expect("session report")
             .with_app_graph_summary(&test_app_graph())
-            .expect("app graph summary");
+            .expect("app graph summary")
+            .with_created_resources(test_created_resources());
         let value = serde_json::to_value(&report).expect("session report should serialize");
         let deserialized: SessionReport =
             serde_json::from_value(value).expect("session report should deserialize");
@@ -7783,7 +7816,8 @@ mod tests {
         let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
             .expect("session report")
             .with_app_graph_summary(&test_app_graph())
-            .expect("app graph summary");
+            .expect("app graph summary")
+            .with_created_resources(test_created_resources());
         let value = serde_json::to_value(report).expect("session report should serialize");
 
         insta::assert_json_snapshot!("session_report_json_contract", value);
@@ -7833,6 +7867,7 @@ mod tests {
                 .expect("session report should be valid")
         );
         assert_eq!(report.app_graph_summary(), None);
+        assert_eq!(report.created_resources(), []);
     }
 
     #[test]
@@ -8303,9 +8338,21 @@ mod tests {
 
             assert_eq!(report.metadata(), &SessionReportMetadata::from_plan(&plan));
             assert_eq!(report.app_graph_summary(), None);
+            assert_eq!(report.created_resources(), []);
             assert_eq!(report.plan(), &plan);
             assert_eq!(report.status(), status);
         }
+    }
+
+    #[test]
+    fn creates_session_report_with_created_resources() {
+        let mut created_resources = test_created_resources();
+        created_resources.push(created_resources[0].clone());
+        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+            .expect("session report should be valid")
+            .with_created_resources(created_resources);
+
+        assert_eq!(report.created_resources(), test_created_resources());
     }
 
     #[test]
