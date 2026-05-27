@@ -2360,6 +2360,7 @@ pub struct SessionReport {
     app_graph_summary: Option<SessionReportAppGraphSummary>,
     created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
+    route_strategy: SessionReportRouteStrategy,
     status: SessionStatus,
 }
 
@@ -2371,12 +2372,14 @@ impl SessionReport {
         }
 
         let metadata = SessionReportMetadata::from_plan(&plan);
+        let route_strategy = SessionReportRouteStrategy::from_plan(&plan);
 
         Ok(Self {
             metadata,
             app_graph_summary: None,
             created_resources: Vec::new(),
             plan,
+            route_strategy,
             status,
         })
     }
@@ -2427,6 +2430,11 @@ impl SessionReport {
     /// Borrow the original [`SessionPlan`].
     pub fn plan(&self) -> &SessionPlan {
         &self.plan
+    }
+
+    /// Borrow the route strategy summary derived from the session plan.
+    pub fn route_strategy(&self) -> &SessionReportRouteStrategy {
+        &self.route_strategy
     }
 
     /// Return the final report [`SessionStatus`].
@@ -2563,6 +2571,47 @@ impl<'de> Deserialize<'de> for SessionReportAppGraphSummary {
     }
 }
 
+/// Route strategy summary included in a [`SessionReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionReportRouteStrategy {
+    strategy: String,
+    selector: Option<RouteSelector>,
+}
+
+impl SessionReportRouteStrategy {
+    /// Build a [`SessionReportRouteStrategy`] from a [`SessionPlan`].
+    pub fn from_plan(plan: &SessionPlan) -> Self {
+        let strategy = plan
+            .planned_annotations()
+            .iter()
+            .find(|entry| entry.key() == "kply.dev/route-strategy")
+            .map_or_else(
+                || {
+                    plan.route_selector()
+                        .map_or("none", RouteSelector::kind)
+                        .to_owned()
+                },
+                |entry| entry.value().to_owned(),
+            );
+
+        Self {
+            strategy,
+            selector: plan.route_selector().cloned(),
+        }
+    }
+
+    /// Borrow the resolved route strategy name.
+    pub fn strategy(&self) -> &str {
+        &self.strategy
+    }
+
+    /// Borrow the route selector used for test traffic, when any.
+    pub fn selector(&self) -> Option<&RouteSelector> {
+        self.selector.as_ref()
+    }
+}
+
 /// Error returned when a [`SessionReport`] is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionReportError {
@@ -2572,6 +2621,8 @@ pub enum SessionReportError {
     MetadataMismatch,
     /// App graph summary must describe the same workload as the session plan.
     AppGraphSummaryMismatch,
+    /// Route strategy summary must match the nested session plan.
+    RouteStrategyMismatch,
 }
 
 impl fmt::Display for SessionReportError {
@@ -2590,6 +2641,12 @@ impl fmt::Display for SessionReportError {
                 write!(
                     formatter,
                     "session report app graph summary does not match plan"
+                )
+            }
+            Self::RouteStrategyMismatch => {
+                write!(
+                    formatter,
+                    "session report route strategy does not match plan"
                 )
             }
         }
@@ -2634,6 +2691,12 @@ impl<'de> Deserialize<'de> for SessionReport {
         let expected = SessionReportMetadata::from_plan(&fields.plan);
         if fields.metadata != expected {
             return Err(D::Error::custom(SessionReportError::MetadataMismatch));
+        }
+        let expected_route_strategy = SessionReportRouteStrategy::from_plan(&fields.plan);
+        if let Some(route_strategy) = &fields.route_strategy
+            && route_strategy != &expected_route_strategy
+        {
+            return Err(D::Error::custom(SessionReportError::RouteStrategyMismatch));
         }
 
         let report = Self::new(fields.plan, fields.status).map_err(D::Error::custom)?;
@@ -4232,6 +4295,8 @@ struct SessionReportFields {
     #[serde(default)]
     created_resources: Vec<KubernetesResourceRef>,
     plan: SessionPlan,
+    #[serde(default)]
+    route_strategy: Option<SessionReportRouteStrategy>,
     status: SessionStatus,
 }
 
@@ -5270,12 +5335,13 @@ mod tests {
         SecretMetadataRefError, SecretReference, ServiceRef, ServiceRefError, ServiceRouteRef,
         SessionEvent, SessionEventKind, SessionId, SessionIdError, SessionName, SessionNameError,
         SessionOperation, SessionPlan, SessionPolicy, SessionPolicyError, SessionReport,
-        SessionReportAppGraphSummary, SessionReportError, SessionReportMetadata, SessionStatus,
-        SessionTransitionError, TIME_TO_LIVE_MAX_LEN, TimeToLive, TimeToLiveError,
-        UNSUPPORTED_FEATURE_NAME_MAX_LEN, UNSUPPORTED_FEATURE_REASON_MAX_LEN,
-        UnsupportedFeatureNameError, UnsupportedFeatureReasonError, UnsupportedFeatureWarning,
-        UnsupportedFeatureWarningError, WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef,
-        WorkloadRefError, WorkloadTokenError,
+        SessionReportAppGraphSummary, SessionReportError, SessionReportMetadata,
+        SessionReportRouteStrategy, SessionStatus, SessionTransitionError, TIME_TO_LIVE_MAX_LEN,
+        TimeToLive, TimeToLiveError, UNSUPPORTED_FEATURE_NAME_MAX_LEN,
+        UNSUPPORTED_FEATURE_REASON_MAX_LEN, UnsupportedFeatureNameError,
+        UnsupportedFeatureReasonError, UnsupportedFeatureWarning, UnsupportedFeatureWarningError,
+        WORKLOAD_KIND_MAX_LEN, WorkloadKindError, WorkloadRef, WorkloadRefError,
+        WorkloadTokenError,
     };
     use serde_json::json;
 
@@ -5287,6 +5353,15 @@ mod tests {
             ImageRef::new("registry.example.com/checkout/api:v2").expect("image ref"),
             SessionPolicy::sandbox(),
         )
+    }
+
+    fn test_routed_session_plan() -> SessionPlan {
+        test_session_plan()
+            .with_route_selector(
+                RouteSelector::header("x-kply-session", "session-123").expect("route selector"),
+            )
+            .with_planned_annotations([MetadataEntry::new("kply.dev/route-strategy", "header")
+                .expect("route strategy annotation")])
     }
 
     fn test_created_resources() -> Vec<KubernetesResourceRef> {
@@ -7799,7 +7874,7 @@ mod tests {
 
     #[test]
     fn round_trips_session_report_json() {
-        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+        let report = SessionReport::new(test_routed_session_plan(), SessionStatus::Ready)
             .expect("session report")
             .with_app_graph_summary(&test_app_graph())
             .expect("app graph summary")
@@ -7813,7 +7888,7 @@ mod tests {
 
     #[test]
     fn snapshots_session_report_json_contract() {
-        let report = SessionReport::new(test_session_plan(), SessionStatus::Ready)
+        let report = SessionReport::new(test_routed_session_plan(), SessionStatus::Ready)
             .expect("session report")
             .with_app_graph_summary(&test_app_graph())
             .expect("app graph summary")
@@ -7868,6 +7943,8 @@ mod tests {
         );
         assert_eq!(report.app_graph_summary(), None);
         assert_eq!(report.created_resources(), []);
+        assert_eq!(report.route_strategy().strategy(), "none");
+        assert_eq!(report.route_strategy().selector(), None);
     }
 
     #[test]
@@ -7987,6 +8064,50 @@ mod tests {
                 .to_string()
                 .contains("app graph summary does not match")
         );
+    }
+
+    #[test]
+    fn rejects_session_report_json_with_mismatched_route_strategy() {
+        let error = serde_json::from_value::<SessionReport>(json!({
+            "metadata": {
+                "session_id": "session-123",
+                "session_name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                }
+            },
+            "app_graph_summary": null,
+            "created_resources": [],
+            "plan": {
+                "id": "session-123",
+                "name": "checkout-test",
+                "workload": {
+                    "namespace": "checkout",
+                    "kind": "Deployment",
+                    "name": "checkout-api"
+                },
+                "image": "registry.example.com/checkout/api:v2",
+                "route_selector": null,
+                "policy": {
+                    "allowed_operations": ["inspect"]
+                },
+                "status": "planned"
+            },
+            "route_strategy": {
+                "strategy": "header",
+                "selector": {
+                    "kind": "header",
+                    "name": "x-kply-session",
+                    "value": "session-123"
+                }
+            },
+            "status": "ready"
+        }))
+        .expect_err("mismatched route strategy should be rejected");
+
+        assert!(error.to_string().contains("route strategy does not match"));
     }
 
     #[test]
@@ -8339,9 +8460,28 @@ mod tests {
             assert_eq!(report.metadata(), &SessionReportMetadata::from_plan(&plan));
             assert_eq!(report.app_graph_summary(), None);
             assert_eq!(report.created_resources(), []);
+            assert_eq!(
+                report.route_strategy(),
+                &SessionReportRouteStrategy::from_plan(&plan)
+            );
             assert_eq!(report.plan(), &plan);
             assert_eq!(report.status(), status);
         }
+    }
+
+    #[test]
+    fn creates_session_report_with_route_strategy() {
+        let plan = test_routed_session_plan();
+        let report =
+            SessionReport::new(plan.clone(), SessionStatus::Ready).expect("session report");
+        let route_strategy = report.route_strategy();
+
+        assert_eq!(
+            route_strategy,
+            &SessionReportRouteStrategy::from_plan(&plan)
+        );
+        assert_eq!(route_strategy.strategy(), "header");
+        assert_eq!(route_strategy.selector(), plan.route_selector());
     }
 
     #[test]
