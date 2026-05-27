@@ -8493,6 +8493,36 @@ mod tests {
     }
 
     #[test]
+    /// Verify route strategy falls back to the selector kind without annotation.
+    fn route_strategy_uses_selector_fallback_without_annotation() {
+        let plan = test_session_plan().with_route_selector(
+            RouteSelector::host("checkout-preview.example.com").expect("route selector"),
+        );
+        let route_strategy = SessionReportRouteStrategy::from_plan(&plan);
+
+        assert_eq!(route_strategy.strategy(), "host");
+        assert_eq!(route_strategy.selector(), plan.route_selector());
+    }
+
+    #[test]
+    /// Verify route strategy annotation takes precedence over selector kind.
+    fn route_strategy_prefers_annotation_over_selector_kind() {
+        let plan = test_session_plan()
+            .with_route_selector(
+                RouteSelector::header("x-kply-session", "session-123").expect("route selector"),
+            )
+            .with_planned_annotations([MetadataEntry::new(
+                "kply.dev/route-strategy",
+                "preview-service",
+            )
+            .expect("route strategy annotation")]);
+        let route_strategy = SessionReportRouteStrategy::from_plan(&plan);
+
+        assert_eq!(route_strategy.strategy(), "preview-service");
+        assert_eq!(route_strategy.selector(), plan.route_selector());
+    }
+
+    #[test]
     fn creates_session_report_with_created_resources() {
         let mut created_resources = test_created_resources();
         created_resources.push(created_resources[0].clone());
