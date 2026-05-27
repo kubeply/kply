@@ -26,6 +26,22 @@ tests a different part of the system. Direct preview traffic can validate the
 sandbox workload, but it does not prove that the real edge path, host rules,
 headers, TLS, authentication, or middleware will behave the same way.
 
+## Route Strategy Test Scope
+
+Each route strategy validates a different boundary. Treat a passing result as
+evidence for that boundary only.
+
+| Strategy | What it can test | What it cannot prove |
+| --- | --- | --- |
+| Gateway API temporary `HTTPRoute` | Gateway API CRDs, HTTP-compatible Gateway attachment, host/header matching, Service forwarding to the sandbox backend, and ownership-scoped cleanup metadata | Non-Gateway ingress controller behavior, service mesh policies outside the Gateway path, external DNS propagation, or production authentication layers that are not on the selected Gateway listener |
+| ingress-nginx canary `Ingress` | Existing ingress-nginx host/path rules, header-selected canary routing, Service forwarding to the sandbox backend, and generated canary annotations | Gateway API behavior, other ingress controllers, middleware not attached to the source Ingress, DNS changes, or traffic that does not carry the selected header |
+| Traefik `IngressRoute` | Traefik rule matching with mirrored host/path constraints, header-selected sandbox routing, and Service forwarding to the sandbox backend | ingress-nginx canary behavior, Gateway API behavior, Traefik middleware behavior not represented in the generated route, DNS changes, or traffic that does not carry the selected header |
+| Preview Service fallback | Sandbox workload creation, sandbox Service selection, pod readiness, Service endpoints, and direct agent smoke checks | Edge routing, host rules, request headers at the ingress layer, TLS termination, authentication, authorization, rate limits, CDN behavior, or production middleware |
+
+Route strategy outputs must keep limitations explicit. A successful preview
+Service check is useful for fast feedback, but it is not equivalent to proving a
+production edge route.
+
 ## Required Permissions
 
 Read-only route discovery needs permission to list Gateway API resources:
