@@ -165,10 +165,9 @@ runs:
       run: |
         set -euo pipefail
 
-        install_dir="${RUNNER_TEMP}/kply-bin"
-        archive_path="${RUNNER_TEMP}/${ARCHIVE_NAME}"
-        checksum_path="${RUNNER_TEMP}/${CHECKSUM_NAME}"
-        mkdir -p "${install_dir}"
+        install_dir="$(mktemp -d "${RUNNER_TEMP}/kply-bin.XXXXXX")"
+        archive_path="${install_dir}/${ARCHIVE_NAME}"
+        checksum_path="${install_dir}/${CHECKSUM_NAME}"
 
         auth_args=()
         if [[ -n "${INPUT_GITHUB_TOKEN}" ]]; then
@@ -234,6 +233,7 @@ runs:
             exit 1
             ;;
         esac
+        rm -f "${archive_path}" "${checksum_path}"
 
         kply_path="$(find "${install_dir}" -type f -name kply -perm -111 | head -n 1)"
         if [[ -z "${kply_path}" ]]; then
