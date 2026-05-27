@@ -1,5 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
+assertion_line: 1720
 expression: output
 ---
 kply route plan checkout-plan
@@ -11,3 +12,4 @@ planned_resource: shop/HTTPRoute/checkout-plan-route
 cleanup_selector: 2
   label: kply.dev/managed-by=kply
   label: kply.dev/session-id=checkout-plan
+unsupported_routes: 0

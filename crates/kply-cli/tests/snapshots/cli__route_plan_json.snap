@@ -1,5 +1,6 @@
 ---
 source: crates/kply-cli/tests/cli.rs
+assertion_line: 1742
 expression: value
 ---
 {
@@ -30,5 +31,6 @@ expression: value
   },
   "route_kind": "HTTPRoute",
   "session_id": "checkout-plan",
-  "status": "planned"
+  "status": "planned",
+  "unsupported_routes": []
 }

@@ -712,6 +712,16 @@ fn render_route_plan(cli: &Cli, session: &str, namespace: Option<&str>) -> Resul
         for (key, value) in &route_plan.cleanup_selector.match_labels {
             println!("  label: {key}={value}");
         }
+        println!(
+            "unsupported_routes: {}",
+            route_plan.unsupported_routes.len()
+        );
+        for route in &route_plan.unsupported_routes {
+            println!(
+                "  unsupported_route: {}:{} ({}) action={}",
+                route.strategy, route.feature, route.reason, route.action
+            );
+        }
     }
 
     Ok(ExitCode::SUCCESS)
@@ -1017,6 +1027,16 @@ struct RoutePlanOutput {
     planned_resource: Option<SessionManifestSummary>,
     cleanup_target: Option<GatewayHttpRouteCleanupTarget>,
     cleanup_selector: GatewayRouteCleanupSelector,
+    unsupported_routes: Vec<UnsupportedRouteOutput>,
+}
+
+/// Unsupported route detail emitted by `kply route plan`.
+#[derive(Debug, Serialize)]
+struct UnsupportedRouteOutput {
+    strategy: &'static str,
+    feature: &'static str,
+    reason: &'static str,
+    action: &'static str,
 }
 
 /// Guarded route apply output emitted before route mutation is implemented.
@@ -2111,7 +2131,7 @@ fn route_plan_from_session(
     let labels = route_plan_ownership_labels(session_id)?;
     let cleanup_selector =
         gateway_route_cleanup_selector(&labels).map_err(|error| error.to_string())?;
-    let (planned_resource, cleanup_target) = match namespace {
+    let (planned_resource, cleanup_target, unsupported_routes) = match namespace {
         Some(namespace) => {
             let route = KubernetesResourceRef::new(
                 namespace,
@@ -2128,9 +2148,19 @@ fn route_plan_from_session(
                     name: route.name().to_owned(),
                 }),
                 Some(cleanup_target),
+                Vec::new(),
             )
         }
-        None => (None, None),
+        None => (
+            None,
+            None,
+            vec![UnsupportedRouteOutput {
+                strategy: "gateway_api",
+                feature: "temporary_http_route",
+                reason: "namespace_required",
+                action: "rerun_with_namespace",
+            }],
+        ),
     };
 
     Ok(RoutePlanOutput {
@@ -2142,6 +2172,7 @@ fn route_plan_from_session(
         planned_resource,
         cleanup_target,
         cleanup_selector,
+        unsupported_routes,
     })
 }
 
