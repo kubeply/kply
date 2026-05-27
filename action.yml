@@ -29,6 +29,10 @@ inputs:
     description: Path where the action will write the JSON output artifact.
     required: false
     default: kply-report.json
+  artifact-name:
+    description: GitHub Actions artifact name for the Kply JSON report.
+    required: false
+    default: kply-report
   github-token:
     description: GitHub token used to read Kply release metadata.
     required: false
@@ -55,6 +59,9 @@ outputs:
   output-path:
     description: Absolute path to the JSON report written by the action.
     value: ${{ steps.run.outputs.output_path }}
+  artifact-name:
+    description: GitHub Actions artifact name used for the uploaded JSON report.
+    value: ${{ inputs.artifact-name }}
 
 runs:
   using: composite
@@ -447,3 +454,10 @@ runs:
         echo "mode=plan" >> "${GITHUB_OUTPUT}"
         echo "output_path=${resolved_output_path}" >> "${GITHUB_OUTPUT}"
         echo "Wrote Kply plan JSON to ${resolved_output_path}"
+
+    - name: Upload Kply JSON report
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.run.outputs.output_path }}
+        if-no-files-found: error
