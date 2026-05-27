@@ -1,0 +1,132 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "id": "checkout-plan",
+  "image": "ghcr.io/acme/checkout:next",
+  "name": "checkout-session",
+  "planned_annotations": [
+    {
+      "key": "kply.dev/image",
+      "value": "ghcr.io/acme/checkout:next"
+    },
+    {
+      "key": "kply.dev/route-strategy",
+      "value": "preview-service"
+    },
+    {
+      "key": "kply.dev/workload",
+      "value": "shop/Deployment/checkout-api"
+    }
+  ],
+  "planned_checks": [
+    {
+      "name": "image_pull",
+      "target": "ghcr.io/acme/checkout:next"
+    },
+    {
+      "name": "route_ready",
+      "target": "shop/checkout-plan-service"
+    },
+    {
+      "name": "service_endpoints",
+      "target": "shop/checkout-plan-service"
+    },
+    {
+      "name": "workload_ready",
+      "target": "shop/Deployment/checkout-api"
+    }
+  ],
+  "planned_cleanup_steps": [
+    {
+      "action": "delete_service",
+      "target": "shop/Service/checkout-plan-service"
+    },
+    {
+      "action": "delete_workload",
+      "target": "shop/Deployment/checkout-plan-workload"
+    }
+  ],
+  "planned_labels": [
+    {
+      "key": "kply.dev/app",
+      "value": "checkout"
+    },
+    {
+      "key": "kply.dev/managed-by",
+      "value": "kply"
+    },
+    {
+      "key": "kply.dev/session-id",
+      "value": "checkout-plan"
+    },
+    {
+      "key": "kply.dev/session-name",
+      "value": "checkout-session"
+    }
+  ],
+  "planned_resources": [
+    {
+      "kind": "Deployment",
+      "name": "checkout-plan-workload",
+      "namespace": "shop"
+    },
+    {
+      "kind": "Service",
+      "name": "checkout-plan-service",
+      "namespace": "shop"
+    }
+  ],
+  "policy": {
+    "allowed_operations": [
+      "inspect",
+      "plan",
+      "prepare",
+      "route",
+      "verify",
+      "cleanup"
+    ]
+  },
+  "required_permissions": [
+    {
+      "api_group": "",
+      "resource": "pods",
+      "verbs": [
+        "get",
+        "list",
+        "watch"
+      ]
+    },
+    {
+      "api_group": "",
+      "resource": "services",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch"
+      ]
+    },
+    {
+      "api_group": "apps",
+      "resource": "deployments",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch"
+      ]
+    }
+  ],
+  "risk_notes": [],
+  "route_selector": null,
+  "status": "planned",
+  "ttl": null,
+  "unsupported_feature_warnings": [],
+  "workload": {
+    "kind": "Deployment",
+    "name": "checkout-api",
+    "namespace": "shop"
+  }
+}

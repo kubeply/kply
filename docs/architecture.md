@@ -236,6 +236,8 @@ Current provisional pre-`1.0.0` Traefik IngressRoute planning behavior:
 Current provisional pre-`1.0.0` preview Service fallback behavior:
 
 - `route_strategy: preview` plans only the sandbox workload and sandbox Service.
+- `--route-strategy preview-service` is a CLI-only spelling for the same
+  Service-targeted preview behavior.
 - Preview sessions do not create, delete, or require permissions for
   `HTTPRoute` resources.
 - Preview checks target the sandbox Service directly, so they can validate the
@@ -378,6 +380,8 @@ Application config entries define these fields:
   commands also accept `--route-strategy auto`, which resolves to the configured
   app strategy until live capability-based selection is wired in, and
   `--route-strategy none`, which disables route planning for that command.
+  `--route-strategy preview-service` is accepted as a clearer CLI spelling of
+  the configured `preview` fallback behavior.
 
 Config validation reports deterministic field-scoped errors before any future
 Kubernetes access. Current validation covers unsupported schema versions and
