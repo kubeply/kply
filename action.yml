@@ -281,8 +281,12 @@ runs:
         kply_version="$("${kply_path}" --version)"
         if [[ "${INPUT_VERSION}" != "latest" ]]; then
           expected_version="${INPUT_VERSION#v}"
-          installed_version="$(printf '%s\n' "${kply_version}" | awk '{print $NF}')"
-          installed_version="${installed_version#v}"
+          if [[ "${kply_version}" =~ (v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?) ]]; then
+            installed_version="${BASH_REMATCH[1]#v}"
+          else
+            echo "::error::Unable to parse Kply version from: ${kply_version}"
+            exit 1
+          fi
           if [[ "${installed_version}" != "${expected_version}" ]]; then
             echo "::error::Requested Kply ${INPUT_VERSION}, but installed ${kply_version}."
             exit 1
