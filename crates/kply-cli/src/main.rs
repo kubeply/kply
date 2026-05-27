@@ -3281,6 +3281,25 @@ mod tests {
     }
 
     #[test]
+    fn builds_report_show_unavailable_with_unknown_status_when_missing() {
+        let report = report_show_unavailable_from_session(&SessionSummary {
+            id: "checkout-plan-unknown".to_owned(),
+            name: None,
+            namespace: "shop".to_owned(),
+            app: None,
+            status: None,
+            workload_kind: "Deployment".to_owned(),
+            workload_name: "checkout-plan-workload".to_owned(),
+        });
+
+        assert_eq!(report.session_id, "checkout-plan-unknown");
+        assert_eq!(report.namespace, "shop");
+        assert_eq!(report.session_status, "unknown");
+        assert_eq!(report.report, "not_available");
+        assert_eq!(report.reason, "session_report_persistence_not_implemented");
+    }
+
+    #[test]
     fn renders_check_run_text_report_with_summary_and_evidence() {
         let report = CheckRunReport {
             session_id: "checkout-plan".to_owned(),
