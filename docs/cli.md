@@ -83,3 +83,20 @@ baseline after switching backend variants.
 resources in the dedicated `kply-demo` namespace with `--ignore-not-found`,
 waits for deletion, and uses a timeout. It does not delete the namespace or the
 Kind cluster itself.
+
+## Report Commands
+
+`kply report show <session>` prints the current terminal-readable report
+availability for one sandbox session.
+
+`kply report export <session> --format json` emits machine-readable report
+availability for scripts and agents. `--format markdown` emits the same
+availability information in a pull-request-friendly format.
+
+The current report commands discover session metadata but do not yet load
+persisted full reports. Agents must treat `report: not_available` and
+`reason: session_report_persistence_not_implemented` as a conservative fallback,
+then run `kply check run <session>` for current evidence.
+
+For agent-specific handling and handoff wording, see
+[Agent Report Workflow](report-agent.md).
