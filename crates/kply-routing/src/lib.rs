@@ -270,7 +270,7 @@ pub struct GatewayHttpRouteCleanupTarget {
     pub namespace: String,
     /// Name of the temporary HTTPRoute.
     pub name: String,
-    /// Label selector that must match before cleanup deletes the route.
+    /// [`GatewayRouteCleanupSelector`] that must match before cleanup deletes the route.
     pub selector: GatewayRouteCleanupSelector,
 }
 
@@ -369,7 +369,7 @@ impl fmt::Display for GatewayHttpRouteManifestError {
             Self::MissingOwnershipLabel { key } => {
                 write!(
                     formatter,
-                    "HTTPRoute manifest is missing ownership label `{key}`"
+                    "Gateway route is missing ownership label `{key}`"
                 )
             }
         }
@@ -481,7 +481,10 @@ pub fn generate_gateway_host_http_route_manifest(
     generate_gateway_http_route_manifest(input)
 }
 
-/// Generate a deterministic cleanup target for a temporary Gateway API HTTPRoute.
+/// Generate a [`GatewayHttpRouteCleanupTarget`] for a temporary Gateway API HTTPRoute.
+///
+/// The cleanup target is derived from a [`KubernetesResourceRef`] and ownership
+/// [`MetadataEntry`] labels.
 pub fn gateway_http_route_cleanup_target(
     route: &KubernetesResourceRef,
     labels: &[MetadataEntry],
@@ -501,7 +504,9 @@ pub fn gateway_http_route_cleanup_target(
     })
 }
 
-/// Generate the minimal label selector required for Gateway API route cleanup.
+/// Generate the minimal [`GatewayRouteCleanupSelector`] required for Gateway API route cleanup.
+///
+/// The selector is derived from ownership [`MetadataEntry`] labels.
 pub fn gateway_route_cleanup_selector(
     labels: &[MetadataEntry],
 ) -> Result<GatewayRouteCleanupSelector, GatewayHttpRouteManifestError> {
@@ -1541,7 +1546,7 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "HTTPRoute manifest is missing ownership label `kply.dev/app`"
+            "Gateway route is missing ownership label `kply.dev/app`"
         );
     }
 
