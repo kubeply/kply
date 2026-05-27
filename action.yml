@@ -90,6 +90,10 @@ runs:
 
         release_json="${RUNNER_TEMP}/kply-release.json"
         curl --fail --location --silent --show-error \
+          --connect-timeout 30 \
+          --max-time 60 \
+          --retry 3 \
+          --retry-delay 2 \
           -H "Accept: application/vnd.github+json" \
           "${auth_args[@]}" \
           "${release_api}" > "${release_json}"
@@ -103,31 +107,51 @@ runs:
             release = json.load(handle)
 
         supported_suffixes = (".tar.xz", ".tar.gz", ".tgz", ".zip")
+        checksum_suffixes = (".sha256", ".sha256sum")
+        assets_by_name = {
+            asset.get("name", ""): asset
+            for asset in release.get("assets", [])
+            if asset.get("name")
+        }
+
         for asset in release.get("assets", []):
             name = asset.get("name", "")
             if target not in name:
                 continue
-            if name.endswith((".sha256", ".sha256sum", ".sig", ".pem", ".json")):
+            if name.endswith(checksum_suffixes + (".sig", ".pem", ".json")):
                 continue
             if not name.endswith(supported_suffixes):
                 continue
             url = asset.get("browser_download_url")
-            if url:
-                print(f"{name}\n{url}")
+            checksum_asset = None
+            for checksum_suffix in checksum_suffixes:
+                checksum_asset = assets_by_name.get(f"{name}{checksum_suffix}")
+                if checksum_asset is not None:
+                    break
+            checksum_url = checksum_asset.get("browser_download_url") if checksum_asset else None
+            if url and checksum_url:
+                print(f"{name}\n{url}\n{checksum_asset['name']}\n{checksum_url}")
                 sys.exit(0)
 
         tag = release.get("tag_name", "<unknown>")
-        print(f"no supported kply release asset found for target {target} in {tag}", file=sys.stderr)
+        print(
+            f"no supported kply release asset with checksum found for target {target} in {tag}",
+            file=sys.stderr,
+        )
         sys.exit(1)
         PY
         )"
 
         archive_name="$(printf '%s\n' "${asset_info}" | sed -n '1p')"
         archive_url="$(printf '%s\n' "${asset_info}" | sed -n '2p')"
+        checksum_name="$(printf '%s\n' "${asset_info}" | sed -n '3p')"
+        checksum_url="$(printf '%s\n' "${asset_info}" | sed -n '4p')"
 
         echo "target=${target}" >> "${GITHUB_OUTPUT}"
         echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
         echo "archive_url=${archive_url}" >> "${GITHUB_OUTPUT}"
+        echo "checksum_name=${checksum_name}" >> "${GITHUB_OUTPUT}"
+        echo "checksum_url=${checksum_url}" >> "${GITHUB_OUTPUT}"
 
     - name: Install Kply
       id: install
@@ -135,12 +159,15 @@ runs:
       env:
         ARCHIVE_NAME: ${{ steps.resolve.outputs.archive_name }}
         ARCHIVE_URL: ${{ steps.resolve.outputs.archive_url }}
+        CHECKSUM_NAME: ${{ steps.resolve.outputs.checksum_name }}
+        CHECKSUM_URL: ${{ steps.resolve.outputs.checksum_url }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
 
         install_dir="${RUNNER_TEMP}/kply-bin"
         archive_path="${RUNNER_TEMP}/${ARCHIVE_NAME}"
+        checksum_path="${RUNNER_TEMP}/${CHECKSUM_NAME}"
         mkdir -p "${install_dir}"
 
         auth_args=()
@@ -149,9 +176,51 @@ runs:
         fi
 
         curl --fail --location --silent --show-error \
+          --connect-timeout 30 \
+          --max-time 300 \
+          --retry 3 \
+          --retry-delay 2 \
           "${auth_args[@]}" \
           "${ARCHIVE_URL}" \
           --output "${archive_path}"
+
+        curl --fail --location --silent --show-error \
+          --connect-timeout 30 \
+          --max-time 60 \
+          --retry 3 \
+          --retry-delay 2 \
+          "${auth_args[@]}" \
+          "${CHECKSUM_URL}" \
+          --output "${checksum_path}"
+
+        python3 - "${archive_path}" "${checksum_path}" <<'PY'
+        import hashlib
+        import re
+        import sys
+
+        archive_path, checksum_path = sys.argv[1], sys.argv[2]
+        with open(checksum_path, encoding="utf-8") as handle:
+            checksum_text = handle.read()
+
+        match = re.search(r"\b([0-9a-fA-F]{64})\b", checksum_text)
+        if match is None:
+            print("checksum file did not contain a SHA-256 digest", file=sys.stderr)
+            sys.exit(1)
+
+        expected = match.group(1).lower()
+        digest = hashlib.sha256()
+        with open(archive_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+
+        actual = digest.hexdigest()
+        if actual != expected:
+            print(
+                f"checksum verification failed: expected {expected}, got {actual}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        PY
 
         case "${ARCHIVE_NAME}" in
           *.tar.xz | *.tar.gz | *.tgz)
