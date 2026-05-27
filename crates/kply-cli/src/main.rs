@@ -995,19 +995,10 @@ fn report_show_unavailable_from_session(session: &SessionSummary) -> ReportShowU
 
 /// Render a deterministic text report availability response.
 fn render_report_unavailable_text(report: &ReportShowUnavailable) -> String {
-    use std::fmt::Write as _;
-
-    let mut output = String::new();
-    writeln!(output, "kply report show {}", report.session_id)
-        .expect("writing report text should not fail");
-    writeln!(output, "namespace: {}", report.namespace)
-        .expect("writing report text should not fail");
-    writeln!(output, "session_status: {}", report.session_status)
-        .expect("writing report text should not fail");
-    writeln!(output, "report: {}", report.report).expect("writing report text should not fail");
-    writeln!(output, "reason: {}", report.reason).expect("writing report text should not fail");
-
-    output
+    format!(
+        "kply report show {}\nnamespace: {}\nsession_status: {}\nreport: {}\nreason: {}\n",
+        report.session_id, report.namespace, report.session_status, report.report, report.reason
+    )
 }
 
 /// Render a deterministic JSON report availability response.
