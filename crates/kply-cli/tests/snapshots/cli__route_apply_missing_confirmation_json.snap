@@ -1,0 +1,11 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "error": {
+    "code": "route_apply",
+    "exit_code": 2,
+    "message": "route apply requires --confirm-route-mutation before route mutation can run"
+  }
+}

@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_output(&stderr)
+---
+kply error: route apply
+
+route apply requires --confirm-route-mutation before route mutation can run

@@ -189,8 +189,20 @@ fn run() -> Result<ExitCode> {
             command: Some(RouteCommand::Plan { session, namespace }),
         }) => return render_route_plan(&cli, session, namespace.as_deref()),
         Some(Command::Route {
-            command: Some(RouteCommand::Apply { session, namespace }),
-        }) => return render_route_apply(&cli, session, namespace.as_deref()),
+            command:
+                Some(RouteCommand::Apply {
+                    session,
+                    namespace,
+                    confirm_route_mutation,
+                }),
+        }) => {
+            return render_route_apply(
+                &cli,
+                session,
+                namespace.as_deref(),
+                *confirm_route_mutation,
+            );
+        }
         Some(Command::Route {
             command: Some(RouteCommand::Cleanup { session, namespace }),
         }) => return render_route_cleanup(&cli, session, namespace.as_deref()),
@@ -737,11 +749,23 @@ fn render_route_plan(cli: &Cli, session: &str, namespace: Option<&str>) -> Resul
 }
 
 /// Render a guarded route apply placeholder without mutating Kubernetes.
-fn render_route_apply(cli: &Cli, session: &str, namespace: Option<&str>) -> Result<ExitCode> {
+fn render_route_apply(
+    cli: &Cli,
+    session: &str,
+    namespace: Option<&str>,
+    confirm_route_mutation: bool,
+) -> Result<ExitCode> {
     let session_id = match SessionId::new(session) {
         Ok(session_id) => session_id,
         Err(error) => return render_route_apply_error(&error.to_string(), cli.json),
     };
+    if !confirm_route_mutation {
+        return render_route_apply_error(
+            "route apply requires --confirm-route-mutation before route mutation can run",
+            cli.json,
+        );
+    }
+
     let output = RouteApplyOutput {
         session_id: session_id.as_str().to_owned(),
         namespace: namespace.map(ToOwned::to_owned),

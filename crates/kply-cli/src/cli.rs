@@ -151,6 +151,9 @@ pub enum RouteCommand {
         /// Namespace containing the Kply sandbox session.
         #[arg(long, value_name = "NAMESPACE")]
         namespace: Option<String>,
+        /// Confirm that temporary route mutation is intended.
+        #[arg(long)]
+        confirm_route_mutation: bool,
     },
     /// Plan cleanup of temporary routing for one sandbox session.
     Cleanup {
