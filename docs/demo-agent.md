@@ -80,13 +80,27 @@ Useful commands:
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app list
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app inspect checkout
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session plan checkout --image hashicorp/http-echo:1.0
+- cargo run --locked --bin kply -- route plan checkout-plan --namespace kply-demo
+- cargo run --locked --bin kply -- route apply checkout-plan --namespace kply-demo
+- cargo run --locked --bin kply -- route cleanup checkout-plan --namespace kply-demo
 - kubectl -n kply-demo get deployment,service,pod
 - kubectl -n kply-demo logs deployment/checkout-api
 - curl http://127.0.0.1:18080
 
+Route commands in this demo use `checkout-plan` as a valid synthetic session
+id. They do not look up a Kubernetes Session object. `route plan` and
+`route cleanup` derive dry-run output from the provided id, ownership labels,
+selectors, and route references. `route apply` is currently a placeholder that
+returns `status: "not_implemented"` and `apply: false`; it does not query or
+mutate Kubernetes.
+
 Expected outcome:
 - Explain what is broken.
 - Show the kply plan output you used.
+- Show the route plan and cleanup dry-run output, and note that route commands
+  accept the synthetic `checkout-plan` id without a Kubernetes Session lookup.
+- Note that route apply is currently a placeholder with
+  `status: "not_implemented"` and `apply: false`.
 - Apply fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml only if you
   need to verify the repair.
 - Verify the checkout response returns healthy JSON.

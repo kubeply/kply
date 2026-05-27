@@ -141,6 +141,23 @@ cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yam
 cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session plan checkout --image hashicorp/http-echo:1.0
 ```
 
+## Plan Temporary Routing
+
+The current Gateway API route commands are Kind-compatible because they only
+render deterministic route plans and guarded no-op mutation reports. They do
+not require Gateway API CRDs or a Gateway controller yet.
+
+```bash
+cargo run --locked --bin kply -- route plan checkout-plan --namespace kply-demo
+cargo run --locked --bin kply -- route apply checkout-plan --namespace kply-demo
+cargo run --locked --bin kply -- route cleanup checkout-plan --namespace kply-demo
+```
+
+`route apply` currently reports `status: not_implemented` and
+`mutation: not_applied`. This keeps the local demo runnable on a plain Kind
+cluster while the live Gateway API mutation adapter is still under
+implementation.
+
 ## Cleanup
 
 Remove only the labeled demo resources:
