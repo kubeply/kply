@@ -52,6 +52,11 @@ See [docs/gateway-api.md](docs/gateway-api.md) for Gateway API routing
 permissions, ownership constraints, and fallback guidance when Gateway API is
 unavailable.
 
+## RBAC
+
+See [docs/rbac.md](docs/rbac.md) for least-privilege Kubernetes RBAC examples
+for read-only inspection, sandbox-only sessions, and optional route mutation.
+
 ## Local Demo
 
 See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup
