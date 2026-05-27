@@ -338,6 +338,10 @@ runs:
 
         app_inspect_json="$(mktemp "${RUNNER_TEMP}/kply-app.XXXXXX.json")"
         trap 'rm -f "${app_inspect_json}"' EXIT
+        plan_mode_kubeconfig="${RUNNER_TEMP}/kply-plan-mode-no-kubeconfig"
+        rm -f "${plan_mode_kubeconfig}"
+        export KUBECONFIG="${plan_mode_kubeconfig}"
+
         "${KPLY_PATH}" \
           app inspect "${INPUT_APP}" \
           --config "${CONFIG_PATH}" \
@@ -372,6 +376,10 @@ runs:
 
         image_plan_json="$(mktemp "${RUNNER_TEMP}/kply-image-plan.XXXXXX.json")"
         trap 'rm -f "${image_plan_json}"' EXIT
+        plan_mode_kubeconfig="${RUNNER_TEMP}/kply-plan-mode-no-kubeconfig"
+        rm -f "${plan_mode_kubeconfig}"
+        export KUBECONFIG="${plan_mode_kubeconfig}"
+
         "${KPLY_PATH}" \
           session plan "${APP}" \
           --config "${CONFIG_PATH}" \
@@ -445,6 +453,10 @@ runs:
         )"
         mkdir -p "$(dirname "${resolved_output_path}")"
 
+        plan_mode_kubeconfig="${RUNNER_TEMP}/kply-plan-mode-no-kubeconfig"
+        rm -f "${plan_mode_kubeconfig}"
+        export KUBECONFIG="${plan_mode_kubeconfig}"
+
         plan_args=(
           session plan "${APP}"
           --config "${CONFIG_PATH}"
@@ -460,7 +472,7 @@ runs:
 
         echo "mode=plan" >> "${GITHUB_OUTPUT}"
         echo "output_path=${resolved_output_path}" >> "${GITHUB_OUTPUT}"
-        echo "Wrote Kply plan JSON to ${resolved_output_path}"
+        echo "Wrote Kply plan JSON to ${resolved_output_path} without live cluster credentials"
 
     - name: Upload Kply JSON report
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
