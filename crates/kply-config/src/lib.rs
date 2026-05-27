@@ -917,20 +917,21 @@ fn push_policy_list_entry_errors(
     field: PolicyConfigField,
     values: &[String],
 ) {
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
 
     for (entry_index, value) in values.iter().enumerate() {
-        if value.trim().is_empty() {
+        let normalized_value = value.trim();
+        if normalized_value.is_empty() {
             errors.push(ConfigValidationError::EmptyPolicyListEntry {
                 policy_index,
                 field,
                 entry_index,
             });
-        } else if !seen.insert(value) {
+        } else if !seen.insert(normalized_value.to_owned()) {
             errors.push(ConfigValidationError::DuplicatePolicyListEntry {
                 policy_index,
                 field,
-                value: value.clone(),
+                value: normalized_value.to_owned(),
             });
         }
     }
@@ -1777,7 +1778,7 @@ policies:
                 PolicyConfig::new("sandbox-defaults").with_allowed_workload_kinds([
                     "Deployment",
                     "",
-                    "Deployment",
+                    " Deployment ",
                 ]),
             ]),
         );
