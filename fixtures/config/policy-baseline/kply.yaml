@@ -12,6 +12,9 @@ policies:
     allowed_workload_kinds:
       - Deployment
       - StatefulSet
+    allowed_image_registries:
+      - registry.example.com
+      - localhost:5000
     allowed_route_strategies:
       - header
       - preview
