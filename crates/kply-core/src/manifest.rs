@@ -5,7 +5,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt;
 
-const REQUIRED_OWNERSHIP_LABELS: [&str; 4] = [
+/// Required Kply ownership labels for generated sandbox resources.
+pub const REQUIRED_OWNERSHIP_LABELS: [&str; 4] = [
     "kply.dev/app",
     "kply.dev/managed-by",
     "kply.dev/session-id",
@@ -29,7 +30,7 @@ const TTL_ANNOTATION: &str = "kply.dev/ttl";
 /// Keep this allowlist limited to generic, non-sensitive app identity metadata.
 /// Exclude controller, rollout, and version labels because sandbox sessions can
 /// run a different image than production and should not inherit stale identity.
-const SAFE_APP_LABELS: [&str; 4] = [
+pub const SAFE_APP_LABELS: [&str; 4] = [
     "app.kubernetes.io/component",
     "app.kubernetes.io/instance",
     "app.kubernetes.io/name",

@@ -3,12 +3,13 @@
 mod manifest;
 
 pub use manifest::{
-    SandboxCleanupSelector, SandboxContainer, SandboxDeploymentManifest, SandboxDeploymentSpec,
-    SandboxLabelSelector, SandboxManifestError, SandboxObjectMetadata, SandboxPodSpec,
-    SandboxPodTemplate, SandboxPodTemplateMetadata, SandboxRoutePlaceholderManifest,
-    SandboxServiceManifest, SandboxServicePort, SandboxServicePortConfig, SandboxServiceSpec,
-    sandbox_cleanup_selector, sandbox_deployment_manifest, sandbox_route_placeholder_manifest,
-    sandbox_service_manifest, sandbox_service_manifest_with_port,
+    REQUIRED_OWNERSHIP_LABELS, SAFE_APP_LABELS, SandboxCleanupSelector, SandboxContainer,
+    SandboxDeploymentManifest, SandboxDeploymentSpec, SandboxLabelSelector, SandboxManifestError,
+    SandboxObjectMetadata, SandboxPodSpec, SandboxPodTemplate, SandboxPodTemplateMetadata,
+    SandboxRoutePlaceholderManifest, SandboxServiceManifest, SandboxServicePort,
+    SandboxServicePortConfig, SandboxServiceSpec, sandbox_cleanup_selector,
+    sandbox_deployment_manifest, sandbox_route_placeholder_manifest, sandbox_service_manifest,
+    sandbox_service_manifest_with_port,
 };
 
 use serde::de::Error as DeserializeError;

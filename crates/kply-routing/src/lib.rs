@@ -6,7 +6,9 @@ use std::{
     fmt,
 };
 
-use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
+use kply_core::{
+    KubernetesResourceRef, MetadataEntry, REQUIRED_OWNERSHIP_LABELS, RouteSelector, SAFE_APP_LABELS,
+};
 use kply_k8s::{GatewayClassSummary, GatewaySummary, HttpRouteSummary};
 use serde::Serialize;
 
@@ -277,6 +279,8 @@ pub enum GatewayHttpRouteManifestError {
     HostRoutingUnavailable,
     /// The route selector is not a host selector.
     HostSelectorRequired { kind: String },
+    /// A required route ownership label is missing.
+    MissingOwnershipLabel { key: &'static str },
 }
 
 impl GatewayRouteCapabilityLimitation {
@@ -336,6 +340,12 @@ impl fmt::Display for GatewayHttpRouteManifestError {
             }
             Self::HostSelectorRequired { kind } => {
                 write!(formatter, "expected host route selector, found {kind}")
+            }
+            Self::MissingOwnershipLabel { key } => {
+                write!(
+                    formatter,
+                    "HTTPRoute manifest is missing ownership label `{key}`"
+                )
             }
         }
     }
@@ -406,7 +416,7 @@ pub fn generate_gateway_http_route_manifest(
         metadata: GatewayHttpRouteMetadata {
             namespace: input.route.namespace().to_owned(),
             name: input.route.name().to_owned(),
-            labels: metadata_entries_to_map(input.labels),
+            labels: route_labels(input.labels)?,
             annotations: metadata_entries_to_map(input.annotations),
         },
         spec: GatewayHttpRouteSpec {
@@ -473,6 +483,37 @@ fn validate_gateway_http_route_manifest_input(
     }
 
     Ok(())
+}
+
+/// Return the safe label set for generated Gateway API routes.
+fn route_labels(
+    labels: &[MetadataEntry],
+) -> Result<BTreeMap<String, String>, GatewayHttpRouteManifestError> {
+    let labels = metadata_entries_to_map(labels);
+    ensure_route_ownership_labels(&labels)?;
+
+    Ok(labels
+        .into_iter()
+        .filter(|(key, _)| should_preserve_route_label(key))
+        .collect())
+}
+
+/// Ensure all route ownership labels are present.
+fn ensure_route_ownership_labels(
+    labels: &BTreeMap<String, String>,
+) -> Result<(), GatewayHttpRouteManifestError> {
+    for key in REQUIRED_OWNERSHIP_LABELS {
+        if !labels.contains_key(key) {
+            return Err(GatewayHttpRouteManifestError::MissingOwnershipLabel { key });
+        }
+    }
+
+    Ok(())
+}
+
+/// Return true when a label should be preserved on generated Gateway routes.
+fn should_preserve_route_label(key: &str) -> bool {
+    REQUIRED_OWNERSHIP_LABELS.contains(&key) || SAFE_APP_LABELS.contains(&key)
 }
 
 /// Validate that Gateway capabilities allow a header-based route selector.
@@ -964,7 +1005,7 @@ mod tests {
         let gateway = resource("shop", "Gateway", "public");
         let service = resource("shop", "Service", "checkout-sandbox");
         let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
-        let labels = vec![MetadataEntry::new_label("kply.dev/session-id", "session-123").unwrap()];
+        let labels = ownership_labels();
         let annotations =
             vec![MetadataEntry::new("kply.dev/route-strategy", "gateway-api").unwrap()];
 
@@ -988,7 +1029,10 @@ mod tests {
                     "namespace": "shop",
                     "name": "checkout-kply",
                     "labels": {
-                        "kply.dev/session-id": "session-123"
+                        "kply.dev/app": "checkout",
+                        "kply.dev/managed-by": "kply",
+                        "kply.dev/session-id": "session-123",
+                        "kply.dev/session-name": "checkout-test"
                     },
                     "annotations": {
                         "kply.dev/route-strategy": "gateway-api"
@@ -1036,6 +1080,7 @@ mod tests {
         let gateway = resource("shop", "Gateway", "public");
         let service = resource("shop", "Service", "checkout-sandbox");
         let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+        let labels = ownership_labels();
 
         let manifest = generate_gateway_header_http_route_manifest(
             &capabilities,
@@ -1045,7 +1090,7 @@ mod tests {
                 backend_service: &service,
                 backend_port: 8080,
                 selector: &selector,
-                labels: &[],
+                labels: &labels,
                 annotations: &[],
             },
         )
@@ -1137,6 +1182,7 @@ mod tests {
         let gateway = resource("platform", "Gateway", "edge");
         let service = resource("shop", "Service", "checkout-sandbox");
         let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+        let labels = ownership_labels();
 
         let manifest = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
             route: &route,
@@ -1144,7 +1190,7 @@ mod tests {
             backend_service: &service,
             backend_port: 80,
             selector: &selector,
-            labels: &[],
+            labels: &labels,
             annotations: &[],
         })
         .unwrap();
@@ -1156,7 +1202,13 @@ mod tests {
                 "kind": "HTTPRoute",
                 "metadata": {
                     "namespace": "shop",
-                    "name": "checkout-preview"
+                    "name": "checkout-preview",
+                    "labels": {
+                        "kply.dev/app": "checkout",
+                        "kply.dev/managed-by": "kply",
+                        "kply.dev/session-id": "session-123",
+                        "kply.dev/session-name": "checkout-test"
+                    }
                 },
                 "spec": {
                     "parentRefs": [
@@ -1191,6 +1243,7 @@ mod tests {
         let gateway = resource("platform", "Gateway", "edge");
         let service = resource("shop", "Service", "checkout-sandbox");
         let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+        let labels = ownership_labels();
 
         let manifest = generate_gateway_host_http_route_manifest(
             &capabilities,
@@ -1200,7 +1253,7 @@ mod tests {
                 backend_service: &service,
                 backend_port: 80,
                 selector: &selector,
-                labels: &[],
+                labels: &labels,
                 annotations: &[],
             },
         )
@@ -1314,6 +1367,38 @@ mod tests {
     }
 
     #[test]
+    /// Rejects valid route manifests without complete ownership labels.
+    fn rejects_gateway_http_route_manifest_without_ownership_labels() {
+        let route = resource("shop", "HTTPRoute", "checkout-kply");
+        let gateway = resource("shop", "Gateway", "public");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+        let labels = vec![MetadataEntry::new_label("kply.dev/session-id", "session-123").unwrap()];
+
+        let error = generate_gateway_http_route_manifest(GatewayHttpRouteManifestInput {
+            route: &route,
+            parent_gateway: &gateway,
+            backend_service: &service,
+            backend_port: 8080,
+            selector: &selector,
+            labels: &labels,
+            annotations: &[],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::MissingOwnershipLabel {
+                key: "kply.dev/app"
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "HTTPRoute manifest is missing ownership label `kply.dev/app`"
+        );
+    }
+
+    #[test]
     /// Rejects non-Gateway parent resources.
     fn rejects_non_gateway_parent_resources() {
         let route = resource("shop", "HTTPRoute", "checkout-kply");
@@ -1415,6 +1500,16 @@ mod tests {
     /// Build an HTTP Gateway summary fixture.
     fn gateway(namespace: &str, name: &str, gateway_class_name: &str) -> GatewaySummary {
         gateway_with_protocol(namespace, name, gateway_class_name, Some("HTTP"))
+    }
+
+    /// Build complete route ownership labels.
+    fn ownership_labels() -> Vec<MetadataEntry> {
+        vec![
+            MetadataEntry::new_label("kply.dev/app", "checkout").unwrap(),
+            MetadataEntry::new_label("kply.dev/managed-by", "kply").unwrap(),
+            MetadataEntry::new_label("kply.dev/session-id", "session-123").unwrap(),
+            MetadataEntry::new_label("kply.dev/session-name", "checkout-test").unwrap(),
+        ]
     }
 
     /// Build supported Gateway route capabilities.
