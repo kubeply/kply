@@ -79,6 +79,48 @@ reproducible.
 | `artifact-name` | Uploaded artifact name. |
 | `write-summary` | Whether the Markdown summary was written. |
 
+## Optional PR Comment
+
+The action already writes a workflow summary and uploads the JSON report. If a
+repository also wants a pull-request comment, use the default `github.token`;
+no extra secret is required.
+
+Add `pull-requests: write` to the workflow permissions:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+Then add a comment step after `Run Kply plan`:
+
+```yaml
+      - name: Comment Kply plan
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/kply-pr-comment.md <<'EOF'
+          ## Kply plan
+
+          The Kply plan report was generated for this pull request.
+
+          - JSON artifact: `kply-report`
+          - Workflow summary: available on the Kply plan job
+          EOF
+
+          gh pr comment "${PR_URL}" --body-file /tmp/kply-pr-comment.md
+```
+
+The `if` guard skips comments on fork pull requests, where the default token is
+usually read-only. Remove the guard only if the repository has a reviewed fork
+workflow policy.
+
 ## Cluster Access
 
 Plan workflows do not require `KUBECONFIG`, cloud credentials, or a live
