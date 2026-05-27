@@ -198,7 +198,8 @@ Current provisional pre-`1.0.0` routing capability detection fields:
   details.
 - `ingress`: Ingress inventory detected in the target namespace, including
   Ingress names, class names, hostnames, and backend Service names. Ingress
-  planning is detected as future work until controller-specific adapters land.
+  planning is provisionally implemented for ingress-nginx header canary routes
+  when the source Ingress class is `nginx`, `ingress-nginx`, or `nginx-ingress`.
 - `preview_service_available`: boolean indicating that direct preview Service
   checks can be considered as an explicit fallback.
 - `candidate_strategies`: deterministic list of route strategies with enough

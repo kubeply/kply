@@ -826,7 +826,7 @@ pub fn generate_nginx_ingress_canary_manifest(
                 .source_ingress
                 .ingress_class_name
                 .clone()
-                .expect("validated nginx ingress class should be present"),
+                .ok_or(NginxIngressRoutePlanError::UnsupportedIngressClass { class_name: None })?,
             rules: nginx_canary_rules(
                 input.source_ingress,
                 input.backend_service,
