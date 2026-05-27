@@ -391,6 +391,10 @@ runs:
           echo "::error::output-path must not be empty."
           exit 1
         fi
+        if [[ "${INPUT_OUTPUT_PATH}" == *$'\n'* || "${INPUT_OUTPUT_PATH}" == *$'\r'* ]]; then
+          echo "::error::output-path must be a single-line path."
+          exit 1
+        fi
 
         workspace="${GITHUB_WORKSPACE:-${PWD}}"
         case "${INPUT_OUTPUT_PATH}" in
@@ -402,11 +406,19 @@ runs:
             ;;
         esac
 
-        resolved_output_path="$(python3 - "${output_path}" <<'PY'
+        resolved_output_path="$(python3 - "${output_path}" "${workspace}" <<'PY'
         import os
         import sys
 
-        print(os.path.abspath(sys.argv[1]))
+        candidate = os.path.abspath(sys.argv[1])
+        workspace = os.path.abspath(sys.argv[2])
+        if os.path.commonpath([candidate, workspace]) != workspace:
+            print(
+                f"::error::output-path must resolve inside {workspace}, got {candidate}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(candidate)
         PY
         )"
         mkdir -p "$(dirname "${resolved_output_path}")"
