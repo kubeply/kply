@@ -45,6 +45,11 @@ const ROUTE_STRATEGY_AUTO: &str = "auto";
 const ROUTE_STRATEGY_NONE: &str = "none";
 const ROUTE_STRATEGY_PREVIEW: &str = "preview";
 const ROUTE_STRATEGY_PREVIEW_SERVICE: &str = "preview-service";
+const UNSUPPORTED_FEATURE_EDGE_ROUTE_VALIDATION: &str = "edge_route_validation";
+const UNSUPPORTED_REASON_PREVIEW_SKIPS_EDGE_ROUTE_VALIDATION: &str =
+    "preview_service_skips_edge_route_validation";
+const UNSUPPORTED_REASON_NONE_SKIPS_ROUTE_VALIDATION: &str =
+    "route_strategy_none_skips_route_validation";
 const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
@@ -2049,9 +2054,26 @@ fn required_session_permissions(
 
 /// Build unsupported feature warnings for the requested route strategy.
 fn unsupported_session_feature_warnings(
-    _route_strategy: &str,
+    route_strategy: &str,
 ) -> std::result::Result<Vec<UnsupportedFeatureWarning>, String> {
-    Ok(Vec::new())
+    let warning_inputs = match route_strategy {
+        ROUTE_STRATEGY_PREVIEW | ROUTE_STRATEGY_PREVIEW_SERVICE => vec![(
+            UNSUPPORTED_FEATURE_EDGE_ROUTE_VALIDATION,
+            UNSUPPORTED_REASON_PREVIEW_SKIPS_EDGE_ROUTE_VALIDATION,
+        )],
+        ROUTE_STRATEGY_NONE => vec![(
+            UNSUPPORTED_FEATURE_EDGE_ROUTE_VALIDATION,
+            UNSUPPORTED_REASON_NONE_SKIPS_ROUTE_VALIDATION,
+        )],
+        _ => Vec::new(),
+    };
+
+    warning_inputs
+        .into_iter()
+        .map(|(feature, reason)| {
+            UnsupportedFeatureWarning::new(feature, reason).map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
 /// Build risk notes for app shapes that need human review before promotion.
@@ -4102,9 +4124,25 @@ mod tests {
             unsupported_session_feature_warnings("header").expect("unsupported warnings");
         let preview_warnings =
             unsupported_session_feature_warnings("preview").expect("unsupported warnings");
+        let preview_service_warnings =
+            unsupported_session_feature_warnings("preview-service").expect("unsupported warnings");
+        let none_warnings =
+            unsupported_session_feature_warnings("none").expect("unsupported warnings");
 
         assert!(header_warnings.is_empty());
-        assert!(preview_warnings.is_empty());
+        assert_eq!(preview_warnings.len(), 1);
+        assert_eq!(preview_warnings[0].feature(), "edge_route_validation");
+        assert_eq!(
+            preview_warnings[0].reason(),
+            "preview_service_skips_edge_route_validation"
+        );
+        assert_eq!(preview_service_warnings, preview_warnings);
+        assert_eq!(none_warnings.len(), 1);
+        assert_eq!(none_warnings[0].feature(), "edge_route_validation");
+        assert_eq!(
+            none_warnings[0].reason(),
+            "route_strategy_none_skips_route_validation"
+        );
     }
 
     #[test]
