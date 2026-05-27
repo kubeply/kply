@@ -1,0 +1,112 @@
+name: action-self-test
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/action-self-test.yml
+  push:
+    branches:
+      - main
+    paths:
+      - action.yml
+      - .github/workflows/action-self-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  action-contract:
+    name: action contract
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate action metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ruby <<'RUBY'
+          require "yaml"
+
+          action = YAML.safe_load(
+            File.read("action.yml"),
+            permitted_classes: [],
+            permitted_symbols: [],
+          )
+          raise "action.yml must parse to a mapping" unless action.is_a?(Hash)
+
+          def require_field(value, message)
+            raise message if value.nil? || value == ""
+          end
+
+          require_field(action["name"], "action name is missing")
+          raise "action must use a composite runtime" unless action.dig("runs", "using") == "composite"
+
+          inputs = action.fetch("inputs")
+          outputs = action.fetch("outputs")
+          steps = action.dig("runs", "steps")
+          raise "action steps must be a non-empty array" unless steps.is_a?(Array) && !steps.empty?
+
+          required_inputs = %w[
+            app
+            artifact-name
+            config-path
+            github-token
+            image
+            mode
+            output-path
+            version
+            write-summary
+          ]
+          missing_inputs = required_inputs.reject { |name| inputs.key?(name) }
+          raise "missing action inputs: #{missing_inputs.join(", ")}" unless missing_inputs.empty?
+
+          required_outputs = %w[
+            app
+            artifact-name
+            config-path
+            image
+            kply-path
+            kply-version
+            mode
+            output-path
+            write-summary
+          ]
+          missing_outputs = required_outputs.reject { |name| outputs.key?(name) }
+          raise "missing action outputs: #{missing_outputs.join(", ")}" unless missing_outputs.empty?
+
+          upload_step = steps.find { |step| step["name"] == "Upload Kply JSON report" }
+          require_field(upload_step, "upload artifact step is missing")
+          expected_upload = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+          raise "upload artifact action must stay pinned" unless upload_step["uses"] == expected_upload
+
+          plan_steps = [
+            "Validate Kply app",
+            "Validate Kply image override",
+            "Run Kply plan",
+          ]
+          plan_steps.each do |step_name|
+            step = steps.find { |candidate| candidate["name"] == step_name }
+            require_field(step, "#{step_name} step is missing")
+            run = step.fetch("run")
+            unless run.include?('export KUBECONFIG="${plan_mode_kubeconfig}"')
+              raise "#{step_name} must force plan mode to run without live cluster credentials"
+            end
+          end
+
+          run_step = steps.find { |step| step["name"] == "Run Kply plan" }
+          run_script = run_step.fetch("run")
+          raise "plan mode must be supported" unless run_script.include?("mode=plan")
+          raise "check mode must stay reserved" unless run_script.include?("mode=check is reserved")
+          RUBY
