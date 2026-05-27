@@ -273,6 +273,10 @@ pub enum GatewayHttpRouteManifestError {
     HeaderRoutingUnavailable,
     /// The route selector is not a header selector.
     HeaderSelectorRequired { kind: String },
+    /// Host-based preview routing is not supported by the modeled Gateway capabilities.
+    HostRoutingUnavailable,
+    /// The route selector is not a host selector.
+    HostSelectorRequired { kind: String },
 }
 
 impl GatewayRouteCapabilityLimitation {
@@ -323,6 +327,15 @@ impl fmt::Display for GatewayHttpRouteManifestError {
             }
             Self::HeaderSelectorRequired { kind } => {
                 write!(formatter, "expected header route selector, found {kind}")
+            }
+            Self::HostRoutingUnavailable => {
+                write!(
+                    formatter,
+                    "Gateway capabilities do not support host-based preview routing"
+                )
+            }
+            Self::HostSelectorRequired { kind } => {
+                write!(formatter, "expected host route selector, found {kind}")
             }
         }
     }
@@ -424,6 +437,15 @@ pub fn generate_gateway_header_http_route_manifest(
     generate_gateway_http_route_manifest(input)
 }
 
+/// Generate a capability-gated host-based Gateway API HTTPRoute manifest.
+pub fn generate_gateway_host_http_route_manifest(
+    capabilities: &GatewayRouteCapabilities,
+    input: GatewayHttpRouteManifestInput<'_>,
+) -> Result<GatewayHttpRouteManifest, GatewayHttpRouteManifestError> {
+    validate_gateway_host_route_support(capabilities, input.selector)?;
+    generate_gateway_http_route_manifest(input)
+}
+
 /// Validate the typed inputs used to generate a Gateway API HTTPRoute.
 fn validate_gateway_http_route_manifest_input(
     input: GatewayHttpRouteManifestInput<'_>,
@@ -463,6 +485,23 @@ fn validate_gateway_header_route_support(
     }
     if selector.header_parts().is_none() {
         return Err(GatewayHttpRouteManifestError::HeaderSelectorRequired {
+            kind: selector.kind().to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Validate that Gateway capabilities allow a host-based route selector.
+fn validate_gateway_host_route_support(
+    capabilities: &GatewayRouteCapabilities,
+    selector: &RouteSelector,
+) -> Result<(), GatewayHttpRouteManifestError> {
+    if !capabilities.supports_host_based_routing {
+        return Err(GatewayHttpRouteManifestError::HostRoutingUnavailable);
+    }
+    if selector.hostname().is_none() {
+        return Err(GatewayHttpRouteManifestError::HostSelectorRequired {
             kind: selector.kind().to_owned(),
         });
     }
@@ -696,7 +735,8 @@ mod tests {
         GatewayHttpRouteManifestError, GatewayHttpRouteManifestInput, GatewayRouteCapabilities,
         GatewayRouteCapabilityLimitation, GatewayRouteCapabilityStatus,
         detect_gateway_api_resources, generate_gateway_header_http_route_manifest,
-        generate_gateway_http_route_manifest, model_gateway_route_capabilities,
+        generate_gateway_host_http_route_manifest, generate_gateway_http_route_manifest,
+        model_gateway_route_capabilities,
     };
     use kply_core::{KubernetesResourceRef, MetadataEntry, RouteSelector};
     use kply_k8s::{GatewayClassSummary, GatewayListenerSummary, GatewaySummary, HttpRouteSummary};
@@ -1140,6 +1180,105 @@ mod tests {
                     ]
                 }
             })
+        );
+    }
+
+    #[test]
+    /// Generates host HTTPRoute manifests only when Gateway capabilities allow it.
+    fn generates_capability_gated_host_gateway_http_route_manifest() {
+        let capabilities = supported_gateway_capabilities();
+        let route = resource("shop", "HTTPRoute", "checkout-preview");
+        let gateway = resource("platform", "Gateway", "edge");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+
+        let manifest = generate_gateway_host_http_route_manifest(
+            &capabilities,
+            GatewayHttpRouteManifestInput {
+                route: &route,
+                parent_gateway: &gateway,
+                backend_service: &service,
+                backend_port: 80,
+                selector: &selector,
+                labels: &[],
+                annotations: &[],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(manifest.kind, "HTTPRoute");
+        assert_eq!(
+            manifest.spec.hostnames,
+            ["checkout-preview.example.com".to_owned()]
+        );
+    }
+
+    #[test]
+    /// Rejects host HTTPRoute generation when Gateway capabilities are unavailable.
+    fn rejects_host_gateway_http_route_manifest_without_capability_support() {
+        let capabilities = model_gateway_route_capabilities(GatewayApiDiscoveryInput {
+            gateway_classes: None,
+            gateways: None,
+            http_routes: None,
+        });
+        let route = resource("shop", "HTTPRoute", "checkout-preview");
+        let gateway = resource("platform", "Gateway", "edge");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::host("checkout-preview.example.com").unwrap();
+
+        let error = generate_gateway_host_http_route_manifest(
+            &capabilities,
+            GatewayHttpRouteManifestInput {
+                route: &route,
+                parent_gateway: &gateway,
+                backend_service: &service,
+                backend_port: 80,
+                selector: &selector,
+                labels: &[],
+                annotations: &[],
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, GatewayHttpRouteManifestError::HostRoutingUnavailable);
+        assert_eq!(
+            error.to_string(),
+            "Gateway capabilities do not support host-based preview routing"
+        );
+    }
+
+    #[test]
+    /// Rejects non-host selectors for host HTTPRoute generation.
+    fn rejects_header_selector_for_host_gateway_http_route_manifest() {
+        let capabilities = supported_gateway_capabilities();
+        let route = resource("shop", "HTTPRoute", "checkout-preview");
+        let gateway = resource("platform", "Gateway", "edge");
+        let service = resource("shop", "Service", "checkout-sandbox");
+        let selector = RouteSelector::header("x-kply-session", "session-123").unwrap();
+
+        let error = generate_gateway_host_http_route_manifest(
+            &capabilities,
+            GatewayHttpRouteManifestInput {
+                route: &route,
+                parent_gateway: &gateway,
+                backend_service: &service,
+                backend_port: 80,
+                selector: &selector,
+                labels: &[],
+                annotations: &[],
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GatewayHttpRouteManifestError::HostSelectorRequired {
+                kind: "header".to_owned()
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "expected host route selector, found header"
         );
     }
 
