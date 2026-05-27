@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
 const DEFAULT_WORKLOAD_KIND: &str = "Deployment";
+const POLICY_DURATION_MAX_LEN: usize = 32;
 
 /// Canonical Kply project configuration filename.
 pub const CANONICAL_CONFIG_FILENAME: &str = "kply.yaml";
@@ -334,6 +335,15 @@ pub enum ConfigValidationError {
         /// Duplicate list value.
         value: String,
     },
+    /// A policy duration field is present but invalid.
+    InvalidPolicyDuration {
+        /// Zero-based policy index in the top-level policies list.
+        policy_index: usize,
+        /// Policy field that failed validation.
+        field: PolicyConfigField,
+        /// Duration validation failure.
+        reason: PolicyDurationError,
+    },
 }
 
 impl fmt::Display for ConfigValidationError {
@@ -372,11 +382,56 @@ impl fmt::Display for ConfigValidationError {
                     "policies[{policy_index}].{field}: duplicate value `{value}`"
                 )
             }
+            Self::InvalidPolicyDuration {
+                policy_index,
+                field,
+                reason,
+            } => {
+                write!(formatter, "policies[{policy_index}].{field}: {reason}")
+            }
         }
     }
 }
 
 impl error::Error for ConfigValidationError {}
+
+/// Error returned when a policy duration value is not valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyDurationError {
+    /// Duration values cannot be empty.
+    Empty,
+    /// Duration values cannot exceed the maximum length.
+    TooLong { max_len: usize },
+    /// Duration values must end with a supported unit.
+    InvalidUnit { unit: char },
+    /// Duration values must start with ASCII digits.
+    InvalidNumber,
+    /// Duration values must be greater than zero.
+    Zero,
+}
+
+impl fmt::Display for PolicyDurationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("duration cannot be empty"),
+            Self::TooLong { max_len } => {
+                write!(formatter, "duration cannot exceed {max_len} characters")
+            }
+            Self::InvalidUnit { unit } => {
+                write!(
+                    formatter,
+                    "invalid duration unit `{unit}`; expected s, m, h, or d"
+                )
+            }
+            Self::InvalidNumber => {
+                formatter.write_str("invalid duration; expected a positive integer duration")
+            }
+            Self::Zero => formatter.write_str("invalid duration; value must be greater than zero"),
+        }
+    }
+}
+
+impl error::Error for PolicyDurationError {}
 
 /// Field name for an app config validation error.
 #[non_exhaustive]
@@ -430,6 +485,8 @@ pub enum PolicyConfigField {
     AllowedWorkloadKinds,
     /// Policy `allowed_route_strategies` field.
     AllowedRouteStrategies,
+    /// Policy `max_session_ttl` field.
+    MaxSessionTtl,
 }
 
 impl PolicyConfigField {
@@ -441,6 +498,7 @@ impl PolicyConfigField {
             Self::AllowedNamespaces => "allowed_namespaces",
             Self::AllowedWorkloadKinds => "allowed_workload_kinds",
             Self::AllowedRouteStrategies => "allowed_route_strategies",
+            Self::MaxSessionTtl => "max_session_ttl",
         }
     }
 }
@@ -783,6 +841,8 @@ pub struct PolicyConfig {
     allowed_workload_kinds: Vec<String>,
     #[serde(default)]
     allowed_route_strategies: Vec<RouteStrategy>,
+    #[serde(default)]
+    max_session_ttl: Option<String>,
 }
 
 impl PolicyConfig {
@@ -795,6 +855,7 @@ impl PolicyConfig {
             allowed_namespaces: Vec::new(),
             allowed_workload_kinds: Vec::new(),
             allowed_route_strategies: Vec::new(),
+            max_session_ttl: None,
         }
     }
 
@@ -873,6 +934,17 @@ impl PolicyConfig {
         self
     }
 
+    /// Borrow the maximum session TTL this policy will allow.
+    pub fn max_session_ttl(&self) -> Option<&str> {
+        self.max_session_ttl.as_deref()
+    }
+
+    /// Return a copy of this policy entry with a maximum session TTL.
+    pub fn with_max_session_ttl(mut self, max_session_ttl: impl Into<String>) -> Self {
+        self.max_session_ttl = Some(max_session_ttl.into());
+        self
+    }
+
     /// Return validation errors for this policy entry with top-level index context.
     fn validation_errors(&self, policy_index: usize) -> Vec<ConfigValidationError> {
         let mut errors = Vec::new();
@@ -910,6 +982,14 @@ impl PolicyConfig {
             policy_index,
             self.allowed_route_strategies(),
         );
+        if let Some(max_session_ttl) = self.max_session_ttl() {
+            push_policy_duration_error(
+                &mut errors,
+                policy_index,
+                PolicyConfigField::MaxSessionTtl,
+                max_session_ttl,
+            );
+        }
 
         errors
     }
@@ -979,6 +1059,51 @@ fn push_policy_route_strategy_errors(
             });
         }
     }
+}
+
+/// Push a field-scoped error when a policy duration is invalid.
+fn push_policy_duration_error(
+    errors: &mut Vec<ConfigValidationError>,
+    policy_index: usize,
+    field: PolicyConfigField,
+    value: &str,
+) {
+    if let Err(reason) = validate_policy_duration(value) {
+        errors.push(ConfigValidationError::InvalidPolicyDuration {
+            policy_index,
+            field,
+            reason,
+        });
+    }
+}
+
+/// Validate compact policy durations using the session TTL grammar.
+fn validate_policy_duration(value: &str) -> Result<(), PolicyDurationError> {
+    if value.is_empty() {
+        return Err(PolicyDurationError::Empty);
+    }
+
+    if value.len() > POLICY_DURATION_MAX_LEN {
+        return Err(PolicyDurationError::TooLong {
+            max_len: POLICY_DURATION_MAX_LEN,
+        });
+    }
+
+    let unit = value.chars().last().ok_or(PolicyDurationError::Empty)?;
+    if !matches!(unit, 's' | 'm' | 'h' | 'd') {
+        return Err(PolicyDurationError::InvalidUnit { unit });
+    }
+
+    let digits = &value[..value.len() - unit.len_utf8()];
+    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+        return Err(PolicyDurationError::InvalidNumber);
+    }
+
+    if digits.trim_start_matches('0').is_empty() {
+        return Err(PolicyDurationError::Zero);
+    }
+
+    Ok(())
 }
 
 /// Load a Kply project configuration file from disk.
@@ -1069,8 +1194,8 @@ mod tests {
         AppConfig, AppConfigField, AppConfigs, CANONICAL_CONFIG_FILENAME, CheckConfig,
         CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
         ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig, PolicyConfig,
-        PolicyConfigField, PolicyConfigs, RouteStrategy, RoutingConfig, discover_config_path_from,
-        load_config_path,
+        PolicyConfigField, PolicyConfigs, PolicyDurationError, RouteStrategy, RoutingConfig,
+        discover_config_path_from, load_config_path,
     };
     use std::env;
     use std::fs;
@@ -1682,6 +1807,7 @@ apps:
             PolicyConfigField::AllowedRouteStrategies.as_str(),
             "allowed_route_strategies"
         );
+        assert_eq!(PolicyConfigField::MaxSessionTtl.as_str(), "max_session_ttl");
     }
 
     #[test]
@@ -1706,6 +1832,7 @@ apps:
             config.allowed_route_strategies(),
             &[RouteStrategy::Header, RouteStrategy::Preview]
         );
+        assert_eq!(config.max_session_ttl(), Some("2h"));
     }
 
     #[test]
@@ -1718,6 +1845,7 @@ apps:
         assert!(config.allowed_namespaces().is_empty());
         assert!(config.allowed_workload_kinds().is_empty());
         assert!(config.allowed_route_strategies().is_empty());
+        assert_eq!(config.max_session_ttl(), None);
     }
 
     #[test]
@@ -1733,6 +1861,7 @@ policies:
       - Deployment
     allowed_route_strategies:
       - header
+    max_session_ttl: 30m
 "#,
         )
         .expect("valid policy config YAML");
@@ -1742,7 +1871,8 @@ policies:
             &[PolicyConfig::new("sandbox-defaults")
                 .with_allowed_namespaces(["shop"])
                 .with_allowed_workload_kinds(["Deployment"])
-                .with_allowed_route_strategies([RouteStrategy::Header])]
+                .with_allowed_route_strategies([RouteStrategy::Header])
+                .with_max_session_ttl("30m")]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -1899,6 +2029,42 @@ policies:
     }
 
     #[test]
+    fn rejects_invalid_policy_max_session_ttl() {
+        let config = KplyConfig::new(
+            ConfigVersion::CURRENT,
+            AppConfigs::default(),
+            RoutingConfig,
+            CheckConfigs::default(),
+            PolicyConfigs::new(vec![
+                PolicyConfig::new("sandbox-defaults").with_max_session_ttl("0m"),
+                PolicyConfig::new("short-sandbox").with_max_session_ttl("forever"),
+            ]),
+        );
+
+        let errors = config.validate().expect_err("invalid max TTL should fail");
+
+        assert_eq!(
+            errors.errors(),
+            &[
+                ConfigValidationError::InvalidPolicyDuration {
+                    policy_index: 0,
+                    field: PolicyConfigField::MaxSessionTtl,
+                    reason: PolicyDurationError::Zero,
+                },
+                ConfigValidationError::InvalidPolicyDuration {
+                    policy_index: 1,
+                    field: PolicyConfigField::MaxSessionTtl,
+                    reason: PolicyDurationError::InvalidUnit { unit: 'r' },
+                },
+            ]
+        );
+        assert_eq!(
+            errors.to_string(),
+            "2 config validation errors; first error: policies[0].max_session_ttl: invalid duration; value must be greater than zero"
+        );
+    }
+
+    #[test]
     fn serializes_policy_config_to_stable_json() {
         let value = serde_json::to_value(policy_config()).expect("policy should serialize");
 
@@ -1911,6 +2077,7 @@ policies:
                 "allowed_namespaces": ["shop", "kply-demo"],
                 "allowed_workload_kinds": ["Deployment", "StatefulSet"],
                 "allowed_route_strategies": ["header", "preview"],
+                "max_session_ttl": "2h",
             })
         );
     }
@@ -2080,5 +2247,6 @@ policies:
             .with_allowed_namespaces(["shop", "kply-demo"])
             .with_allowed_workload_kinds(["Deployment", "StatefulSet"])
             .with_allowed_route_strategies([RouteStrategy::Header, RouteStrategy::Preview])
+            .with_max_session_ttl("2h")
     }
 }
