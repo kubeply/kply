@@ -560,6 +560,8 @@ pub enum PolicyConfigField {
     MaxSessionTtl,
     /// Policy `mutation_mode` field.
     MutationMode,
+    /// Policy `secret_handling` field.
+    SecretHandling,
 }
 
 impl PolicyConfigField {
@@ -574,6 +576,7 @@ impl PolicyConfigField {
             Self::AllowedRouteStrategies => "allowed_route_strategies",
             Self::MaxSessionTtl => "max_session_ttl",
             Self::MutationMode => "mutation_mode",
+            Self::SecretHandling => "secret_handling",
         }
     }
 }
@@ -803,6 +806,27 @@ impl MutationModePolicy {
     }
 }
 
+/// Secret reference handling allowed by a policy entry.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SecretHandlingPolicy {
+    /// Allow Secret names and reference metadata only.
+    MetadataOnly,
+    /// Treat Secret references as denied for future planning and mutation.
+    DenyReferences,
+}
+
+impl SecretHandlingPolicy {
+    /// Return the stable config spelling for this [`SecretHandlingPolicy`].
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::MetadataOnly => "metadata-only",
+            Self::DenyReferences => "deny-references",
+        }
+    }
+}
+
 /// Top-level routing config section.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingConfig;
@@ -946,6 +970,8 @@ pub struct PolicyConfig {
     max_session_ttl: Option<String>,
     #[serde(default)]
     mutation_mode: Option<MutationModePolicy>,
+    #[serde(default)]
+    secret_handling: Option<SecretHandlingPolicy>,
 }
 
 impl PolicyConfig {
@@ -961,6 +987,7 @@ impl PolicyConfig {
             allowed_route_strategies: Vec::new(),
             max_session_ttl: None,
             mutation_mode: None,
+            secret_handling: None,
         }
     }
 
@@ -1075,6 +1102,17 @@ impl PolicyConfig {
     /// Return a copy of this policy entry with a mutation mode.
     pub fn with_mutation_mode(mut self, mutation_mode: MutationModePolicy) -> Self {
         self.mutation_mode = Some(mutation_mode);
+        self
+    }
+
+    /// Return the secret handling behavior this policy will allow.
+    pub const fn secret_handling(&self) -> Option<SecretHandlingPolicy> {
+        self.secret_handling
+    }
+
+    /// Return a copy of this policy entry with secret handling behavior.
+    pub fn with_secret_handling(mut self, secret_handling: SecretHandlingPolicy) -> Self {
+        self.secret_handling = Some(secret_handling);
         self
     }
 
@@ -1451,8 +1489,8 @@ mod tests {
         CheckConfigs, ConfigLoadError, ConfigValidationError, ConfigValidationErrors,
         ConfigVersion, ConfigVersionError, EmptyConfigValidationErrors, KplyConfig,
         MutationModePolicy, PolicyConfig, PolicyConfigField, PolicyConfigs, PolicyDurationError,
-        PolicyImageRegistryError, RouteStrategy, RoutingConfig, discover_config_path_from,
-        load_config_path,
+        PolicyImageRegistryError, RouteStrategy, RoutingConfig, SecretHandlingPolicy,
+        discover_config_path_from, load_config_path,
     };
     use std::env;
     use std::fs;
@@ -2070,6 +2108,10 @@ apps:
         );
         assert_eq!(PolicyConfigField::MaxSessionTtl.as_str(), "max_session_ttl");
         assert_eq!(PolicyConfigField::MutationMode.as_str(), "mutation_mode");
+        assert_eq!(
+            PolicyConfigField::SecretHandling.as_str(),
+            "secret_handling"
+        );
     }
 
     #[test]
@@ -2106,6 +2148,10 @@ apps:
             config.mutation_mode(),
             Some(MutationModePolicy::SandboxOnly)
         );
+        assert_eq!(
+            config.secret_handling(),
+            Some(SecretHandlingPolicy::MetadataOnly)
+        );
     }
 
     #[test]
@@ -2121,6 +2167,7 @@ apps:
         assert!(config.allowed_route_strategies().is_empty());
         assert_eq!(config.max_session_ttl(), None);
         assert_eq!(config.mutation_mode(), None);
+        assert_eq!(config.secret_handling(), None);
     }
 
     #[test]
@@ -2141,6 +2188,7 @@ policies:
       - header
     max_session_ttl: 30m
     mutation_mode: sandbox-only
+    secret_handling: metadata-only
 "#,
         )
         .expect("valid policy config YAML");
@@ -2153,7 +2201,8 @@ policies:
                 .with_allowed_image_registries(["registry.example.com", "localhost:5000"])
                 .with_allowed_route_strategies([RouteStrategy::Header])
                 .with_max_session_ttl("30m")
-                .with_mutation_mode(MutationModePolicy::SandboxOnly)]
+                .with_mutation_mode(MutationModePolicy::SandboxOnly)
+                .with_secret_handling(SecretHandlingPolicy::MetadataOnly)]
         );
         assert_eq!(config.validate(), Ok(()));
     }
@@ -2423,6 +2472,7 @@ policies:
                 "allowed_route_strategies": ["header", "preview"],
                 "max_session_ttl": "2h",
                 "mutation_mode": "sandbox-only",
+                "secret_handling": "metadata-only",
             })
         );
     }
@@ -2486,6 +2536,15 @@ policies:
         assert_eq!(MutationModePolicy::ReadOnly.as_str(), "read-only");
         assert_eq!(MutationModePolicy::SandboxOnly.as_str(), "sandbox-only");
         assert_eq!(MutationModePolicy::RouteMutation.as_str(), "route-mutation");
+    }
+
+    #[test]
+    fn renders_secret_handling_policy_names() {
+        assert_eq!(SecretHandlingPolicy::MetadataOnly.as_str(), "metadata-only");
+        assert_eq!(
+            SecretHandlingPolicy::DenyReferences.as_str(),
+            "deny-references"
+        );
     }
 
     #[test]
@@ -2602,5 +2661,6 @@ policies:
             .with_allowed_route_strategies([RouteStrategy::Header, RouteStrategy::Preview])
             .with_max_session_ttl("2h")
             .with_mutation_mode(MutationModePolicy::SandboxOnly)
+            .with_secret_handling(SecretHandlingPolicy::MetadataOnly)
     }
 }
