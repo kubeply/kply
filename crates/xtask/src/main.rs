@@ -1489,6 +1489,7 @@ fn collect_crate_sources_inner(directory: &Path, source_paths: &mut Vec<PathBuf>
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::Path;
 
@@ -1500,9 +1501,10 @@ mod tests {
         check_fixture_testing_docs_inner, check_future_session_docs_inner,
         check_license_files_inner, check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
-        check_toolchain_pin_inner, collect_workspace_members, contains_crate_name,
-        forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
-        has_non_placeholder_public_item, has_placeholder_marker, workflow_installs_toolchain,
+        check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
+        contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
+        has_non_placeholder_public_item, has_placeholder_marker, secret_content_guard_source_roots,
+        workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1803,6 +1805,62 @@ pub struct IngressTlsSummary {
 
         check_no_secret_content_reads_inner([&source_path], forbidden_secret_content_patterns())
             .expect("secret metadata references should pass");
+    }
+
+    #[test]
+    fn configures_secret_content_guard_source_roots_for_product_crates() {
+        let roots = secret_content_guard_source_roots();
+
+        assert!(roots.contains(&"crates/kply-checks/src"));
+        assert!(roots.contains(&"crates/kply-cli/src"));
+        assert!(roots.contains(&"crates/kply-config/src"));
+        assert!(roots.contains(&"crates/kply-core/src"));
+        assert!(roots.contains(&"crates/kply-k8s/src"));
+        assert!(roots.contains(&"crates/kply-routing/src"));
+        assert!(!roots.contains(&"crates/xtask/src"));
+
+        let unique_roots = roots.iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            unique_roots.len(),
+            roots.len(),
+            "secret content guard roots should not contain duplicates"
+        );
+
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("xtask manifest should live under crates/xtask");
+        let mut source_paths = Vec::new();
+        for root in roots {
+            source_paths.extend(
+                collect_crate_sources(workspace_root.join(root))
+                    .expect("product source root should be readable"),
+            );
+        }
+        source_paths.sort();
+        source_paths.dedup();
+
+        assert!(
+            source_paths
+                .iter()
+                .any(|path| path.ends_with("crates/kply-cli/src/main.rs"))
+        );
+        assert!(
+            source_paths
+                .iter()
+                .any(|path| path.ends_with("crates/kply-core/src/lib.rs"))
+        );
+        assert!(
+            source_paths
+                .iter()
+                .all(|path| !path.ends_with("crates/xtask/src/main.rs"))
+        );
+        let unique_source_paths = source_paths.iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            unique_source_paths.len(),
+            source_paths.len(),
+            "secret content guard aggregation should not contain duplicate source paths"
+        );
     }
 
     #[test]
