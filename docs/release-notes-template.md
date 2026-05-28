@@ -34,6 +34,7 @@
 - `cargo test --all-targets --all-features --locked`
 - `cargo deny check`
 - `cargo xtask check-release-planning`
+- Local archive smoke test from `docs/release.md`
 
 ## Artifacts
 
