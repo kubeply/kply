@@ -15,7 +15,9 @@ Kply uses semver and `cargo-dist` for binary releases.
 
 1. Update workspace package version in `Cargo.toml`.
 2. Update snapshots when output changes intentionally.
-3. Run validation:
+3. Draft release notes from
+   [`docs/release-notes-template.md`](release-notes-template.md).
+4. Run validation:
 
    ```bash
    cargo fmt --all -- --check
@@ -25,12 +27,13 @@ Kply uses semver and `cargo-dist` for binary releases.
    cargo deny check
    ```
 
-4. Create a semver tag:
+5. Create a semver tag:
 
    ```bash
    git tag v0.1.0
    git push origin v0.1.0
    ```
 
-The release workflow currently runs `dist plan`. Once the first public binary is
-ready, regenerate the full `cargo-dist` release workflow and keep pinned actions.
+Pull requests run `dist plan` for release-shape validation. Semver tag pushes
+build archives, the shell installer, SHA-256 checksums, and GitHub artifact
+attestations through the pinned `cargo-dist` workflow.
