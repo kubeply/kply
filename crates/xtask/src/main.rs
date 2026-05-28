@@ -606,6 +606,20 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         errors.push("dist.pr-run-mode must stay plan".to_owned());
     }
 
+    let allow_dirty = dist_config
+        .get("dist")
+        .and_then(|dist| dist.get("allow-dirty"))
+        .and_then(toml::Value::as_array);
+
+    if !matches!(
+        allow_dirty,
+        Some(allow_dirty)
+            if allow_dirty.len() == 1
+                && allow_dirty.first().and_then(toml::Value::as_str) == Some("ci")
+    ) {
+        errors.push("dist.allow-dirty must allow only ci workflow permission hardening".to_owned());
+    }
+
     let packages = dist_config
         .get("dist")
         .and_then(|dist| dist.get("packages"))
@@ -1445,6 +1459,7 @@ highlight = "all"
 cargo-dist-version = "0.32.0"
 packages = ["kply-cli"]
 pr-run-mode = "plan"
+allow-dirty = ["ci"]
 "#;
     const RELEASE_PLAN_WORKFLOW: &str = r#"
 name: release
@@ -2600,6 +2615,29 @@ license = "Apache-2.0"
                 .to_string()
                 .contains("release planning issue(s) found")
         );
+    }
+
+    #[test]
+    fn rejects_release_allow_dirty_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                "allow-dirty = [\"ci\"]",
+                "allow-dirty = [\"ci\", \"source\"]",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release allow-dirty drift should fail");
+
+        assert!(error.to_string().contains("allow-dirty"));
     }
 
     #[test]
