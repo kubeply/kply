@@ -305,3 +305,26 @@ semver tag release path, and the absence of direct `dist publish` commands.
 The semver tag workflow must pass before announcing `v0.1.0`. Tag runs are the
 only path that may build archives, generate the shell installer and checksums,
 upload artifacts, attest them, and create the GitHub Release.
+
+## Local Demo Docs Requirement
+
+The first release must include local demo documentation that lets a developer
+evaluate Kply without cloud credentials or production cluster access.
+
+The required demo docs are:
+
+- [Local Kind Demo](demo-kind.md), covering prerequisites, Kind cluster setup,
+  `kply demo doctor`, `kply demo install`, `kply demo reset`, `kply demo
+  teardown`, baseline fixture installation, backend variant switching,
+  inspection, route planning, route no-op apply, and cleanup.
+- [Coding Agent Demo Guide](demo-agent.md), covering the safe prompt,
+  namespace boundary, allowed commands, forbidden Secret value reads, backend
+  variant repair path, expected agent output, reset, and current limitations.
+- [Demo fixture README](../fixtures/demo/ecommerce-basic/README.md), linking
+  the fixture shape back to the human and agent demo guides.
+
+`cargo xtask check-demo-docs` is part of the release gate. It pins the README
+local demo link, the Kind and agent guides, the walkthrough script reference,
+the demo fixture path, the dedicated `kply-demo` namespace, and the current
+route apply limitation so the local demo cannot silently disappear from
+`v0.1.0`.

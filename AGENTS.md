@@ -73,6 +73,7 @@ cargo test --all-targets --all-features --locked
 cargo test -p kply-test --locked
 cargo xtask check-ci-workflow
 cargo xtask check-crate-inventory-docs
+cargo xtask check-demo-docs
 cargo xtask check-deny-config
 cargo xtask check-fixture-directories
 cargo xtask check-fixture-naming-docs

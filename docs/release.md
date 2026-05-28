@@ -33,6 +33,7 @@ Kply uses semver and `cargo-dist` for binary releases.
    cargo test -p kply-test --locked
    cargo deny check
    cargo xtask check-ci-workflow
+   cargo xtask check-demo-docs
    cargo xtask check-release-planning
    dist plan --output-format=json --no-local-paths >/tmp/kply-dist-plan-check.json
    ```
@@ -92,6 +93,7 @@ Before tagging the first public binary release:
 - Confirm `cargo xtask check-ci-workflow` passes locally.
 - Confirm the GitHub Actions `Release` workflow `plan` job is green for the
   release commit.
+- Confirm `cargo xtask check-demo-docs` passes locally.
 - Confirm `cargo xtask check-release-planning` passes locally.
 - Confirm `dist plan --output-format=json --no-local-paths` releases only
   `kply-cli` and does not include `xtask` artifacts.
