@@ -337,13 +337,17 @@ fn check_feedback_triage_docs_inner(feedback_triage_path: PathBuf) -> Result<()>
             "## Missing Route Adapters".into(),
             "## Policy Needs".into(),
             "## App Graph Failures".into(),
+            "## Check Failures".into(),
             "missing route adapter".into(),
             "Three separate users or organizations".into(),
             "repeated route adapter request".into(),
             "repeated policy need".into(),
             "repeated app graph failure".into(),
+            "repeated check failure".into(),
             "same missing graph relationship".into(),
             "minimum deterministic graph evidence".into(),
+            "same check failure mode".into(),
+            "minimum deterministic check evidence".into(),
             "same policy boundary".into(),
             "minimum deterministic decision".into(),
             "Do not include Secret values".into(),
@@ -422,6 +426,8 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "Codex, Claude Code, Cursor".into(),
                 "Do not include Secret values".into(),
                 "Failure mode to prevent".into(),
+                "repeated check failure".into(),
+                "Check failure".into(),
                 "Useful Kply behavior".into(),
             ],
         },
@@ -436,6 +442,7 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "infra-bench failure".into(),
                 "repeated policy need".into(),
                 "repeated app graph failure".into(),
+                "repeated check failure".into(),
                 "Requested roadmap change".into(),
                 "Affected agent-infra workflow".into(),
                 "Success criteria".into(),
@@ -2445,6 +2452,8 @@ agent-workflow
 Codex, Claude Code, Cursor
 Do not include Secret values
 Failure mode to prevent
+repeated check failure
+Check failure
 Useful Kply behavior
 ",
         );
@@ -2460,6 +2469,7 @@ Evidence type
 infra-bench failure
 repeated policy need
 repeated app graph failure
+repeated check failure
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2537,6 +2547,8 @@ agent-workflow
 Codex, Claude Code, Cursor
 Do not include Secret values
 Failure mode to prevent
+repeated check failure
+Check failure
 Useful Kply behavior
 ",
         );
@@ -2552,6 +2564,7 @@ Evidence type
 infra-bench failure
 repeated policy need
 repeated app graph failure
+repeated check failure
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2582,13 +2595,17 @@ Success criteria
 ## Missing Route Adapters
 ## Policy Needs
 ## App Graph Failures
+## Check Failures
 missing route adapter
 Three separate users or organizations
 repeated route adapter request
 repeated policy need
 repeated app graph failure
+repeated check failure
 same missing graph relationship
 minimum deterministic graph evidence
+same check failure mode
+minimum deterministic check evidence
 same policy boundary
 minimum deterministic decision
 Do not include Secret values
@@ -2612,12 +2629,16 @@ OpenSpec change
 ## Missing Route Adapters
 ## Policy Needs
 ## App Graph Failures
+## Check Failures
 missing route adapter
 repeated route adapter request
 repeated policy need
 repeated app graph failure
+repeated check failure
 same missing graph relationship
 minimum deterministic graph evidence
+same check failure mode
+minimum deterministic check evidence
 same policy boundary
 minimum deterministic decision
 Do not include Secret values

@@ -121,3 +121,42 @@ When the repeated threshold is met, open a roadmap issue with evidence type
 Convert the roadmap issue into an OpenSpec change only after the discovery
 input, graph edge semantics, confidence output, and fixture set are clear enough
 to test.
+
+## Check Failures
+
+Track a check failure when an agent workflow request shows that Kply ran,
+skipped, omitted, or explained a verification check in a way that could mislead
+an agent or human about sandbox health, service reachability, route behavior, or
+deployment readiness.
+
+Use the `agent-workflow` and `feedback` labels for the first report. Add or keep
+the `roadmap` label only when the report includes sanitized commands, check
+output, expected evidence, and the safety impact of the missing or misleading
+verification.
+
+A check failure becomes repeated feedback when one of these is true:
+
+1. Three separate users or organizations report the same check failure mode.
+2. Two separate user reports and one benchmark or local demo failure point at
+   the same missing or misleading check behavior.
+3. One user report shows a production-blocking verification gap that can cause
+   an agent to proceed with false confidence, and a maintainer can reproduce the
+   limitation with sanitized fixtures.
+
+Do not include Secret values, credentials, private hostnames, response bodies
+with customer data, or unredacted logs in public tracking. Do not count those
+reports until the reporter provides a sanitized version. Do not add customer
+examples to public docs unless explicit permission exists.
+
+When the repeated threshold is met, open a roadmap issue with evidence type
+`repeated check failure`. Include:
+
+- the check name or missing check category.
+- the current Kply check status, evidence, skipped reason, or missing output.
+- why the result is unsafe, misleading, incomplete, or insufficient for an
+  agent workflow.
+- the minimum deterministic check evidence needed before an agent continues.
+- links to sanitized issues, benchmark runs, demo failures, or fixtures.
+
+Convert the roadmap issue into an OpenSpec change only after the check input,
+status semantics, evidence schema, and fixture set are clear enough to test.
