@@ -221,6 +221,14 @@ fn normalize_capability_report_output(output: &str) -> String {
 }
 
 fn normalize_capability_report_json(value: &mut serde_json::Value) {
+    assert!(
+        value.get("os").is_some_and(serde_json::Value::is_string),
+        "capability report must include string `os`"
+    );
+    assert!(
+        value.get("arch").is_some_and(serde_json::Value::is_string),
+        "capability report must include string `arch`"
+    );
     value["os"] = serde_json::Value::String("<os>".to_owned());
     value["arch"] = serde_json::Value::String("<arch>".to_owned());
 }
@@ -415,9 +423,10 @@ fn prints_anonymized_capability_report_text() {
 fn prints_anonymized_capability_report_json() {
     let workspace = temp_workspace();
     let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let path = fake_demo_path(workspace.path());
     let output = kply_cmd()
-        .env("KUBECONFIG", kubeconfig_path)
-        .env("PATH", fake_demo_path(workspace.path()))
+        .env("KUBECONFIG", &kubeconfig_path)
+        .env("PATH", &path)
         .args(["doctor", "--capability-report", "--json"])
         .assert()
         .success()
@@ -426,6 +435,14 @@ fn prints_anonymized_capability_report_json() {
         .clone();
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert!(
+        !output.contains(&path),
+        "capability report JSON must not include PATH directory values"
+    );
+    assert!(
+        !output.contains(&kubeconfig_path.to_string_lossy().to_string()),
+        "capability report JSON must not include kubeconfig paths"
+    );
     let output = normalize_output(&output);
     let mut value: serde_json::Value =
         serde_json::from_str(&output).expect("stdout should be JSON");
@@ -447,6 +464,7 @@ fn omits_paths_from_anonymized_capability_report() {
         .args([
             "doctor",
             "--capability-report",
+            "--json",
             "--config",
             missing_config
                 .to_str()
@@ -471,10 +489,24 @@ fn omits_paths_from_anonymized_capability_report() {
         !stdout.contains(&missing_kubeconfig.to_string_lossy().to_string()),
         "capability reports must not include kubeconfig paths"
     );
-    insta::assert_snapshot!(
-        "doctor_capability_report_omits_paths",
-        normalize_capability_report_output(&stdout)
-    );
+    let output = normalize_output(&stdout);
+    let mut value: serde_json::Value =
+        serde_json::from_str(&output).expect("stdout should be JSON");
+    normalize_capability_report_json(&mut value);
+    insta::assert_json_snapshot!("doctor_capability_report_omits_paths", value);
+}
+
+#[test]
+fn suppresses_capability_report_text_when_quiet() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .env("PATH", fake_demo_path(workspace.path()))
+        .args(["doctor", "--capability-report", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
 }
 
 #[test]

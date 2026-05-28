@@ -146,7 +146,7 @@ fn render_capability_report(cli: &Cli) -> Result<ExitCode> {
 
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
+    } else if !cli.quiet {
         print!("{}", render_capability_report_text(&report));
     }
 
