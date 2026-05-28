@@ -11,8 +11,10 @@ NAMESPACE="kply-demo"
 CONFIG_PATH="fixtures/demo/ecommerce-basic/kply.yaml"
 BASELINE_BACKEND="fixtures/demo/ecommerce-basic/manifests/backend.yaml"
 BROKEN_BACKEND="fixtures/demo/ecommerce-basic/manifests/backend-broken.yaml"
-FIXED_BACKEND="fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml"
 CHECKOUT_PORT="${KPLY_DEMO_PORT:-18080}"
+SESSION_ID="checkout-plan"
+SANDBOX_SERVICE="${SESSION_ID}-service"
+SANDBOX_IMAGE="nginx:1.27-alpine"
 
 PORT_FORWARD_PID=""
 RUN_FULL_CLEANUP_ON_EXIT=1
@@ -36,7 +38,7 @@ cleanup_demo_on_exit() {
       return
     fi
     kubectl delete -f "${BROKEN_BACKEND}" --ignore-not-found >/dev/null 2>&1 || true
-    kubectl delete -f "${FIXED_BACKEND}" --ignore-not-found >/dev/null 2>&1 || true
+    kply --config "${CONFIG_PATH}" session cleanup "${SESSION_ID}" --namespace "${NAMESPACE}" --apply >/dev/null 2>&1 || true
     kply demo teardown >/dev/null 2>&1 || true
   fi
 }
@@ -108,21 +110,26 @@ kply --config "${CONFIG_PATH}" app list
 kply --config "${CONFIG_PATH}" app inspect checkout
 
 step "Plan the future sandbox session"
-kply --config "${CONFIG_PATH}" session plan checkout --image hashicorp/http-echo:1.0
+kply --config "${CONFIG_PATH}" session plan checkout \
+  --image "${SANDBOX_IMAGE}" \
+  --namespace "${NAMESPACE}" \
+  --route-strategy preview-service
 
 step "Plan temporary Gateway API routing"
 kply route plan checkout-plan --namespace "${NAMESPACE}"
 kply route apply checkout-plan --namespace "${NAMESPACE}"
 kply route cleanup checkout-plan --namespace "${NAMESPACE}"
 
-step "Create the simulated sandbox candidate"
-printf 'kply session create is not implemented yet; applying the fixed demo backend variant as a local stand-in.\n'
-kubectl delete -f "${BROKEN_BACKEND}" --ignore-not-found
-kubectl apply -f "${FIXED_BACKEND}"
-kubectl -n "${NAMESPACE}" rollout status --timeout=5m deployment/checkout-api
+step "Create the sandbox candidate"
+kply --config "${CONFIG_PATH}" session create checkout \
+  --image "${SANDBOX_IMAGE}" \
+  --namespace "${NAMESPACE}" \
+  --route-strategy preview-service \
+  --apply
 
-step "Run the demo check"
-kubectl -n "${NAMESPACE}" port-forward "service/checkout-api" "${CHECKOUT_PORT}:8080" >/tmp/kply-demo-port-forward.log 2>&1 &
+step "Run sandbox checks"
+kply check run "${SESSION_ID}" --namespace "${NAMESPACE}"
+kubectl -n "${NAMESPACE}" port-forward "service/${SANDBOX_SERVICE}" "${CHECKOUT_PORT}:80" >/tmp/kply-demo-port-forward.log 2>&1 &
 PORT_FORWARD_PID="$!"
 sleep 2
 if ! kill -0 "${PORT_FORWARD_PID}" 2>/dev/null; then
@@ -130,12 +137,13 @@ if ! kill -0 "${PORT_FORWARD_PID}" 2>/dev/null; then
   cat /tmp/kply-demo-port-forward.log >&2
   exit 1
 fi
-wait_for_checkout | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
+wait_for_checkout | grep -Fq "Welcome to nginx"
 
 step "Cleanup"
 cleanup_port_forward
 PORT_FORWARD_PID=""
-kubectl delete -f "${FIXED_BACKEND}" --ignore-not-found
+kply --config "${CONFIG_PATH}" session cleanup "${SESSION_ID}" --namespace "${NAMESPACE}" --dry-run
+kply --config "${CONFIG_PATH}" session cleanup "${SESSION_ID}" --namespace "${NAMESPACE}" --apply
 kply demo reset
 kply demo teardown
 RUN_FULL_CLEANUP_ON_EXIT=0

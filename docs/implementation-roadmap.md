@@ -57,6 +57,9 @@ Completed work:
 - Milestone 20 item 8 is implemented:
   - paired `infra-bench` Kubernetes tasks comparing raw `kubectl` rollouts with
     `kply`-bounded sandbox workflows.
+- Milestone 9 item 12 is implemented:
+  - scripted local demo walkthrough for inspect, plan, sandbox create, checks,
+    and cleanup.
 
 Remaining adoption and feedback work:
 
@@ -401,7 +404,7 @@ real cluster.
 9. Keep demo commands explicit and isolated.
 10. Add smoke tests for generated demo manifests.
 11. Add docs for running the demo with a coding agent.
-12. Add a scripted walkthrough:
+12. [x] Add a scripted walkthrough:
     - inspect app.
     - plan session.
     - create sandbox.

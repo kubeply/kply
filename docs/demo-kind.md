@@ -16,7 +16,9 @@ For an agent-oriented workflow, see
 
 For a runnable end-to-end walkthrough, use
 [`scripts/demo-walkthrough.sh`](../scripts/demo-walkthrough.sh). The script
-simulates the sandbox creation step until `kply session create` is implemented.
+inspects the demo app, plans a sandbox session, creates the sandbox with
+`kply session create --apply`, runs `kply check run`, verifies the sandbox
+Service, and removes the session with `kply session cleanup --apply`.
 
 For a short replayable terminal cast of the same bounded workflow, see
 [Local Demo Terminal Cast](demo-terminal-cast.md).
@@ -141,8 +143,31 @@ require explicit `--apply` confirmation.
 ```bash
 cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml config validate
 cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app list
+cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app inspect checkout
 cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session plan checkout --image hashicorp/http-echo:1.0
 ```
+
+## Walk Through A Sandbox Session
+
+The scripted walkthrough uses `nginx:1.27-alpine` as a small HTTP candidate
+image because generated sandbox Services currently target port `80`. It keeps
+the production `checkout-api` fixture separate and creates session-owned
+resources named from the deterministic `checkout-plan` session id.
+
+```bash
+cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session plan checkout --image nginx:1.27-alpine --namespace kply-demo --route-strategy preview-service
+cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session create checkout --image nginx:1.27-alpine --namespace kply-demo --route-strategy preview-service --apply
+cargo run --locked --bin kply -- check run checkout-plan --namespace kply-demo
+kubectl -n kply-demo port-forward service/checkout-plan-service 18080:80
+curl http://127.0.0.1:18080
+cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session cleanup checkout-plan --namespace kply-demo --dry-run
+cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session cleanup checkout-plan --namespace kply-demo --apply
+```
+
+This is the current local version of the inspect, plan, create sandbox, run
+checks, and cleanup flow. It validates sandbox resource creation and cleanup in
+the disposable Kind cluster; it does not promote traffic or replace the
+production demo backend.
 
 ## Plan Temporary Routing
 

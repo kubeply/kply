@@ -510,6 +510,9 @@ fn check_demo_docs_inner(doc_paths: [PathBuf; 4]) -> Result<()> {
                 "demo install".into(),
                 "demo reset".into(),
                 "demo teardown".into(),
+                "session create".into(),
+                "check run".into(),
+                "session cleanup".into(),
                 "kind create cluster --name kply-demo".into(),
                 "fixtures/demo/ecommerce-basic/kply.yaml".into(),
                 "kply-demo".into(),
@@ -522,6 +525,9 @@ fn check_demo_docs_inner(doc_paths: [PathBuf; 4]) -> Result<()> {
                 "Use Kubernetes context kind-kply-demo only.".into(),
                 "Do not touch resources outside the kply-demo namespace.".into(),
                 "Do not read Kubernetes Secret values.".into(),
+                "kply session create --apply".into(),
+                "kply check run".into(),
+                "kply session cleanup --apply".into(),
                 "fixtures/demo/ecommerce-basic/manifests/".into(),
                 "scripts/demo-walkthrough.sh".into(),
                 "status: \"not_implemented\"".into(),
@@ -2723,6 +2729,7 @@ See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup gui
 See demo-agent.md and scripts/demo-walkthrough.sh.
 
 Run kply demo doctor, kply demo install, kply demo reset, and kply demo teardown.
+Run kply session create, kply check run, and kply session cleanup.
 Create the cluster with kind create cluster --name kply-demo.
 Use fixtures/demo/ecommerce-basic/kply.yaml in the kply-demo namespace.
 ",
@@ -2736,6 +2743,7 @@ Use fixtures/demo/ecommerce-basic/kply.yaml in the kply-demo namespace.
 Use Kubernetes context kind-kply-demo only.
 Do not touch resources outside the kply-demo namespace.
 Do not read Kubernetes Secret values.
+Use kply session create --apply, kply check run, and kply session cleanup --apply.
 Use fixtures/demo/ecommerce-basic/manifests/ and scripts/demo-walkthrough.sh.
 Current route apply output includes status: \"not_implemented\".
 It does not yet prove live sandbox routing.
