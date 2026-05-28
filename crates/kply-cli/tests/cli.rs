@@ -2645,6 +2645,17 @@ fn prints_session_manifests_text() {
     });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(
+        output,
+        concat!(
+            "kply session manifests checkout\n",
+            "session_id: checkout-plan\n",
+            "manifests: 3\n",
+            "  manifest: Deployment shop/checkout-plan-workload\n",
+            "  manifest: Service shop/checkout-plan-service\n",
+            "  manifest: ConfigMap shop/checkout-plan-route\n",
+        )
+    );
     insta::assert_snapshot!("session_manifests_text", output);
 }
 
@@ -2669,6 +2680,36 @@ fn prints_session_manifests_json() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("session manifests output should be an object");
+    assert_eq!(
+        object.len(),
+        4,
+        "session manifests JSON shape should stay stable"
+    );
+    assert_eq!(value["app"], "checkout");
+    assert_eq!(value["session_id"], "checkout-plan");
+    assert_eq!(value["status"], "generated");
+    let manifests = value["manifests"]
+        .as_array()
+        .expect("manifests should be an array");
+    assert_eq!(manifests.len(), 3);
+    assert_eq!(manifests[0]["kind"], "Deployment");
+    assert_eq!(manifests[0]["namespace"], "shop");
+    assert_eq!(manifests[0]["name"], "checkout-plan-workload");
+    assert_eq!(manifests[0]["object"]["apiVersion"], "apps/v1");
+    assert_eq!(manifests[0]["object"]["kind"], "Deployment");
+    assert_eq!(manifests[1]["kind"], "Service");
+    assert_eq!(manifests[1]["namespace"], "shop");
+    assert_eq!(manifests[1]["name"], "checkout-plan-service");
+    assert_eq!(manifests[1]["object"]["apiVersion"], "v1");
+    assert_eq!(manifests[1]["object"]["kind"], "Service");
+    assert_eq!(manifests[2]["kind"], "ConfigMap");
+    assert_eq!(manifests[2]["namespace"], "shop");
+    assert_eq!(manifests[2]["name"], "checkout-plan-route");
+    assert_eq!(manifests[2]["object"]["apiVersion"], "v1");
+    assert_eq!(manifests[2]["object"]["kind"], "ConfigMap");
     insta::assert_json_snapshot!("session_manifests_json", value);
 }
 
