@@ -52,6 +52,24 @@ Verify the installed version:
 kply --version
 ```
 
+## Rollback
+
+Rollback to a known-good release by installing from its release tag. Replace
+`v0.1.0` with the version listed in the release notes or deployment record:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/kubeply/kply/releases/download/v0.1.0/kply-cli-installer.sh \
+  | sh
+```
+
+Verify the rollback installed the expected version before running cluster
+workflows:
+
+```bash
+kply --version
+```
+
 ## Product Primitive
 
 A Kply session is a temporary, scoped workspace for an agent:
