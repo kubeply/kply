@@ -65,6 +65,7 @@ fn main() -> Result<()> {
             println!("  check-report-language verify reports do not overclaim deployment safety");
             println!("  check-readme-roadmap-link verify README links the roadmap");
             println!("  check-release-planning verify cargo-dist release packaging stays pinned");
+            println!("  check-security-assumptions-docs verify first-release trust assumptions");
             println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
@@ -120,6 +121,9 @@ fn main() -> Result<()> {
         "check-release-planning" => {
             check_release_planning()?;
         }
+        "check-security-assumptions-docs" => {
+            check_security_assumptions_docs()?;
+        }
         "check-toolchain-pin" => {
             check_toolchain_pin()?;
         }
@@ -147,6 +151,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-report-language");
             println!("cargo xtask check-readme-roadmap-link");
             println!("cargo xtask check-release-planning");
+            println!("cargo xtask check-security-assumptions-docs");
             println!("cargo xtask check-toolchain-pin");
         }
         unknown => bail!("unknown xtask command: {unknown}"),
@@ -260,6 +265,10 @@ fn check_known_limitations_docs() -> Result<()> {
     check_known_limitations_docs_inner("docs/first-release.md".into())
 }
 
+fn check_security_assumptions_docs() -> Result<()> {
+    check_security_assumptions_docs_inner("docs/first-release.md".into())
+}
+
 fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()> {
     let docs = [DocExpectation {
         path: first_release_path,
@@ -276,6 +285,27 @@ fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()>
             "Runtime checks report evidence, not approval to deploy".into(),
             "The JSON contracts are stable only for `v0.1.0` evaluation".into(),
             "The local demo is bounded to the Kind ecommerce fixture".into(),
+        ],
+    }];
+
+    check_docs_contain(docs)
+}
+
+fn check_security_assumptions_docs_inner(first_release_path: PathBuf) -> Result<()> {
+    let docs = [DocExpectation {
+        path: first_release_path,
+        required_phrases: vec![
+            "## Security Assumptions".into(),
+            "Kply `v0.1.0` assumes the caller already has Kubernetes credentials".into(),
+            "Kply does not bypass Kubernetes RBAC".into(),
+            "Use a dedicated service account".into(),
+            "Run Kply against a namespace the platform owner has approved".into(),
+            "Admission policy should enforce ownership labels".into(),
+            "Do not pass production admin kubeconfigs to agents".into(),
+            "Network isolation, egress policy, and database permissions".into(),
+            "Kply output is local CLI evidence and must be retained by the caller".into(),
+            "Supply-chain trust depends on GitHub Release artifacts".into(),
+            "Secret values remain out of scope".into(),
         ],
     }];
 
@@ -1054,6 +1084,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo xtask check-report-language",
         "cargo xtask check-readme-roadmap-link",
         "cargo xtask check-release-planning",
+        "cargo xtask check-security-assumptions-docs",
         "cargo xtask check-toolchain-pin",
     ]
 }
@@ -1784,10 +1815,10 @@ mod tests {
         check_known_limitations_docs_inner, check_license_files_inner,
         check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
-        check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
-        contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
-        has_non_placeholder_public_item, has_placeholder_marker, required_ci_run_commands,
-        secret_content_guard_source_roots, workflow_installs_toolchain,
+        check_security_assumptions_docs_inner, check_toolchain_pin_inner, collect_crate_sources,
+        collect_workspace_members, contains_crate_name, forbidden_report_overclaim_phrases,
+        forbidden_secret_content_patterns, has_non_placeholder_public_item, has_placeholder_marker,
+        required_ci_run_commands, secret_content_guard_source_roots, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1923,6 +1954,8 @@ jobs:
         run: cargo xtask check-readme-roadmap-link
       - name: Check release planning
         run: cargo xtask check-release-planning
+      - name: Check security assumptions docs
+        run: cargo xtask check-security-assumptions-docs
       - name: Check toolchain pin
         run: cargo xtask check-toolchain-pin
       - name: Check dependencies
@@ -2197,6 +2230,65 @@ Kply `v0.1.0` is an evaluation release, not a production safety guarantee.
 
         let error = check_known_limitations_docs_inner(first_release_path)
             .expect_err("known limitations docs missing approval boundary should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
+    }
+
+    #[test]
+    fn accepts_first_release_security_assumptions_docs() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let first_release_path = write_nested_source(
+            temp.path(),
+            "docs/first-release.md",
+            "\
+# First Release Scope
+
+## Security Assumptions
+
+Kply `v0.1.0` assumes the caller already has Kubernetes credentials.
+
+- Kply does not bypass Kubernetes RBAC.
+- Use a dedicated service account.
+- Run Kply against a namespace the platform owner has approved.
+- Admission policy should enforce ownership labels.
+- Do not pass production admin kubeconfigs to agents.
+- Network isolation, egress policy, and database permissions remain platform responsibilities.
+- Kply output is local CLI evidence and must be retained by the caller.
+- Supply-chain trust depends on GitHub Release artifacts, SHA-256 checksums, and attestations.
+- Secret values remain out of scope.
+",
+        );
+
+        check_security_assumptions_docs_inner(first_release_path)
+            .expect("security assumptions docs should pass");
+    }
+
+    #[test]
+    fn rejects_first_release_security_assumptions_docs_without_rbac_boundary() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let first_release_path = write_nested_source(
+            temp.path(),
+            "docs/first-release.md",
+            "\
+# First Release Scope
+
+## Security Assumptions
+
+Kply `v0.1.0` assumes the caller already has Kubernetes credentials.
+
+- Use a dedicated service account.
+- Run Kply against a namespace the platform owner has approved.
+- Admission policy should enforce ownership labels.
+- Do not pass production admin kubeconfigs to agents.
+- Network isolation, egress policy, and database permissions remain platform responsibilities.
+- Kply output is local CLI evidence and must be retained by the caller.
+- Supply-chain trust depends on GitHub Release artifacts, SHA-256 checksums, and attestations.
+- Secret values remain out of scope.
+",
+        );
+
+        let error = check_security_assumptions_docs_inner(first_release_path)
+            .expect_err("security assumptions docs missing RBAC boundary should fail");
 
         assert!(error.to_string().contains("documentation phrase"));
     }
