@@ -59,7 +59,7 @@ surface is covered by docs, tests, CI, and release packaging:
 - Secret value reads remain forbidden.
 - CI passes.
 - Release packaging passes.
+- GitHub Action usage with released `kply` binaries is verified.
 - Local demo docs are present.
 - Completed roadmap milestones are reflected in the roadmap.
 - Known limitations and security assumptions are documented.
-
