@@ -116,6 +116,11 @@ for read-only inspection, sandbox-only sessions, and optional route mutation.
 See [docs/github-actions.md](docs/github-actions.md) for running Kply plan
 reports in pull-request workflows.
 
+## Terminal Agents
+
+See [docs/terminal-agents.md](docs/terminal-agents.md) for using `kply` with
+Codex, Claude Code, Cursor, and other terminal coding agents.
+
 ## Local Demo
 
 See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup
