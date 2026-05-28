@@ -59,6 +59,13 @@ the cluster. It validates the resolved configuration, verifies kubeconfig can
 be resolved for the current context, and checks that `kubectl` is available on
 `PATH`.
 
+`kply doctor --capability-report` emits an opt-in anonymized environment
+capability report for feedback and issue triage. The report omits paths,
+cluster URLs, resource names, namespaces, hostnames, and Secret values. It
+reports only coarse local facts such as config validity, count totals,
+kubeconfig availability, platform, Kply version, and whether expected local
+tools are present.
+
 Doctor results use exit code `0` when every check passes and exit code `1` when
 one or more checks are missing or invalid. Blocking readiness failures are
 reported on stdout so agents can parse the result without treating it as an

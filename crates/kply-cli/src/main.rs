@@ -92,7 +92,9 @@ fn run() -> Result<ExitCode> {
             println!();
             return Ok(ExitCode::SUCCESS);
         }
-        Some(Command::Doctor) => return doctor::render_doctor(&cli),
+        Some(Command::Doctor { capability_report }) => {
+            return doctor::render_doctor(&cli, *capability_report);
+        }
         Some(Command::Config {
             command: Some(ConfigCommand::Show),
         }) => return render_config_show(&cli),
