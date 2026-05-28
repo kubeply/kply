@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_output(&output)
+---
+kply doctor
+status: ready
+checks: 3
+  ok: config -> default in-memory config is valid
+  ok: kubeconfig -> kubeconfig resolved for the current context
+  ok: kubectl -> kubectl at <absolute-path>

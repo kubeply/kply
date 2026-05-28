@@ -55,6 +55,8 @@ pub struct Cli {
 pub enum Command {
     /// Print top-level help.
     Help,
+    /// Check local readiness for Kply workflows.
+    Doctor,
     /// Manage future sandbox sessions.
     Session {
         /// Optional session command.
@@ -131,6 +133,7 @@ impl Command {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Help => "help",
+            Self::Doctor => "doctor",
             Self::Session { .. } => "session",
             Self::App { .. } => "app",
             Self::Config { .. } => "config",

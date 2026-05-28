@@ -52,6 +52,18 @@ upward, but automatic discovery is intentionally not wired into CLI behavior
 yet. When discovery becomes active, `--config <path>` will remain the highest
 precedence input and `--no-config` will force the default in-memory shape.
 
+## Doctor Command
+
+`kply doctor` checks local readiness for normal Kply workflows without mutating
+the cluster. It validates the resolved configuration, verifies kubeconfig can
+be resolved for the current context, and checks that `kubectl` is available on
+`PATH`.
+
+Doctor results use exit code `0` when every check passes and exit code `1` when
+one or more checks are missing or invalid. Blocking readiness failures are
+reported on stdout so agents can parse the result without treating it as an
+unexpected internal error.
+
 ## Compatibility
 
 Exit codes are part of the CLI contract. Changes to these meanings must update

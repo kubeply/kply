@@ -1,0 +1,25 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "checks": [
+    {
+      "message": "default in-memory config is valid",
+      "name": "config",
+      "status": "ok"
+    },
+    {
+      "message": "kubeconfig resolved for the current context",
+      "name": "kubeconfig",
+      "status": "ok"
+    },
+    {
+      "message": "kubectl at <absolute-path>",
+      "name": "kubectl",
+      "status": "ok"
+    }
+  ],
+  "command": "doctor",
+  "status": "ready"
+}

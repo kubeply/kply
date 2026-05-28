@@ -1,6 +1,8 @@
 //! Command-line entrypoint for the Kply placeholder CLI.
 
 mod demo;
+mod doctor;
+mod local;
 
 use anyhow::Result;
 use clap::error::ErrorKind;
@@ -90,6 +92,7 @@ fn run() -> Result<ExitCode> {
             println!();
             return Ok(ExitCode::SUCCESS);
         }
+        Some(Command::Doctor) => return doctor::render_doctor(&cli),
         Some(Command::Config {
             command: Some(ConfigCommand::Show),
         }) => return render_config_show(&cli),

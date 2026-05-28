@@ -6,9 +6,9 @@ use serde::Serialize;
 use std::process::{Command, ExitCode, Output};
 
 use crate::demo::{
-    DEMO_BASELINE_MANIFEST_PATHS, DEMO_NAMESPACE, DEMO_ROLLOUT_DEPLOYMENTS, find_command_in_path,
-    repository_path,
+    DEMO_BASELINE_MANIFEST_PATHS, DEMO_NAMESPACE, DEMO_ROLLOUT_DEPLOYMENTS, repository_path,
 };
+use crate::local::find_command_in_path;
 
 const EXIT_BLOCKING: u8 = 1;
 const KUBECTL_COMMAND: &str = "kubectl";

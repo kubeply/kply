@@ -1,0 +1,10 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_output(&stdout)
+---
+kply doctor
+status: blocked
+checks: 3
+  ok: config -> default in-memory config is valid
+  missing: kubeconfig -> kubeconfig could not be read at the configured path; set KUBECONFIG or create ~/.kube/config
+  missing: kubectl -> missing one of: kubectl

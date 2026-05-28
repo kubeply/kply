@@ -306,6 +306,69 @@ fn prints_help_command() {
 }
 
 #[test]
+fn prints_doctor_text() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let (path, _log_path) = fake_kubectl_path(workspace.path(), 0);
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .env("PATH", path)
+        .arg("doctor")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("doctor_text", normalize_output(&output));
+}
+
+#[test]
+fn prints_doctor_json() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let (path, _log_path) = fake_kubectl_path(workspace.path(), 0);
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .env("PATH", path)
+        .args(["doctor", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    let output = normalize_output(&output);
+    let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    insta::assert_json_snapshot!("doctor_json", value);
+}
+
+#[test]
+fn reports_doctor_missing_readiness() {
+    let workspace = temp_workspace();
+    let empty_path = workspace.path().join("empty-bin");
+    let missing_kubeconfig = workspace.path().join("missing-kubeconfig.yaml");
+    std::fs::create_dir_all(&empty_path).expect("empty PATH directory should be created");
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .env("PATH", &empty_path)
+        .arg("doctor")
+        .assert()
+        .code(EXIT_BLOCKING)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stderr.is_empty(),
+        "doctor blocking results should write to stdout, not stderr"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
+    insta::assert_snapshot!("doctor_missing_readiness", normalize_output(&stdout));
+}
+
+#[test]
 fn prints_command_group_placeholders() {
     for command in Command::PLACEHOLDER_GROUPS {
         let command = command.name();
@@ -4115,6 +4178,7 @@ fn covers_every_top_level_command() {
             "completion",
             "config",
             "demo",
+            "doctor",
             "help",
             "policy",
             "report",
@@ -4125,6 +4189,16 @@ fn covers_every_top_level_command() {
     );
 
     kply_cmd().arg("help").assert().success();
+
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let (path, _log_path) = fake_kubectl_path(workspace.path(), 0);
+    kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .env("PATH", path)
+        .arg("doctor")
+        .assert()
+        .success();
 
     for command in Command::PLACEHOLDER_GROUPS {
         kply_cmd().arg(command.name()).assert().success();

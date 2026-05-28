@@ -44,10 +44,14 @@ Completed work:
   - security policy.
 - Milestone 20 item 3 is implemented:
   - roadmap issue template.
+- Milestone 20 item 4 is implemented:
+  - top-level `kply doctor` readiness checks for config, kubeconfig, and
+    `kubectl`.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 4: add `kply doctor` once enough checks exist.
+- Milestone 20 item 5: add anonymized environment capability report, opt-in
+  only.
 
 ## Locked Decisions
 
@@ -689,7 +693,7 @@ Kubeply product direction.
    - agent workflow request.
 2. Add a security policy.
 3. Add a roadmap issue template.
-4. Add `kply doctor` once enough checks exist.
+4. [x] Add `kply doctor` once enough checks exist.
 5. Add anonymized environment capability report, opt-in only.
 6. Add docs for using `kply` with Codex, Claude Code, Cursor, and other terminal
    agents.

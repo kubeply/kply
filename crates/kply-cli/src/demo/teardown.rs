@@ -5,7 +5,8 @@ use kply_cli::cli::Cli;
 use serde::Serialize;
 use std::process::{Command, ExitCode, Output};
 
-use crate::demo::{DEMO_NAMESPACE, find_command_in_path};
+use crate::demo::DEMO_NAMESPACE;
+use crate::local::find_command_in_path;
 
 const EXIT_BLOCKING: u8 = 1;
 const KUBECTL_COMMAND: &str = "kubectl";
