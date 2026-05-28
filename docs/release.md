@@ -38,6 +38,37 @@ Pull requests run `dist plan` for release-shape validation. Semver tag pushes
 build archives, the shell installer, SHA-256 checksums, and GitHub artifact
 attestations through the pinned `cargo-dist` workflow.
 
+## Local Archive Smoke Test
+
+After the release workflow uploads artifacts and before announcing the release,
+download one archive for the current machine and verify it outside the source
+tree:
+
+```bash
+version=v0.1.0
+target=aarch64-apple-darwin
+archive="kply-cli-${target}.tar.xz"
+workdir="$(mktemp -d)"
+
+gh release download "$version" \
+  --repo kubeply/kply \
+  --pattern "$archive" \
+  --pattern "${archive}.sha256" \
+  --dir "$workdir"
+
+cd "$workdir"
+shasum -a 256 --check "${archive}.sha256"
+tar -xJf "$archive"
+./kply --version
+./kply --version --json
+./kply help
+```
+
+Use the matching target triple for the host being tested:
+`aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`,
+`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-musl`, or
+`x86_64-unknown-linux-musl`.
+
 ## First-Release Checklist
 
 Before tagging the first public binary release:
@@ -52,5 +83,5 @@ Before tagging the first public binary release:
 - Confirm `README.md` contains the final install, upgrade, and rollback paths.
 - Confirm `docs/release-notes-template.md` has been copied into the GitHub
   release notes draft and edited for the tagged version.
-- Confirm one local archive has been unpacked and smoke-tested before the
+- Confirm one local archive has passed the local archive smoke test before the
   release is announced.
