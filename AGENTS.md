@@ -70,6 +70,8 @@ cargo fmt --all -- --check
 cargo check --all-targets --all-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
+cargo test -p kply-test --locked
+cargo xtask check-ci-workflow
 cargo xtask check-crate-inventory-docs
 cargo xtask check-deny-config
 cargo xtask check-fixture-directories
@@ -78,8 +80,10 @@ cargo xtask check-fixture-testing-docs
 cargo xtask check-future-session-docs
 cargo xtask check-license-files
 cargo xtask check-module-docs
+cargo xtask check-no-secret-content-reads
 cargo xtask check-placeholder-docs
 cargo xtask check-placeholders
+cargo xtask check-report-language
 cargo xtask check-readme-roadmap-link
 cargo xtask check-release-planning
 cargo xtask check-toolchain-pin

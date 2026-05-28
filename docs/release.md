@@ -19,17 +19,21 @@ Kply uses semver and `cargo-dist` for binary releases.
    [`docs/release-notes-template.md`](release-notes-template.md).
 4. Confirm the release stays inside the
    [`docs/first-release.md`](first-release.md) scope.
-5. Run validation:
+5. Confirm the GitHub Actions `ci` workflow is passing on the release branch or
+   commit being tagged.
+6. Run validation:
 
    ```bash
    cargo fmt --all -- --check
    cargo check --all-targets --all-features --locked
    cargo clippy --all-targets --all-features --locked -- -D warnings
    cargo test --all-targets --all-features --locked
+   cargo test -p kply-test --locked
    cargo deny check
+   cargo xtask check-ci-workflow
    ```
 
-6. Create a semver tag:
+7. Create a semver tag:
 
    ```bash
    git tag v0.1.0
@@ -77,6 +81,8 @@ portable Linux compatibility.
 Before tagging the first public binary release:
 
 - Confirm `docs/first-release.md` still matches the behavior being released.
+- Confirm the GitHub Actions `ci` workflow is green for the release commit.
+- Confirm `cargo xtask check-ci-workflow` passes locally.
 - Confirm `dist-workspace.toml` releases only `kply-cli`.
 - Confirm Linux, portable Linux, and macOS targets are present in
   `dist-workspace.toml`.

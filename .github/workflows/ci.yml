@@ -59,6 +59,9 @@ jobs:
       - name: Test fixture helpers
         run: cargo test -p kply-test --locked
 
+      - name: Check CI workflow
+        run: cargo xtask check-ci-workflow
+
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Check placeholders
         run: cargo xtask check-placeholders
+
+      - name: Check report language
+        run: cargo xtask check-report-language
 
       - name: Check README roadmap link
         run: cargo xtask check-readme-roadmap-link

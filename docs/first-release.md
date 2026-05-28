@@ -270,3 +270,18 @@ Secret-like values.
 If future work needs Secret contents, it requires a separate design, explicit
 policy, tests, documentation, and a release note before any implementation
 lands. Do not add a bypass to the guard for `v0.1.0`.
+
+## CI Passing Requirement
+
+The first release must be cut from a commit where the GitHub Actions `ci`
+workflow passes on the release branch before the tag is created.
+
+The `ci` workflow is the required repository quality gate for `v0.1.0`. It
+must run on pull requests, merge queues, and pushes to `main`; keep
+`contents: read`; lint workflows with `actionlint`; install the pinned Rust
+toolchain; run formatting, check, clippy, all workspace tests, fixture helper
+tests, cargo-deny, and every release-gate `cargo xtask` check.
+
+`cargo xtask check-ci-workflow` is part of the release gate. It pins the
+required CI triggers, permissions, actions, and commands so CI coverage cannot
+silently drift away from the first-release bar.
