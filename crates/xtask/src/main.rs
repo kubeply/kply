@@ -2799,6 +2799,26 @@ license = "Apache-2.0"
     }
 
     #[test]
+    fn rejects_release_attestation_missing() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace("github-attestations = true\n", ""),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("missing release attestation setting should fail");
+
+        assert!(error.to_string().contains("github-attestations"));
+    }
+
+    #[test]
     fn rejects_release_linux_x64_target_drift() {
         let temp = TempDir::new().expect("temp dir should be created");
         let dist_path = write_source(
