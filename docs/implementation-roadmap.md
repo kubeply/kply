@@ -66,6 +66,9 @@ Completed work:
 - Milestone 9 item 14 is implemented:
   - `kply demo teardown` deletes only labeled demo Deployments and Services,
     enforced by CLI snapshots for the generated `kubectl` command.
+- Milestone 9 item 15 is implemented:
+  - the local demo has a replayable terminal cast and guide at
+    `docs/demo-terminal-cast.md`.
 
 Remaining adoption and feedback work:
 
@@ -418,7 +421,7 @@ real cluster.
     - cleanup.
 13. [x] Ensure demo resources use a dedicated namespace.
 14. [x] Ensure demo cleanup removes only labeled demo resources.
-15. Add screenshots or terminal recordings later, not before the flow works.
+15. [x] Add screenshots or terminal recordings later, not before the flow works.
 
 Acceptance criteria:
 
