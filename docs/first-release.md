@@ -285,3 +285,23 @@ tests, cargo-deny, and every release-gate `cargo xtask` check.
 `cargo xtask check-ci-workflow` is part of the release gate. It pins the
 required CI triggers, permissions, actions, and commands so CI coverage cannot
 silently drift away from the first-release bar.
+
+## Release Packaging Passing Requirement
+
+The first release must be cut from a commit where the GitHub Actions `Release`
+workflow passes its pull-request `plan` job before the tag is created. A passing
+plan proves the checked-in `cargo-dist` workflow can resolve the release shape
+without building or publishing artifacts from a pull request.
+
+Local validation must also run `dist plan --output-format=json --no-local-paths`
+and verify that the generated plan releases only `kply-cli`. The plan must not
+include `xtask` or other workspace helper crates as release artifacts.
+
+`cargo xtask check-release-planning` remains part of the release gate. It pins
+the `cargo-dist` version, released package set, target matrix, shell installer,
+SHA-256 checksums, GitHub artifact attestations, pull-request planning path,
+semver tag release path, and the absence of direct `dist publish` commands.
+
+The semver tag workflow must pass before announcing `v0.1.0`. Tag runs are the
+only path that may build archives, generate the shell installer and checksums,
+upload artifacts, attest them, and create the GitHub Release.

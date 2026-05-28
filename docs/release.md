@@ -21,7 +21,9 @@ Kply uses semver and `cargo-dist` for binary releases.
    [`docs/first-release.md`](first-release.md) scope.
 5. Confirm the GitHub Actions `ci` workflow is passing on the release branch or
    commit being tagged.
-6. Run validation:
+6. Confirm the GitHub Actions `Release` workflow `plan` job is passing on the
+   release branch or commit being tagged.
+7. Run validation:
 
    ```bash
    cargo fmt --all -- --check
@@ -31,9 +33,14 @@ Kply uses semver and `cargo-dist` for binary releases.
    cargo test -p kply-test --locked
    cargo deny check
    cargo xtask check-ci-workflow
+   cargo xtask check-release-planning
+   dist plan --output-format=json --no-local-paths >/tmp/kply-dist-plan-check.json
    ```
 
-7. Create a semver tag:
+   Confirm `/tmp/kply-dist-plan-check.json` contains only the `kply-cli`
+   release and no `xtask` artifacts before tagging.
+
+8. Create a semver tag:
 
    ```bash
    git tag v0.1.0
@@ -83,6 +90,11 @@ Before tagging the first public binary release:
 - Confirm `docs/first-release.md` still matches the behavior being released.
 - Confirm the GitHub Actions `ci` workflow is green for the release commit.
 - Confirm `cargo xtask check-ci-workflow` passes locally.
+- Confirm the GitHub Actions `Release` workflow `plan` job is green for the
+  release commit.
+- Confirm `cargo xtask check-release-planning` passes locally.
+- Confirm `dist plan --output-format=json --no-local-paths` releases only
+  `kply-cli` and does not include `xtask` artifacts.
 - Confirm `dist-workspace.toml` releases only `kply-cli`.
 - Confirm Linux, portable Linux, and macOS targets are present in
   `dist-workspace.toml`.
