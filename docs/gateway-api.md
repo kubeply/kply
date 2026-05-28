@@ -77,3 +77,6 @@ session-owned routes:
 
 Do not grant Kply broad production-route ownership unless the cluster has a
 separate policy layer enforcing these labels.
+
+If your route stack needs a missing adapter, file a routing environment issue
+and use the repeated-feedback rules in [Feedback Triage](feedback-triage.md).
