@@ -18,6 +18,9 @@ Allowed agent actions for this demo:
   `kply demo teardown`.
 - run read-only `kply` commands with
   `--config fixtures/demo/ecommerce-basic/kply.yaml`.
+- create and remove session-owned sandbox resources with
+  `kply session create --apply` and `kply session cleanup --apply` when the
+  command uses `--namespace kply-demo`.
 - run `kubectl get`, `kubectl describe`, `kubectl logs`, and `kubectl port-forward`
   inside the `kply-demo` namespace.
 - apply only the demo backend variant manifests listed in this guide.
@@ -32,9 +35,11 @@ For a scripted local run, use:
 scripts/demo-walkthrough.sh
 ```
 
-The script keeps the repair path explicit by applying the fixed backend
-variant directly. `kply session create --apply` exists, but it is experimental
-and should not be used as a production promotion signal.
+The default walkthrough uses `kply session create --apply` to create a
+session-owned sandbox workload, then runs `kply check run` and
+`kply session cleanup --apply`. Apply the fixed backend variant directly only
+when a human wants to compare fixture responses. Live session apply is
+experimental and should not be used as a production promotion signal.
 
 Create the local cluster and install the baseline fixture:
 
@@ -71,8 +76,10 @@ Boundaries:
 - Use Kubernetes context kind-kply-demo only.
 - Do not touch resources outside the kply-demo namespace.
 - Do not read Kubernetes Secret values.
-- Do not create new cluster resources except by applying one of the demo
-  backend variant manifests in fixtures/demo/ecommerce-basic/manifests/.
+- Create cluster resources only with kply session create --apply scoped to
+  --namespace kply-demo, kply session cleanup --apply scoped to
+  --namespace kply-demo, or one of the demo backend variant manifests in
+  fixtures/demo/ecommerce-basic/manifests/.
 - Prefer kply commands before raw kubectl when kply exposes the needed view.
 
 Useful commands:
@@ -81,6 +88,10 @@ Useful commands:
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app list
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml app inspect checkout
 - cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session plan checkout --image hashicorp/http-echo:1.0
+- cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session create checkout --image nginx:1.27-alpine --namespace kply-demo --route-strategy preview-service --apply
+- cargo run --locked --bin kply -- check run checkout-plan --namespace kply-demo
+- cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session cleanup checkout-plan --namespace kply-demo --dry-run
+- cargo run --locked --bin kply -- --config fixtures/demo/ecommerce-basic/kply.yaml session cleanup checkout-plan --namespace kply-demo --apply
 - cargo run --locked --bin kply -- route plan checkout-plan --namespace kply-demo
 - cargo run --locked --bin kply -- route apply checkout-plan --namespace kply-demo
 - cargo run --locked --bin kply -- route cleanup checkout-plan --namespace kply-demo
@@ -95,16 +106,25 @@ selectors, and route references. `route apply` is currently a placeholder that
 returns `status: "not_implemented"` and `apply: false`; it does not query or
 mutate Kubernetes.
 
+`session create checkout --apply` creates sandbox resources labelled
+`kply.dev/session-id=checkout-plan`. Later session-aware commands discover those
+resources from Kubernetes: `check run` calls `get_session_in_namespace` and
+`kply_k8s::get_session`, and `session cleanup` uses the same label selector to
+find the session-owned Deployment and Service.
+
 Expected outcome:
 - Explain what is broken.
 - Show the kply plan output you used.
+- Create a bounded sandbox with `kply session create --apply` if the local Kind
+  context is active, then run `kply check run checkout-plan`.
 - Show the route plan and cleanup dry-run output, and note that route commands
   accept the synthetic `checkout-plan` id without a Kubernetes Session lookup.
 - Note that route apply is currently a placeholder with
   `status: "not_implemented"` and `apply: false`.
+- Clean up the sandbox with `kply session cleanup checkout-plan --apply`.
 - Apply fixtures/demo/ecommerce-basic/manifests/backend-fixed.yaml only if you
-  need to verify the repair.
-- Verify the checkout response returns healthy JSON.
+  need to compare the fixture repair response.
+- Verify the sandbox Service responds before cleanup.
 - Leave a short report of commands run and remaining limitations.
 ```
 
