@@ -72,6 +72,9 @@ Completed work:
 - Milestone 20 item 14 is implemented:
   - repeated feedback has an OpenSpec conversion gate in the roadmap issue
     template and `docs/feedback-triage.md`.
+- Milestone 20 item 15 is implemented:
+  - commercial and enterprise candidates are separated from open-source trust
+    features in `docs/commercial-boundary.md`.
 - Milestone 9 item 12 is implemented:
   - scripted local demo walkthrough for inspect, plan, sandbox create, checks,
     and cleanup.
@@ -89,8 +92,6 @@ Remaining adoption and feedback work:
 
 - Milestone 20 item 9: add examples from real user feedback only when
   permission exists.
-- Milestone 20 item 15: keep commercial/enterprise features separate from
-  open-source trust features.
 
 ## Locked Decisions
 
@@ -745,7 +746,7 @@ Kubeply product direction.
 12. [x] Track repeated app graph failures.
 13. [x] Track repeated check failures.
 14. [x] Convert repeated feedback into new OpenSpec changes.
-15. Keep commercial/enterprise features separate from open-source trust
+15. [x] Keep commercial/enterprise features separate from open-source trust
     features.
 
 Acceptance criteria:

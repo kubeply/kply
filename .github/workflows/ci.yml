@@ -62,6 +62,9 @@ jobs:
       - name: Check CI workflow
         run: cargo xtask check-ci-workflow
 
+      - name: Check commercial boundary docs
+        run: cargo xtask check-commercial-boundary-docs
+
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
 

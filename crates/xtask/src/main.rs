@@ -45,6 +45,7 @@ fn main() -> Result<()> {
         "help" => {
             println!("available tasks:");
             println!("  check-ci-workflow verify pull-request CI release gates");
+            println!("  check-commercial-boundary-docs verify OSS/commercial boundary docs");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
             println!("  check-demo-docs verify local demo docs stay linked and bounded");
             println!("  check-deny-config verify cargo-deny policy strictness");
@@ -75,6 +76,9 @@ fn main() -> Result<()> {
         }
         "check-ci-workflow" => {
             check_ci_workflow()?;
+        }
+        "check-commercial-boundary-docs" => {
+            check_commercial_boundary_docs()?;
         }
         "check-crate-inventory-docs" => {
             check_crate_inventory_docs()?;
@@ -147,6 +151,7 @@ fn main() -> Result<()> {
             println!("cargo test -p kply-test --locked");
             println!("cargo deny check");
             println!("cargo xtask check-ci-workflow");
+            println!("cargo xtask check-commercial-boundary-docs");
             println!("cargo xtask check-crate-inventory-docs");
             println!("cargo xtask check-demo-docs");
             println!("cargo xtask check-deny-config");
@@ -305,6 +310,58 @@ fn check_security_policy() -> Result<()> {
         "README.md".into(),
         ".github/ISSUE_TEMPLATE/config.yml".into(),
     ])
+}
+
+fn check_commercial_boundary_docs() -> Result<()> {
+    check_commercial_boundary_docs_inner([
+        "docs/commercial-boundary.md".into(),
+        "docs/product.md".into(),
+        "docs/first-release.md".into(),
+    ])
+}
+
+fn check_commercial_boundary_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
+    let [boundary_path, product_path, first_release_path] = doc_paths;
+    let docs = [
+        DocExpectation {
+            path: boundary_path,
+            required_phrases: vec![
+                "# Commercial Boundary".into(),
+                "## Open-Source Trust Features".into(),
+                "## Commercial Candidates".into(),
+                "## Product Rules".into(),
+                "must remain useful, inspectable, and safe without a hosted dependency".into(),
+                "deterministic text and JSON output".into(),
+                "read-only Kubernetes inspection".into(),
+                "sandbox resource planning, apply, and cleanup".into(),
+                "route planning, route adapters, and explicit no-route fallbacks".into(),
+                "runtime checks that report evidence".into(),
+                "local reports and session artifacts".into(),
+                "hosted policy service".into(),
+                "team approval workflows".into(),
+                "centralized audit retention".into(),
+                "hosted reporting dashboards".into(),
+                "billing, licensing, and entitlements".into(),
+                "must not require telemetry, billing, hosted auth".into(),
+                "Commercial features may consume local reports or exported evidence".into(),
+                "OpenSpec changes for enterprise features must include explicit non-goals".into(),
+            ],
+        },
+        DocExpectation {
+            path: product_path,
+            required_phrases: vec![
+                "future commercial candidates".into(),
+                "open-source trust boundary".into(),
+                "Commercial Boundary".into(),
+            ],
+        },
+        DocExpectation {
+            path: first_release_path,
+            required_phrases: vec!["No hosted policy, team approval".into()],
+        },
+    ];
+
+    check_docs_contain(docs)
 }
 
 fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()> {
@@ -1281,6 +1338,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo test --all-targets --all-features --locked",
         "cargo test -p kply-test --locked",
         "cargo xtask check-ci-workflow",
+        "cargo xtask check-commercial-boundary-docs",
         "cargo xtask check-crate-inventory-docs",
         "cargo xtask check-demo-docs",
         "cargo xtask check-deny-config",
@@ -2024,7 +2082,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        DocExpectation, WorkspaceCrate, check_ci_workflow_inner, check_crate_inventory_docs_inner,
+        DocExpectation, WorkspaceCrate, check_ci_workflow_inner,
+        check_commercial_boundary_docs_inner, check_crate_inventory_docs_inner,
         check_demo_docs_inner, check_deny_config_inner, check_docs_contain,
         check_feedback_triage_docs_inner, check_fixture_directories_inner,
         check_fixture_naming_docs_inner, check_fixture_testing_docs_inner,
@@ -2140,6 +2199,8 @@ jobs:
         run: cargo test -p kply-test --locked
       - name: Check CI workflow
         run: cargo xtask check-ci-workflow
+      - name: Check commercial boundary docs
+        run: cargo xtask check-commercial-boundary-docs
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
       - name: Check demo docs
@@ -2666,6 +2727,126 @@ OpenSpec change
 
         let error = check_feedback_triage_docs_inner(feedback_triage_path)
             .expect_err("feedback triage docs without repetition threshold should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
+    }
+
+    #[test]
+    fn accepts_commercial_boundary_docs() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let boundary_path = write_nested_source(
+            temp.path(),
+            "docs/commercial-boundary.md",
+            "\
+# Commercial Boundary
+
+open-source CLI must remain useful, inspectable, and safe without a hosted dependency
+
+## Open-Source Trust Features
+
+deterministic text and JSON output
+read-only Kubernetes inspection
+sandbox resource planning, apply, and cleanup
+route planning, route adapters, and explicit no-route fallbacks
+runtime checks that report evidence
+local reports and session artifacts
+must not require telemetry, billing, hosted auth
+
+## Commercial Candidates
+
+hosted policy service
+team approval workflows
+centralized audit retention
+hosted reporting dashboards
+billing, licensing, and entitlements
+Commercial features may consume local reports or exported evidence
+
+## Product Rules
+
+OpenSpec changes for enterprise features must include explicit non-goals
+",
+        );
+        let product_path = write_nested_source(
+            temp.path(),
+            "docs/product.md",
+            "\
+# Product Direction
+
+future commercial candidates
+open-source trust boundary
+Commercial Boundary
+",
+        );
+        let first_release_path = write_nested_source(
+            temp.path(),
+            "docs/first-release.md",
+            "\
+# First Release Scope
+
+No hosted policy, team approval, audit retention, or reporting service is included.
+",
+        );
+
+        check_commercial_boundary_docs_inner([boundary_path, product_path, first_release_path])
+            .expect("commercial boundary docs should pass");
+    }
+
+    #[test]
+    fn rejects_commercial_boundary_docs_without_hosted_dependency_boundary() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let boundary_path = write_nested_source(
+            temp.path(),
+            "docs/commercial-boundary.md",
+            "\
+# Commercial Boundary
+
+## Open-Source Trust Features
+
+deterministic text and JSON output
+read-only Kubernetes inspection
+sandbox resource planning, apply, and cleanup
+route planning, route adapters, and explicit no-route fallbacks
+runtime checks that report evidence
+local reports and session artifacts
+
+## Commercial Candidates
+
+hosted policy service
+team approval workflows
+centralized audit retention
+hosted reporting dashboards
+billing, licensing, and entitlements
+Commercial features may consume local reports or exported evidence
+
+## Product Rules
+
+OpenSpec changes for enterprise features must include explicit non-goals
+",
+        );
+        let product_path = write_nested_source(
+            temp.path(),
+            "docs/product.md",
+            "\
+# Product Direction
+
+future commercial candidates
+open-source trust boundary
+Commercial Boundary
+",
+        );
+        let first_release_path = write_nested_source(
+            temp.path(),
+            "docs/first-release.md",
+            "\
+# First Release Scope
+
+No hosted policy, team approval, audit retention, or reporting service is included.
+",
+        );
+
+        let error =
+            check_commercial_boundary_docs_inner([boundary_path, product_path, first_release_path])
+                .expect_err("commercial boundary docs without hosted boundary should fail");
 
         assert!(error.to_string().contains("documentation phrase"));
     }
