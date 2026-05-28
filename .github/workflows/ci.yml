@@ -80,6 +80,9 @@ jobs:
       - name: Check fixture testing docs
         run: cargo xtask check-fixture-testing-docs
 
+      - name: Check feedback triage docs
+        run: cargo xtask check-feedback-triage-docs
+
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
 

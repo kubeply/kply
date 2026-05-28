@@ -1259,6 +1259,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo xtask check-fixture-directories",
         "cargo xtask check-fixture-naming-docs",
         "cargo xtask check-fixture-testing-docs",
+        "cargo xtask check-feedback-triage-docs",
         "cargo xtask check-future-session-docs",
         "cargo xtask check-issue-templates",
         "cargo xtask check-known-limitations-docs",
@@ -2123,6 +2124,8 @@ jobs:
         run: cargo xtask check-fixture-naming-docs
       - name: Check fixture testing docs
         run: cargo xtask check-fixture-testing-docs
+      - name: Check feedback triage docs
+        run: cargo xtask check-feedback-triage-docs
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
       - name: Check issue templates
