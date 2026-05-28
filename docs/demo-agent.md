@@ -3,9 +3,9 @@
 This guide shows how to hand the local Kind demo to a coding agent without
 giving it access to a production cluster.
 
-Current `kply` behavior is limited to demo setup, read-only inspection, and
-session planning. Session creation, sandbox routing, automated checks, and
-promotion are not implemented yet.
+Current `kply` behavior covers demo setup, read-only inspection, session
+planning, generated manifests, experimental sandbox session creation, and
+early check reporting. Sandbox routing promotion is not implemented yet.
 
 ## Boundary
 
@@ -32,8 +32,9 @@ For a scripted local run, use:
 scripts/demo-walkthrough.sh
 ```
 
-The script simulates sandbox creation by applying the fixed backend variant
-until `kply session create` is implemented.
+The script keeps the repair path explicit by applying the fixed backend
+variant directly. `kply session create --apply` exists, but it is experimental
+and should not be used as a production promotion signal.
 
 Create the local cluster and install the baseline fixture:
 
@@ -130,4 +131,5 @@ deterministic fixture manifests, and an isolated namespace to inspect and plan
 around a Kubernetes change.
 
 It does not yet prove live sandbox routing, automated verification, rollback,
-or promotion. Those flows are future roadmap work.
+or promotion. Live session apply is experimental, and the broader
+flows are future roadmap work.

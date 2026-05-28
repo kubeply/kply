@@ -234,3 +234,24 @@ The `--yaml` form must render the generated Kubernetes objects as a
 multi-document YAML stream without the JSON wrapper. It is intended for human
 review, diffing, and manual tooling experiments, not as a production promotion
 signal.
+
+## Experimental Apply Requirement
+
+The first release may expose apply-oriented commands, but they must not be
+presented as a complete production safety layer.
+
+`kply session create <app>` without `--apply` remains a dry-run command.
+Successful text and JSON output must keep `status: planned`,
+`mutation: not_applied`, and `apply: false`.
+
+`kply session create <app> --apply` is experimental in `v0.1.0`. Successful
+live mutation output and live mutation errors must include
+`apply_stage: experimental` in text output or `apply_stage: "experimental"` in
+JSON output. This command can create sandbox Deployment and Service resources,
+record session state in annotations, and leave pending route resources for
+later cleanup or manual review.
+
+`kply route apply <session>` remains a guarded placeholder in `v0.1.0`. Even
+with `--confirm-route-mutation`, it must report `status: not_implemented`,
+`mutation: not_applied`, and `apply: false` until a real route mutation adapter
+is implemented and tested.
