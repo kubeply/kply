@@ -60,6 +60,9 @@ Completed work:
 - Milestone 20 item 10 is implemented:
   - missing route adapter requests are classified in the routing issue template
     and triaged through `docs/feedback-triage.md`.
+- Milestone 20 item 11 is implemented:
+  - repeated policy needs are classified in the session planning issue template
+    and triaged through `docs/feedback-triage.md`.
 - Milestone 9 item 12 is implemented:
   - scripted local demo walkthrough for inspect, plan, sandbox create, checks,
     and cleanup.
@@ -77,7 +80,6 @@ Remaining adoption and feedback work:
 
 - Milestone 20 item 9: add examples from real user feedback only when
   permission exists.
-- Milestone 20 item 11: track repeated policy needs.
 - Milestone 20 item 12: track repeated app graph failures.
 - Milestone 20 item 13: track repeated check failures.
 - Milestone 20 item 14: convert repeated feedback into new OpenSpec changes.
@@ -733,7 +735,7 @@ Kubeply product direction.
    with `kply`-bounded workflows.
 9. Add examples from real user feedback only when permission exists.
 10. [x] Track repeated missing route adapters.
-11. Track repeated policy needs.
+11. [x] Track repeated policy needs.
 12. Track repeated app graph failures.
 13. Track repeated check failures.
 14. Convert repeated feedback into new OpenSpec changes.

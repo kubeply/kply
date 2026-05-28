@@ -335,9 +335,13 @@ fn check_feedback_triage_docs_inner(feedback_triage_path: PathBuf) -> Result<()>
         required_phrases: vec![
             "# Feedback Triage".into(),
             "## Missing Route Adapters".into(),
+            "## Policy Needs".into(),
             "missing route adapter".into(),
             "Three separate users or organizations".into(),
             "repeated route adapter request".into(),
+            "repeated policy need".into(),
+            "same policy boundary".into(),
+            "minimum deterministic decision".into(),
             "Do not include Secret values".into(),
             "explicit permission exists".into(),
             "OpenSpec change".into(),
@@ -398,6 +402,8 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "Do not include Secret values".into(),
                 "Command and sanitized config".into(),
                 "unsupported feature warnings and risk notes".into(),
+                "repeated policy need".into(),
+                "Policy gap".into(),
                 "Safety constraints".into(),
             ],
         },
@@ -421,6 +427,7 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "Do not include Secret values".into(),
                 "Evidence type".into(),
                 "infra-bench failure".into(),
+                "repeated policy need".into(),
                 "Requested roadmap change".into(),
                 "Affected agent-infra workflow".into(),
                 "Success criteria".into(),
@@ -2413,6 +2420,8 @@ session-planning
 Do not include Secret values
 Command and sanitized config
 unsupported feature warnings and risk notes
+repeated policy need
+Policy gap
 Safety constraints
 ",
         );
@@ -2438,6 +2447,7 @@ real user feedback, demos, benchmarks
 Do not include Secret values
 Evidence type
 infra-bench failure
+repeated policy need
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2498,6 +2508,8 @@ session-planning
 Do not include Secret values
 Command and sanitized config
 unsupported feature warnings and risk notes
+repeated policy need
+Policy gap
 Safety constraints
 ",
         );
@@ -2523,6 +2535,7 @@ real user feedback, demos, benchmarks
 Do not include Secret values
 Evidence type
 infra-bench failure
+repeated policy need
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2551,9 +2564,13 @@ Success criteria
             "\
 # Feedback Triage
 ## Missing Route Adapters
+## Policy Needs
 missing route adapter
 Three separate users or organizations
 repeated route adapter request
+repeated policy need
+same policy boundary
+minimum deterministic decision
 Do not include Secret values
 explicit permission exists
 OpenSpec change
@@ -2573,8 +2590,12 @@ OpenSpec change
             "\
 # Feedback Triage
 ## Missing Route Adapters
+## Policy Needs
 missing route adapter
 repeated route adapter request
+repeated policy need
+same policy boundary
+minimum deterministic decision
 Do not include Secret values
 explicit permission exists
 OpenSpec change
