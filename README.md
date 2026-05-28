@@ -16,6 +16,23 @@ Gateway API routing groundwork.
 
 Session mutation commands require explicit `--apply` confirmation.
 
+## Install
+
+Install the latest released binary with the shell installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/kubeply/kply/releases/latest/download/kply-cli-installer.sh \
+  | sh
+```
+
+The installer places `kply` under `CARGO_HOME` when that environment variable is
+set, otherwise under the default cargo home directory.
+
+Release archives are also published for Linux, portable Linux, and macOS on
+x86_64 and aarch64. Each release includes SHA-256 checksums and GitHub artifact
+attestations.
+
 ## Product Primitive
 
 A Kply session is a temporary, scoped workspace for an agent:
