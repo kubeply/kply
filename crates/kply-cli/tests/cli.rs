@@ -2977,6 +2977,7 @@ fn prints_config_validate_text() {
         .clone();
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(output, "kply config validate\nConfig is valid.\n");
     insta::assert_snapshot!("config_validate_text", output);
 }
 
@@ -2992,6 +2993,20 @@ fn prints_config_validate_json() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("config validate output should be an object");
+    assert_eq!(
+        object.len(),
+        2,
+        "config validate JSON shape should stay stable"
+    );
+    assert_eq!(value["status"], "valid");
+    assert_eq!(
+        value["errors"],
+        serde_json::Value::Array(Vec::new()),
+        "valid config output should include an empty errors array"
+    );
     insta::assert_json_snapshot!("config_validate_json", value);
 }
 
@@ -3100,6 +3115,19 @@ apps:
     );
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    let object = value
+        .as_object()
+        .expect("invalid config output should be an object");
+    assert_eq!(
+        object.len(),
+        2,
+        "invalid config JSON shape should stay stable"
+    );
+    assert_eq!(value["status"], "invalid");
+    assert_eq!(
+        value["errors"],
+        serde_json::json!(["apps[0].namespace: field is required"])
+    );
     insta::assert_json_snapshot!("config_validate_invalid_json", value);
 }
 
