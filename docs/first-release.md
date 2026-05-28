@@ -302,6 +302,38 @@ used for tagging, demos, or public claims:
 the release limitations above so release cleanup, marketing copy, or demo work
 cannot silently remove the production-safety boundary before `v0.1.0`.
 
+## Security Assumptions
+
+Kply `v0.1.0` assumes the caller already has Kubernetes credentials and runs
+inside the security boundary chosen by the platform owner. The release does not
+create a new trust domain around an agent by itself.
+
+- Kply does not bypass Kubernetes RBAC. Every read, create, patch, or delete
+  still depends on the permissions granted to the kubeconfig or service account
+  used to run the CLI.
+- Use a dedicated service account for agent workflows instead of a personal or
+  cluster-admin credential.
+- Run Kply against a namespace the platform owner has approved for temporary
+  sandbox resources.
+- Admission policy should enforce ownership labels such as
+  `app.kubernetes.io/managed-by=kply` and `kply.dev/session-id=<session-id>`
+  when delete or route mutation permissions are granted.
+- Do not pass production admin kubeconfigs to agents. Treat the agent process
+  as less trusted than the platform operator who approves its credentials.
+- Network isolation, egress policy, and database permissions remain platform
+  responsibilities. Kply can route test traffic to sandbox workloads, but it
+  does not automatically isolate downstream systems.
+- Kply output is local CLI evidence and must be retained by the caller if the
+  organization needs audit records after the command exits.
+- Supply-chain trust depends on GitHub Release artifacts, SHA-256 checksums,
+  and attestations for released binaries.
+- Secret values remain out of scope. Kply may report Secret names and metadata
+  references, but the first release must not fetch or print Secret contents.
+
+`cargo xtask check-security-assumptions-docs` is part of the release gate. It
+keeps the credential, RBAC, namespace, admission policy, audit, supply-chain,
+and Secret handling assumptions explicit before `v0.1.0` is tagged.
+
 ## CI Passing Requirement
 
 The first release must be cut from a commit where the GitHub Actions `ci`
