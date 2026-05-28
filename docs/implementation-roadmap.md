@@ -54,11 +54,14 @@ Completed work:
     agents.
 - Milestone 20 item 7 is implemented:
   - local demo terminal cast and replay guide.
+- Milestone 20 item 8 is implemented:
+  - paired `infra-bench` Kubernetes tasks comparing raw `kubectl` rollouts with
+    `kply`-bounded sandbox workflows.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 8: add benchmark tasks in `infra-bench` comparing raw
-  `kubectl` agent use with `kply`-bounded workflows.
+- Milestone 20 item 9: add examples from real user feedback only when
+  permission exists.
 
 ## Locked Decisions
 
@@ -705,8 +708,8 @@ Kubeply product direction.
 6. [x] Add docs for using `kply` with Codex, Claude Code, Cursor, and other terminal
    agents.
 7. [x] Add a local demo video or terminal cast.
-8. Add benchmark tasks in `infra-bench` comparing raw `kubectl` agent use with
-   `kply`-bounded workflows.
+8. [x] Add benchmark tasks in `infra-bench` comparing raw `kubectl` agent use
+   with `kply`-bounded workflows.
 9. Add examples from real user feedback only when permission exists.
 10. Track repeated missing route adapters.
 11. Track repeated policy needs.
