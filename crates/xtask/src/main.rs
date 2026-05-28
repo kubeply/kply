@@ -52,6 +52,9 @@ fn main() -> Result<()> {
             println!("  check-fixture-naming-docs verify fixture naming docs");
             println!("  check-fixture-testing-docs verify fixture testing guidance");
             println!("  check-future-session-docs verify future session docs are explicit");
+            println!(
+                "  check-known-limitations-docs verify first-release limitations stay explicit"
+            );
             println!("  check-license-files verify Apache-2.0 license and notice files");
             println!("  check-module-docs  verify crate source files start with module docs");
             println!(
@@ -89,6 +92,9 @@ fn main() -> Result<()> {
         }
         "check-future-session-docs" => {
             check_future_session_docs()?;
+        }
+        "check-known-limitations-docs" => {
+            check_known_limitations_docs()?;
         }
         "check-license-files" => {
             check_license_files()?;
@@ -132,6 +138,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-fixture-naming-docs");
             println!("cargo xtask check-fixture-testing-docs");
             println!("cargo xtask check-future-session-docs");
+            println!("cargo xtask check-known-limitations-docs");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
             println!("cargo xtask check-no-secret-content-reads");
@@ -247,6 +254,32 @@ fn check_future_session_docs() -> Result<()> {
         "docs/architecture.md".into(),
         "docs/product.md".into(),
     ])
+}
+
+fn check_known_limitations_docs() -> Result<()> {
+    check_known_limitations_docs_inner("docs/first-release.md".into())
+}
+
+fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()> {
+    let docs = [DocExpectation {
+        path: first_release_path,
+        required_phrases: vec![
+            "## Known Limitations".into(),
+            "Kply `v0.1.0` is an evaluation release, not a production safety guarantee.".into(),
+            "No automatic promotion".into(),
+            "`kply route apply` is a no-op placeholder".into(),
+            "Experimental live apply can create sandbox Deployment and Service resources".into(),
+            "Preview Service and no-route checks do not prove edge routing behavior".into(),
+            "Kply never reads Kubernetes Secret values".into(),
+            "No hosted policy, team approval".into(),
+            "No long-running in-cluster controller reconciles sessions after the CLI exits".into(),
+            "Runtime checks report evidence, not approval to deploy".into(),
+            "The JSON contracts are stable only for `v0.1.0` evaluation".into(),
+            "The local demo is bounded to the Kind ecommerce fixture".into(),
+        ],
+    }];
+
+    check_docs_contain(docs)
 }
 
 fn check_future_session_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
@@ -1012,6 +1045,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo xtask check-fixture-naming-docs",
         "cargo xtask check-fixture-testing-docs",
         "cargo xtask check-future-session-docs",
+        "cargo xtask check-known-limitations-docs",
         "cargo xtask check-license-files",
         "cargo xtask check-module-docs",
         "cargo xtask check-no-secret-content-reads",
@@ -1747,7 +1781,8 @@ mod tests {
         check_demo_docs_inner, check_deny_config_inner, check_docs_contain,
         check_fixture_directories_inner, check_fixture_naming_docs_inner,
         check_fixture_testing_docs_inner, check_future_session_docs_inner,
-        check_license_files_inner, check_no_secret_content_reads_inner, check_placeholder_sources,
+        check_known_limitations_docs_inner, check_license_files_inner,
+        check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
         check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
         contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
@@ -1870,6 +1905,8 @@ jobs:
         run: cargo xtask check-fixture-testing-docs
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
+      - name: Check known limitations docs
+        run: cargo xtask check-known-limitations-docs
       - name: Check license files
         run: cargo xtask check-license-files
       - name: Check module docs
@@ -2101,6 +2138,67 @@ Gateway API routing groundwork has started.
             .expect_err("future session docs missing current status should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
+    }
+
+    #[test]
+    fn accepts_first_release_known_limitations_docs() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let first_release_path = write_nested_source(
+            temp.path(),
+            "docs/first-release.md",
+            "\
+# First Release Scope
+
+## Known Limitations
+
+Kply `v0.1.0` is an evaluation release, not a production safety guarantee.
+
+- No automatic promotion is included.
+- `kply route apply` is a no-op placeholder.
+- Experimental live apply can create sandbox Deployment and Service resources.
+- Preview Service and no-route checks do not prove edge routing behavior.
+- Kply never reads Kubernetes Secret values.
+- No hosted policy, team approval, audit retention, or reporting service is included.
+- No long-running in-cluster controller reconciles sessions after the CLI exits.
+- Runtime checks report evidence, not approval to deploy.
+- The JSON contracts are stable only for `v0.1.0` evaluation.
+- The local demo is bounded to the Kind ecommerce fixture.
+",
+        );
+
+        check_known_limitations_docs_inner(first_release_path)
+            .expect("known limitations docs should pass");
+    }
+
+    #[test]
+    fn rejects_first_release_known_limitations_docs_without_runtime_evidence_boundary() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let first_release_path = write_nested_source(
+            temp.path(),
+            "docs/first-release.md",
+            "\
+# First Release Scope
+
+## Known Limitations
+
+Kply `v0.1.0` is an evaluation release, not a production safety guarantee.
+
+- No automatic promotion is included.
+- `kply route apply` is a no-op placeholder.
+- Experimental live apply can create sandbox Deployment and Service resources.
+- Preview Service and no-route checks do not prove edge routing behavior.
+- Kply never reads Kubernetes Secret values.
+- No hosted policy, team approval, audit retention, or reporting service is included.
+- No long-running in-cluster controller reconciles sessions after the CLI exits.
+- The JSON contracts are stable only for `v0.1.0` evaluation.
+- The local demo is bounded to the Kind ecommerce fixture.
+",
+        );
+
+        let error = check_known_limitations_docs_inner(first_release_path)
+            .expect_err("known limitations docs missing approval boundary should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
     }
 
     #[test]
