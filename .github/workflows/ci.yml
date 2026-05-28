@@ -113,9 +113,6 @@ jobs:
       - name: Check report language
         run: cargo xtask check-report-language
 
-      - name: Check README roadmap link
-        run: cargo xtask check-readme-roadmap-link
-
       - name: Check release planning
         run: cargo xtask check-release-planning
 

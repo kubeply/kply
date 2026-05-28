@@ -91,10 +91,6 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
 ```
 
-## Roadmap
-
-See [docs/product-sprints.md](docs/product-sprints.md).
-
 ## CLI Contract
 
 See [docs/cli.md](docs/cli.md) for command contract notes, including exit

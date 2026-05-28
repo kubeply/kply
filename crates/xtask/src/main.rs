@@ -66,7 +66,6 @@ fn main() -> Result<()> {
             println!("  check-placeholder-docs verify public docs describe placeholder status");
             println!("  check-placeholders verify product crates expose placeholder markers only");
             println!("  check-report-language verify reports do not overclaim deployment safety");
-            println!("  check-readme-roadmap-link verify README links the roadmap");
             println!("  check-release-planning verify cargo-dist release packaging stays pinned");
             println!("  check-security-assumptions-docs verify first-release trust assumptions");
             println!("  check-security-policy verify private vulnerability reporting docs");
@@ -128,9 +127,6 @@ fn main() -> Result<()> {
         "check-report-language" => {
             check_report_language()?;
         }
-        "check-readme-roadmap-link" => {
-            check_readme_roadmap_link()?;
-        }
         "check-release-planning" => {
             check_release_planning()?;
         }
@@ -168,7 +164,6 @@ fn main() -> Result<()> {
             println!("cargo xtask check-placeholder-docs");
             println!("cargo xtask check-placeholders");
             println!("cargo xtask check-report-language");
-            println!("cargo xtask check-readme-roadmap-link");
             println!("cargo xtask check-release-planning");
             println!("cargo xtask check-security-assumptions-docs");
             println!("cargo xtask check-security-policy");
@@ -668,10 +663,6 @@ fn check_release_planning() -> Result<()> {
         "dist-workspace.toml".as_ref(),
         ".github/workflows/release.yml".as_ref(),
     )
-}
-
-fn check_readme_roadmap_link() -> Result<()> {
-    check_readme_roadmap_link_inner("README.md".as_ref())
 }
 
 fn check_toolchain_pin() -> Result<()> {
@@ -1355,7 +1346,6 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo xtask check-placeholder-docs",
         "cargo xtask check-placeholders",
         "cargo xtask check-report-language",
-        "cargo xtask check-readme-roadmap-link",
         "cargo xtask check-release-planning",
         "cargo xtask check-security-assumptions-docs",
         "cargo xtask check-security-policy",
@@ -1932,33 +1922,6 @@ fn check_docs_contain(docs: impl IntoIterator<Item = DocExpectation>) -> Result<
     Ok(())
 }
 
-fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
-    let source = std::fs::read_to_string(readme_path)
-        .with_context(|| format!("reading README file {}", readme_path.display()))?;
-    let has_roadmap_heading = markdown_has_heading_outside_code_block(&source, "## Roadmap");
-    let has_roadmap_link = source.contains("[docs/product-sprints.md](docs/product-sprints.md)");
-
-    let mut errors = Vec::new();
-
-    if !has_roadmap_heading {
-        errors.push("missing top-level ## Roadmap heading");
-    }
-
-    if !has_roadmap_link {
-        errors.push("missing markdown link to docs/product-sprints.md");
-    }
-
-    if !errors.is_empty() {
-        bail!(
-            "{} must include a top-level Roadmap section linking docs/product-sprints.md: {}",
-            readme_path.display(),
-            errors.join("; ")
-        );
-    }
-
-    Ok(())
-}
-
 fn check_fixture_directories_inner(
     fixtures_root: &Path,
     required_directories: &[&str],
@@ -2013,25 +1976,6 @@ fn check_fixture_testing_docs_inner(fixture_readme_path: &Path) -> Result<()> {
             "Prefer direct assertions for invariants and snapshots for reviewable artifacts".into(),
         ],
     }])
-}
-
-fn markdown_has_heading_outside_code_block(source: &str, heading: &str) -> bool {
-    let mut in_fenced_code_block = false;
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.starts_with("```") {
-            in_fenced_code_block = !in_fenced_code_block;
-            continue;
-        }
-
-        if !in_fenced_code_block && trimmed == heading {
-            return true;
-        }
-    }
-
-    false
 }
 
 fn has_placeholder_marker(source: &str) -> bool {
@@ -2089,7 +2033,7 @@ mod tests {
         check_future_session_docs_inner, check_issue_templates_inner,
         check_known_limitations_docs_inner, check_license_files_inner,
         check_no_secret_content_reads_inner, check_placeholder_sources,
-        check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
+        check_release_planning_inner, check_report_language_inner,
         check_security_assumptions_docs_inner, check_security_policy_inner,
         check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
         contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
@@ -2232,8 +2176,6 @@ jobs:
         run: cargo xtask check-placeholders
       - name: Check report language
         run: cargo xtask check-report-language
-      - name: Check README roadmap link
-        run: cargo xtask check-readme-roadmap-link
       - name: Check release planning
         run: cargo xtask check-release-planning
       - name: Check security assumptions docs
@@ -3490,100 +3432,6 @@ A human still needs to review and promote outside Kply.
             .expect_err("fixture testing docs missing guidance should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
-    }
-
-    #[test]
-    fn accepts_readme_with_roadmap_link() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(
-            temp.path(),
-            "README.md",
-            "# Kply\n\n## Roadmap\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
-        );
-
-        check_readme_roadmap_link_inner(&readme_path).expect("README roadmap link should pass");
-    }
-
-    #[test]
-    fn rejects_readme_without_roadmap_link() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(temp.path(), "README.md", "# Kply\n\n## Development\n");
-
-        let error = check_readme_roadmap_link_inner(&readme_path)
-            .expect_err("README without roadmap link should fail");
-
-        assert!(error.to_string().contains("Roadmap section"));
-    }
-
-    #[test]
-    fn rejects_readme_with_heading_but_no_link() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(temp.path(), "README.md", "# Kply\n\n## Roadmap\n");
-
-        let error = check_readme_roadmap_link_inner(&readme_path)
-            .expect_err("README without roadmap link should fail");
-
-        assert!(error.to_string().contains("Roadmap section"));
-    }
-
-    #[test]
-    fn rejects_readme_with_link_but_no_heading() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(
-            temp.path(),
-            "README.md",
-            "# Kply\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
-        );
-
-        let error = check_readme_roadmap_link_inner(&readme_path)
-            .expect_err("README without roadmap heading should fail");
-
-        assert!(error.to_string().contains("Roadmap section"));
-    }
-
-    #[test]
-    fn rejects_readme_with_wrong_roadmap_heading_level() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(
-            temp.path(),
-            "README.md",
-            "# Kply\n\n### Roadmap\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
-        );
-
-        let error = check_readme_roadmap_link_inner(&readme_path)
-            .expect_err("README with wrong roadmap heading level should fail");
-
-        assert!(error.to_string().contains("Roadmap section"));
-    }
-
-    #[test]
-    fn rejects_readme_with_concatenated_roadmap_heading() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(
-            temp.path(),
-            "README.md",
-            "# Kply\n\n## RoadmapPlanning\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
-        );
-
-        let error = check_readme_roadmap_link_inner(&readme_path)
-            .expect_err("README with concatenated roadmap heading should fail");
-
-        assert!(error.to_string().contains("Roadmap section"));
-    }
-
-    #[test]
-    fn rejects_readme_with_roadmap_heading_in_code_block() {
-        let temp = TempDir::new().expect("temp dir should be created");
-        let readme_path = write_source(
-            temp.path(),
-            "README.md",
-            "# Kply\n\n```md\n## Roadmap\n```\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
-        );
-
-        let error = check_readme_roadmap_link_inner(&readme_path)
-            .expect_err("README with roadmap heading in code block should fail");
-
-        assert!(error.to_string().contains("Roadmap section"));
     }
 
     #[test]
