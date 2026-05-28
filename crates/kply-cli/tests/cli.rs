@@ -4317,12 +4317,16 @@ fn rejects_init_without_from_cluster() {
 #[test]
 fn rejects_init_output_overwrite_without_flag() {
     let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
     let output_path = write_temp_file(&workspace, "kply.yaml", "version: 1\n");
     let output_path = output_path.to_str().expect("output path should be UTF-8");
-    let output = assert_kply_exit_code(
-        &["init", "--from-cluster", "--output", output_path],
-        EXIT_USAGE,
-    );
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .args(["init", "--from-cluster", "--output", output_path])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
 
     assert!(
         output.stdout.is_empty(),

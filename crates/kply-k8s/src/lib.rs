@@ -1212,7 +1212,6 @@ pub async fn list_http_routes(
     Ok(summaries)
 }
 
-/// Convert a Kubernetes [`Deployment`] into a deterministic summary.
 /// Convert a Kubernetes [`Namespace`] into a deterministic summary.
 pub fn namespace_summary(namespace: &Namespace) -> NamespaceSummary {
     NamespaceSummary {

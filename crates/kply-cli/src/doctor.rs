@@ -114,7 +114,8 @@ fn config_check(cli: &Cli) -> DoctorCheck {
 
 fn kubeconfig_check() -> Result<DoctorCheck> {
     let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_io()
+        .enable_time()
         .build()?;
     match runtime.block_on(kply_k8s::load_kube_config()) {
         Ok(_) => Ok(DoctorCheck::ok(
@@ -274,7 +275,8 @@ fn config_load_error_reason(error: &ConfigLoadError) -> &'static str {
 
 fn capability_kubeconfig_report() -> Result<CapabilityStatusReport> {
     let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_io()
+        .enable_time()
         .build()?;
     match runtime.block_on(kply_k8s::load_kube_config()) {
         Ok(_) => Ok(CapabilityStatusReport {

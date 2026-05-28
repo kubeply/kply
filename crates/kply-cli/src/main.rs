@@ -38,7 +38,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
-use std::io::IsTerminal;
+use std::io::{ErrorKind as IoErrorKind, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -310,29 +310,61 @@ fn render_init_from_cluster(
     let output_path = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(kply_config::CANONICAL_CONFIG_FILENAME));
-    if output_path.exists() && !overwrite {
-        return render_init_output_exists_error(&output_path, cli.json);
-    }
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let discovery = match runtime.block_on(discover_init_from_cluster()) {
-        Ok(discovery) => discovery,
-        Err(error) => return render_discovery_error(&error, cli.json),
-    };
-    let config = init_config_from_apps(&discovery.apps);
-    if let Err(errors) = config.validate() {
-        return render_config_validation_error(&errors, cli.json);
-    }
-    let config_yaml = render_init_config_yaml(&discovery.apps)?;
-
     if let Some(parent) = output_path.parent()
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&output_path, config_yaml)?;
+
+    let mut reserved_output = if overwrite {
+        None
+    } else {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&output_path)
+        {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == IoErrorKind::AlreadyExists => {
+                return render_init_output_exists_error(&output_path, cli.json);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let discovery = match runtime.block_on(discover_init_from_cluster()) {
+        Ok(discovery) => discovery,
+        Err(error) => {
+            if reserved_output.is_some() {
+                let _ = std::fs::remove_file(&output_path);
+            }
+            return render_discovery_error(&error, cli.json);
+        }
+    };
+    let config = init_config_from_apps(&discovery.apps);
+    if let Err(errors) = config.validate() {
+        if reserved_output.is_some() {
+            let _ = std::fs::remove_file(&output_path);
+        }
+        return render_config_validation_error(&errors, cli.json);
+    }
+    let config_yaml = render_init_config_yaml(&discovery.apps)?;
+
+    if let Some(file) = reserved_output.as_mut() {
+        file.write_all(config_yaml.as_bytes())?;
+        file.sync_all()?;
+    } else {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&output_path)?
+            .write_all(config_yaml.as_bytes())?;
+    }
 
     let report = InitReport {
         command: "init",
@@ -426,13 +458,14 @@ fn discover_namespace_apps(
             continue;
         }
 
-        let matched_workloads = deployments
+        let mut matched_workloads = deployments
             .iter()
             .filter(|deployment| {
                 selector_matches_labels(&service.selector, &deployment.pod_template_labels)
             })
             .map(|deployment| deployment.name.clone())
             .collect::<Vec<_>>();
+        matched_workloads.sort_unstable();
         if matched_workloads.len() == 1 {
             service_matches.push((service, matched_workloads[0].clone()));
         } else {
@@ -451,11 +484,12 @@ fn discover_namespace_apps(
 
     let mut apps = Vec::new();
     for deployment in deployments {
-        let matched_services = service_matches
+        let mut matched_services = service_matches
             .iter()
             .filter(|(_, workload)| workload == &deployment.name)
             .map(|(service, _)| *service)
             .collect::<Vec<_>>();
+        matched_services.sort_by(|left, right| left.name.cmp(&right.name));
         let Some(service) = matched_services.first().copied() else {
             continue;
         };
