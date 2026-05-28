@@ -145,3 +145,59 @@ The JSON form must remain an object with these fields:
 Do not make `kply app inspect` create, update, delete, or patch Kubernetes
 resources in `v0.1.0`. Future live discovery for this command must stay
 read-only and preserve deterministic JSON output.
+
+## Dry-Run Session Planning Requirement
+
+The first release must let users plan a sandbox session without touching the
+cluster. `kply session plan <app>` loads and validates configuration, applies
+CLI overrides, evaluates configured policy, and renders the planned session
+contract. It must not create, update, delete, or patch Kubernetes resources.
+
+The text form must include these stable sections in this order:
+
+```text
+kply session plan <app>
+id: <session-id>
+name: <session-name>
+workload: <namespace>/<kind>/<name>
+image: <image>
+planned_resources: <count>
+planned_labels: <count>
+planned_annotations: <count>
+planned_checks: <count>
+planned_cleanup_steps: <count>
+required_permissions: <count>
+unsupported_feature_warnings: <count>
+risk_notes: <count>
+route_selector: <selector-or-none>
+policy_operations: <count>
+status: planned
+ttl: <duration>
+```
+
+The `ttl` line appears only when a session lifetime is configured or passed on
+the command line. Resource, label, annotation, check, cleanup, permission,
+warning, and risk detail lines must remain deterministic within their sections.
+
+The JSON form must remain an object with these fields:
+
+- `id`
+- `name`
+- `workload`
+- `image`
+- `ttl`
+- `planned_resources`
+- `planned_labels`
+- `planned_annotations`
+- `planned_checks`
+- `planned_cleanup_steps`
+- `required_permissions`
+- `unsupported_feature_warnings`
+- `risk_notes`
+- `route_selector`
+- `policy`
+- `status`
+
+`status` must be `planned` for successful dry-run output in `v0.1.0`.
+Mutation belongs behind explicit apply-oriented commands, not behind
+`kply session plan`.

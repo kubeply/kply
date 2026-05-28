@@ -723,6 +723,48 @@ fn prints_session_plan_placeholder_text() {
     });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(
+        output,
+        concat!(
+            "kply session plan checkout\n",
+            "id: checkout-plan\n",
+            "name: checkout-session\n",
+            "workload: shop/Deployment/checkout-api\n",
+            "image: ghcr.io/acme/checkout:next\n",
+            "planned_resources: 3\n",
+            "  resource: shop/Deployment/checkout-plan-workload\n",
+            "  resource: shop/HTTPRoute/checkout-plan-route\n",
+            "  resource: shop/Service/checkout-plan-service\n",
+            "planned_labels: 4\n",
+            "  label: kply.dev/app=checkout\n",
+            "  label: kply.dev/managed-by=kply\n",
+            "  label: kply.dev/session-id=checkout-plan\n",
+            "  label: kply.dev/session-name=checkout-session\n",
+            "planned_annotations: 3\n",
+            "  annotation: kply.dev/image=ghcr.io/acme/checkout:next\n",
+            "  annotation: kply.dev/route-strategy=header\n",
+            "  annotation: kply.dev/workload=shop/Deployment/checkout-api\n",
+            "planned_checks: 4\n",
+            "  check: image_pull -> ghcr.io/acme/checkout:next\n",
+            "  check: route_ready -> header\n",
+            "  check: service_endpoints -> shop/checkout-plan-service\n",
+            "  check: workload_ready -> shop/Deployment/checkout-api\n",
+            "planned_cleanup_steps: 3\n",
+            "  cleanup: delete_route -> shop/HTTPRoute/checkout-plan-route\n",
+            "  cleanup: delete_service -> shop/Service/checkout-plan-service\n",
+            "  cleanup: delete_workload -> shop/Deployment/checkout-plan-workload\n",
+            "required_permissions: 4\n",
+            "  permission: core/pods [get,list,watch]\n",
+            "  permission: core/services [create,delete,get,patch]\n",
+            "  permission: apps/deployments [create,delete,get,patch]\n",
+            "  permission: gateway.networking.k8s.io/httproutes [create,delete,get]\n",
+            "unsupported_feature_warnings: 0\n",
+            "risk_notes: 0\n",
+            "route_selector: header:x-kply-session=checkout-plan\n",
+            "policy_operations: 6\n",
+            "status: planned\n",
+        )
+    );
     insta::assert_snapshot!("session_plan_placeholder_text", output);
 }
 
@@ -747,6 +789,58 @@ fn prints_session_plan_placeholder_json() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("session plan output should be an object");
+    assert_eq!(
+        object.len(),
+        16,
+        "session plan JSON shape should stay stable"
+    );
+    assert_eq!(value["id"], "checkout-plan");
+    assert_eq!(value["name"], "checkout-session");
+    assert_eq!(value["image"], "ghcr.io/acme/checkout:next");
+    assert_eq!(value["status"], "planned");
+    assert_eq!(value["ttl"], serde_json::Value::Null);
+    assert_eq!(value["workload"]["namespace"], "shop");
+    assert_eq!(value["workload"]["kind"], "Deployment");
+    assert_eq!(value["workload"]["name"], "checkout-api");
+    assert_eq!(
+        value["route_selector"],
+        serde_json::json!({
+            "kind": "header",
+            "name": "x-kply-session",
+            "value": "checkout-plan"
+        })
+    );
+    assert_eq!(value["planned_resources"].as_array().map(Vec::len), Some(3));
+    assert_eq!(value["planned_labels"].as_array().map(Vec::len), Some(4));
+    assert_eq!(
+        value["planned_annotations"].as_array().map(Vec::len),
+        Some(3)
+    );
+    assert_eq!(value["planned_checks"].as_array().map(Vec::len), Some(4));
+    assert_eq!(
+        value["planned_cleanup_steps"].as_array().map(Vec::len),
+        Some(3)
+    );
+    assert_eq!(
+        value["required_permissions"].as_array().map(Vec::len),
+        Some(4)
+    );
+    assert_eq!(
+        value["unsupported_feature_warnings"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(value["risk_notes"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        value["policy"]["allowed_operations"]
+            .as_array()
+            .map(Vec::len),
+        Some(6)
+    );
     insta::assert_json_snapshot!("session_plan_placeholder_json", value);
 }
 
