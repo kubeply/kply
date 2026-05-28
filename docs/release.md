@@ -49,7 +49,7 @@ Before tagging the first public binary release:
   attestations are enabled.
 - Confirm `.github/workflows/release.yml` is generated from the pinned
   `cargo-dist` version and keeps the least-privilege permission override.
-- Confirm `README.md` contains the final install command and upgrade path.
+- Confirm `README.md` contains the final install, upgrade, and rollback paths.
 - Confirm `docs/release-notes-template.md` has been copied into the GitHub
   release notes draft and edited for the tagged version.
 - Confirm one local archive has been unpacked and smoke-tested before the
