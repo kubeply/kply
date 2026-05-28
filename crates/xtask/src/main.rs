@@ -67,6 +67,7 @@ fn main() -> Result<()> {
             println!("  check-readme-roadmap-link verify README links the roadmap");
             println!("  check-release-planning verify cargo-dist release packaging stays pinned");
             println!("  check-security-assumptions-docs verify first-release trust assumptions");
+            println!("  check-security-policy verify private vulnerability reporting docs");
             println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
@@ -128,6 +129,9 @@ fn main() -> Result<()> {
         "check-security-assumptions-docs" => {
             check_security_assumptions_docs()?;
         }
+        "check-security-policy" => {
+            check_security_policy()?;
+        }
         "check-toolchain-pin" => {
             check_toolchain_pin()?;
         }
@@ -157,6 +161,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-readme-roadmap-link");
             println!("cargo xtask check-release-planning");
             println!("cargo xtask check-security-assumptions-docs");
+            println!("cargo xtask check-security-policy");
             println!("cargo xtask check-toolchain-pin");
         }
         unknown => bail!("unknown xtask command: {unknown}"),
@@ -284,6 +289,14 @@ fn check_security_assumptions_docs() -> Result<()> {
     check_security_assumptions_docs_inner("docs/first-release.md".into())
 }
 
+fn check_security_policy() -> Result<()> {
+    check_security_policy_inner([
+        "SECURITY.md".into(),
+        "README.md".into(),
+        ".github/ISSUE_TEMPLATE/config.yml".into(),
+    ])
+}
+
 fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()> {
     let docs = [DocExpectation {
         path: first_release_path,
@@ -366,6 +379,45 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 5]) -> Result<()> {
                 "Do not include Secret values".into(),
                 "Failure mode to prevent".into(),
                 "Useful Kply behavior".into(),
+            ],
+        },
+    ];
+
+    check_docs_contain(docs)
+}
+
+fn check_security_policy_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
+    let [security_path, readme_path, issue_config_path] = doc_paths;
+    let docs = [
+        DocExpectation {
+            path: security_path,
+            required_phrases: vec![
+                "# Security Policy".into(),
+                "Supported Versions".into(),
+                "latest released `v0.1.x` version".into(),
+                "GitHub private vulnerability reporting".into(),
+                "Do not open a public issue for a vulnerability.".into(),
+                "Kply reads or prints Kubernetes Secret values.".into(),
+                "mutates resources without an explicit apply or confirmation boundary".into(),
+                "Release artifacts, checksums, installers, or attestations".into(),
+                "no paid bug bounty program".into(),
+                "Do not send live credentials".into(),
+            ],
+        },
+        DocExpectation {
+            path: readme_path,
+            required_phrases: vec![
+                "## Security".into(),
+                "SECURITY.md".into(),
+                "private vulnerability reporting".into(),
+            ],
+        },
+        DocExpectation {
+            path: issue_config_path,
+            required_phrases: vec![
+                "Security reports".into(),
+                "https://github.com/kubeply/kply/security/policy".into(),
+                "private security advisory flow".into(),
             ],
         },
     ];
@@ -1168,6 +1220,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo xtask check-readme-roadmap-link",
         "cargo xtask check-release-planning",
         "cargo xtask check-security-assumptions-docs",
+        "cargo xtask check-security-policy",
         "cargo xtask check-toolchain-pin",
     ]
 }
@@ -1898,10 +1951,11 @@ mod tests {
         check_issue_templates_inner, check_known_limitations_docs_inner, check_license_files_inner,
         check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
-        check_security_assumptions_docs_inner, check_toolchain_pin_inner, collect_crate_sources,
-        collect_workspace_members, contains_crate_name, forbidden_report_overclaim_phrases,
-        forbidden_secret_content_patterns, has_non_placeholder_public_item, has_placeholder_marker,
-        required_ci_run_commands, secret_content_guard_source_roots, workflow_installs_toolchain,
+        check_security_assumptions_docs_inner, check_security_policy_inner,
+        check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
+        contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
+        has_non_placeholder_public_item, has_placeholder_marker, required_ci_run_commands,
+        secret_content_guard_source_roots, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -2041,6 +2095,8 @@ jobs:
         run: cargo xtask check-release-planning
       - name: Check security assumptions docs
         run: cargo xtask check-security-assumptions-docs
+      - name: Check security policy
+        run: cargo xtask check-security-policy
       - name: Check toolchain pin
         run: cargo xtask check-toolchain-pin
       - name: Check dependencies
@@ -2511,6 +2567,89 @@ Kply `v0.1.0` assumes the caller already has Kubernetes credentials.
 
         let error = check_security_assumptions_docs_inner(first_release_path)
             .expect_err("security assumptions docs missing RBAC boundary should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
+    }
+
+    #[test]
+    fn accepts_security_policy_docs() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let security_path = write_source(
+            temp.path(),
+            "SECURITY.md",
+            "\
+# Security Policy
+
+## Supported Versions
+
+Security reports are accepted for the latest released `v0.1.x` version.
+
+Use GitHub private vulnerability reporting.
+Do not open a public issue for a vulnerability.
+
+Kply reads or prints Kubernetes Secret values.
+Kply mutates resources without an explicit apply or confirmation boundary.
+Release artifacts, checksums, installers, or attestations.
+There is no paid bug bounty program.
+Do not send live credentials, Secret values, production kubeconfigs.
+",
+        );
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "## Security\n\nSee [SECURITY.md](SECURITY.md) for private vulnerability reporting.\n",
+        );
+        let issue_config_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/config.yml",
+            "\
+Security reports
+https://github.com/kubeply/kply/security/policy
+private security advisory flow
+",
+        );
+
+        check_security_policy_inner([security_path, readme_path, issue_config_path])
+            .expect("security policy docs should pass");
+    }
+
+    #[test]
+    fn rejects_security_policy_without_private_reporting_boundary() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let security_path = write_source(
+            temp.path(),
+            "SECURITY.md",
+            "\
+# Security Policy
+
+## Supported Versions
+
+Security reports are accepted for the latest released `v0.1.x` version.
+
+Kply reads or prints Kubernetes Secret values.
+Kply mutates resources without an explicit apply or confirmation boundary.
+Release artifacts, checksums, installers, or attestations.
+There is no paid bug bounty program.
+Do not send live credentials, Secret values, production kubeconfigs.
+",
+        );
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "## Security\n\nSee [SECURITY.md](SECURITY.md) for private vulnerability reporting.\n",
+        );
+        let issue_config_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/config.yml",
+            "\
+Security reports
+https://github.com/kubeply/kply/security/policy
+private security advisory flow
+",
+        );
+
+        let error = check_security_policy_inner([security_path, readme_path, issue_config_path])
+            .expect_err("security policy without private reporting should fail");
 
         assert!(error.to_string().contains("documentation phrase"));
     }

@@ -40,10 +40,12 @@ Completed work:
   - `v0.1.0` tag.
 - Milestone 20 item 1 is implemented:
   - feedback issue templates.
+- Milestone 20 item 2 is implemented:
+  - security policy.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 2: add a security policy.
+- Milestone 20 item 3: add a roadmap issue template.
 
 ## Locked Decisions
 
