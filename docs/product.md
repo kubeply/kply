@@ -23,4 +23,6 @@ started.
 4. Gateway API route adapter.
 5. Runtime checks and cleanup.
 6. GitHub Action integration.
-7. Team policy, audit, and hosted reporting.
+7. Team policy, audit, and hosted reporting as future commercial candidates,
+   separated from the open-source trust boundary in
+   [Commercial Boundary](commercial-boundary.md).
