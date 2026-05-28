@@ -338,6 +338,7 @@ fn check_feedback_triage_docs_inner(feedback_triage_path: PathBuf) -> Result<()>
             "## Policy Needs".into(),
             "## App Graph Failures".into(),
             "## Check Failures".into(),
+            "## OpenSpec Conversion".into(),
             "missing route adapter".into(),
             "Three separate users or organizations".into(),
             "repeated route adapter request".into(),
@@ -350,6 +351,9 @@ fn check_feedback_triage_docs_inner(feedback_triage_path: PathBuf) -> Result<()>
             "minimum deterministic check evidence".into(),
             "same policy boundary".into(),
             "minimum deterministic decision".into(),
+            "OpenSpec change only after".into(),
+            "acceptance scenario".into(),
+            "explicit non-goals".into(),
             "Do not include Secret values".into(),
             "explicit permission exists".into(),
             "OpenSpec change".into(),
@@ -443,6 +447,8 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "repeated policy need".into(),
                 "repeated app graph failure".into(),
                 "repeated check failure".into(),
+                "OpenSpec readiness".into(),
+                "acceptance scenarios".into(),
                 "Requested roadmap change".into(),
                 "Affected agent-infra workflow".into(),
                 "Success criteria".into(),
@@ -2470,6 +2476,8 @@ infra-bench failure
 repeated policy need
 repeated app graph failure
 repeated check failure
+OpenSpec readiness
+acceptance scenarios
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2565,6 +2573,8 @@ infra-bench failure
 repeated policy need
 repeated app graph failure
 repeated check failure
+OpenSpec readiness
+acceptance scenarios
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2596,6 +2606,7 @@ Success criteria
 ## Policy Needs
 ## App Graph Failures
 ## Check Failures
+## OpenSpec Conversion
 missing route adapter
 Three separate users or organizations
 repeated route adapter request
@@ -2608,6 +2619,9 @@ same check failure mode
 minimum deterministic check evidence
 same policy boundary
 minimum deterministic decision
+OpenSpec change only after
+acceptance scenario
+explicit non-goals
 Do not include Secret values
 explicit permission exists
 OpenSpec change
@@ -2630,6 +2644,7 @@ OpenSpec change
 ## Policy Needs
 ## App Graph Failures
 ## Check Failures
+## OpenSpec Conversion
 missing route adapter
 repeated route adapter request
 repeated policy need
@@ -2641,6 +2656,8 @@ same check failure mode
 minimum deterministic check evidence
 same policy boundary
 minimum deterministic decision
+acceptance scenario
+explicit non-goals
 Do not include Secret values
 explicit permission exists
 OpenSpec change

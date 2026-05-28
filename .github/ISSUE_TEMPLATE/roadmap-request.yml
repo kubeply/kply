@@ -10,6 +10,7 @@ body:
       value: |
         Use this for roadmap requests that should change future Kply work.
         Include evidence from real user feedback, demos, benchmarks, or repeated workflow failures.
+        Repeated feedback must describe OpenSpec readiness before implementation starts.
         Do not include Secret values, tokens, credentials, or private hostnames.
   - type: dropdown
     id: evidence-type
@@ -52,5 +53,12 @@ body:
     attributes:
       label: Success criteria
       description: What behavior would prove this roadmap item is useful and safe enough to prioritize?
+    validations:
+      required: true
+  - type: textarea
+    id: openspec-readiness
+    attributes:
+      label: OpenSpec readiness
+      description: Summarize the sanitized evidence, acceptance scenarios, affected requirement, and test fixtures needed before opening an OpenSpec change.
     validations:
       required: true
