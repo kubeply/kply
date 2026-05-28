@@ -5,9 +5,9 @@ use kply_cli::cli::Cli;
 use std::process::ExitCode;
 
 use crate::demo::{
-    CONTAINER_RUNTIME_COMMANDS, DEMO_CONFIG_PATH, DEMO_MANIFEST_PATHS, find_command_in_path,
-    repository_path,
+    CONTAINER_RUNTIME_COMMANDS, DEMO_CONFIG_PATH, DEMO_MANIFEST_PATHS, repository_path,
 };
+use crate::local::find_command_in_path;
 
 const EXIT_BLOCKING: u8 = 1;
 

@@ -8,6 +8,7 @@ Usage: kply-cli [OPTIONS] [COMMAND]
 
 Commands:
   help        Print top-level help
+  doctor      Check local readiness for Kply workflows
   session     Manage future sandbox sessions
   app         Inspect configured application targets
   config      Manage Kply configuration
