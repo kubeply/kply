@@ -9,6 +9,7 @@ body:
     attributes:
       value: |
         Use this when Kply reads Kubernetes metadata incorrectly.
+        Mark app graph failures clearly so repeated graph issues can be tracked.
         Do not include Secret values, tokens, credentials, or private hostnames.
   - type: input
     id: kply-version
@@ -39,6 +40,22 @@ body:
       label: Sanitized Kply output
       description: Include JSON or text output with sensitive data removed.
       render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: graph-failure
+    attributes:
+      label: App graph failure
+      description: Classify the app graph relationship that Kply discovered incorrectly.
+      options:
+        - existing graph bug
+        - repeated app graph failure
+        - missing workload relationship
+        - missing service relationship
+        - missing route relationship
+        - missing config or Secret metadata reference
+        - not an app graph failure
+        - not sure
     validations:
       required: true
   - type: textarea

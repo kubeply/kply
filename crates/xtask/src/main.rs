@@ -336,10 +336,14 @@ fn check_feedback_triage_docs_inner(feedback_triage_path: PathBuf) -> Result<()>
             "# Feedback Triage".into(),
             "## Missing Route Adapters".into(),
             "## Policy Needs".into(),
+            "## App Graph Failures".into(),
             "missing route adapter".into(),
             "Three separate users or organizations".into(),
             "repeated route adapter request".into(),
             "repeated policy need".into(),
+            "repeated app graph failure".into(),
+            "same missing graph relationship".into(),
+            "minimum deterministic graph evidence".into(),
             "same policy boundary".into(),
             "minimum deterministic decision".into(),
             "Do not include Secret values".into(),
@@ -391,6 +395,8 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "Do not include Secret values".into(),
                 "Workload shape".into(),
                 "Secret metadata references".into(),
+                "repeated app graph failure".into(),
+                "App graph failure".into(),
                 "Expected discovery result".into(),
             ],
         },
@@ -428,6 +434,7 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "Evidence type".into(),
                 "infra-bench failure".into(),
                 "repeated policy need".into(),
+                "repeated app graph failure".into(),
                 "Requested roadmap change".into(),
                 "Affected agent-infra workflow".into(),
                 "Success criteria".into(),
@@ -2408,6 +2415,8 @@ discovery
 Do not include Secret values
 Workload shape
 Secret metadata references
+repeated app graph failure
+App graph failure
 Expected discovery result
 ",
         );
@@ -2448,6 +2457,7 @@ Do not include Secret values
 Evidence type
 infra-bench failure
 repeated policy need
+repeated app graph failure
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2496,6 +2506,8 @@ discovery
 Do not include Secret values
 Workload shape
 Secret metadata references
+repeated app graph failure
+App graph failure
 Expected discovery result
 ",
         );
@@ -2536,6 +2548,7 @@ Do not include Secret values
 Evidence type
 infra-bench failure
 repeated policy need
+repeated app graph failure
 Requested roadmap change
 Affected agent-infra workflow
 Success criteria
@@ -2565,10 +2578,14 @@ Success criteria
 # Feedback Triage
 ## Missing Route Adapters
 ## Policy Needs
+## App Graph Failures
 missing route adapter
 Three separate users or organizations
 repeated route adapter request
 repeated policy need
+repeated app graph failure
+same missing graph relationship
+minimum deterministic graph evidence
 same policy boundary
 minimum deterministic decision
 Do not include Secret values
@@ -2591,9 +2608,13 @@ OpenSpec change
 # Feedback Triage
 ## Missing Route Adapters
 ## Policy Needs
+## App Graph Failures
 missing route adapter
 repeated route adapter request
 repeated policy need
+repeated app graph failure
+same missing graph relationship
+minimum deterministic graph evidence
 same policy boundary
 minimum deterministic decision
 Do not include Secret values
