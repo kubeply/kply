@@ -821,11 +821,13 @@ fn check_ci_workflow_inner(workflow_path: &Path) -> Result<()> {
     }
 
     let run_commands = workflow_run_commands(&workflow_yaml);
+    let run_lines = run_commands
+        .iter()
+        .flat_map(|run_command| run_command.lines())
+        .map(str::trim)
+        .collect::<BTreeSet<_>>();
     for required_command in required_ci_run_commands() {
-        if !run_commands
-            .iter()
-            .any(|run_command| run_command.contains(required_command))
-        {
+        if !run_lines.contains(required_command) {
             errors.push(format!(
                 "ci workflow must run required command: {required_command}"
             ));
@@ -833,12 +835,21 @@ fn check_ci_workflow_inner(workflow_path: &Path) -> Result<()> {
     }
 
     let uses = workflow_uses_actions(&workflow_yaml);
+    let used_action_repositories = uses
+        .iter()
+        .map(|action| {
+            action
+                .split_once('@')
+                .map_or(*action, |(repository, _)| repository)
+        })
+        .map(str::trim)
+        .collect::<BTreeSet<_>>();
     for required_action in [
         "raven-actions/actionlint",
         "dtolnay/rust-toolchain",
         "EmbarkStudios/cargo-deny-action",
     ] {
-        if !uses.iter().any(|action| action.contains(required_action)) {
+        if !used_action_repositories.contains(required_action) {
             errors.push(format!(
                 "ci workflow must use required action: {required_action}"
             ));
@@ -881,13 +892,29 @@ fn workflow_pushes_branch(workflow: &YamlValue, expected_branch: &str) -> bool {
 }
 
 fn workflow_has_read_only_contents_permission(workflow: &YamlValue) -> bool {
-    workflow
+    let top_level_read_only = workflow
         .as_mapping()
         .and_then(|workflow| workflow.get(&*YAML_PERMISSIONS_KEY))
         .and_then(YamlValue::as_mapping)
         .and_then(|permissions| permissions.get(&*YAML_CONTENTS_KEY))
         .and_then(YamlValue::as_str)
-        == Some("read")
+        == Some("read");
+
+    let jobs_do_not_escalate = workflow
+        .as_mapping()
+        .and_then(|workflow| workflow.get(&*YAML_JOBS_KEY))
+        .and_then(YamlValue::as_mapping)
+        .is_none_or(|jobs| {
+            jobs.values().filter_map(YamlValue::as_mapping).all(|job| {
+                job.get(&*YAML_PERMISSIONS_KEY)
+                    .and_then(YamlValue::as_mapping)
+                    .and_then(|permissions| permissions.get(&*YAML_CONTENTS_KEY))
+                    .and_then(YamlValue::as_str)
+                    .is_none_or(|contents| contents == "read")
+            })
+        });
+
+    top_level_read_only && jobs_do_not_escalate
 }
 
 fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
@@ -2827,6 +2854,25 @@ license = "Apache-2.0"
     }
 
     #[test]
+    fn rejects_ci_workflow_with_echoed_required_command() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let required_command = "cargo fmt --all -- --check";
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace(
+                &format!("run: {required_command}"),
+                &format!("run: echo {required_command}"),
+            ),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("echoed required command should not satisfy CI guard");
+
+        assert!(error.to_string().contains(required_command));
+    }
+
+    #[test]
     fn rejects_ci_workflow_without_pull_request_trigger() {
         let temp = TempDir::new().expect("temp dir should be created");
         let workflow_path = write_nested_source(
@@ -2887,6 +2933,24 @@ license = "Apache-2.0"
     }
 
     #[test]
+    fn rejects_ci_workflow_with_job_level_write_contents_permission() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace(
+                "  quality:\n    steps:",
+                "  quality:\n    permissions:\n      contents: write\n    steps:",
+            ),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow with job-level contents write should fail");
+
+        assert!(error.to_string().contains("contents: read"));
+    }
+
+    #[test]
     fn rejects_ci_workflow_without_required_actions() {
         let temp = TempDir::new().expect("temp dir should be created");
         let workflow_path = write_nested_source(
@@ -2900,6 +2964,33 @@ license = "Apache-2.0"
 
         let error = check_ci_workflow_inner(&workflow_path)
             .expect_err("CI workflow without required actions should fail");
+        let error = error.to_string();
+
+        assert!(error.contains("actionlint"));
+        assert!(error.contains("rust-toolchain"));
+        assert!(error.contains("cargo-deny-action"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_with_spoofed_required_actions() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW
+                .replace(
+                    "raven-actions/actionlint",
+                    "example/raven-actions-actionlint",
+                )
+                .replace("dtolnay/rust-toolchain", "example/dtolnay-rust-toolchain")
+                .replace(
+                    "EmbarkStudios/cargo-deny-action",
+                    "example/EmbarkStudios-cargo-deny-action",
+                ),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("spoofed action repository names should fail");
         let error = error.to_string();
 
         assert!(error.contains("actionlint"));
