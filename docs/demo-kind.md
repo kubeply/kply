@@ -18,6 +18,9 @@ For a runnable end-to-end walkthrough, use
 [`scripts/demo-walkthrough.sh`](../scripts/demo-walkthrough.sh). The script
 simulates the sandbox creation step until `kply session create` is implemented.
 
+For a short replayable terminal cast of the same bounded workflow, see
+[Local Demo Terminal Cast](demo-terminal-cast.md).
+
 ## Prerequisites
 
 - Docker or another Kind-compatible container runtime.

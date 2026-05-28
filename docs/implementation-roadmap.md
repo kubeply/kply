@@ -52,10 +52,13 @@ Completed work:
 - Milestone 20 item 6 is implemented:
   - terminal agent usage docs for Codex, Claude Code, Cursor, and generic
     agents.
+- Milestone 20 item 7 is implemented:
+  - local demo terminal cast and replay guide.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 7: add a local demo video or terminal cast.
+- Milestone 20 item 8: add benchmark tasks in `infra-bench` comparing raw
+  `kubectl` agent use with `kply`-bounded workflows.
 
 ## Locked Decisions
 
@@ -701,7 +704,7 @@ Kubeply product direction.
 5. [x] Add anonymized environment capability report, opt-in only.
 6. [x] Add docs for using `kply` with Codex, Claude Code, Cursor, and other terminal
    agents.
-7. Add a local demo video or terminal cast.
+7. [x] Add a local demo video or terminal cast.
 8. Add benchmark tasks in `infra-bench` comparing raw `kubectl` agent use with
    `kply`-bounded workflows.
 9. Add examples from real user feedback only when permission exists.
