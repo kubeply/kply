@@ -9,6 +9,7 @@ body:
     attributes:
       value: |
         Use this for workflows where an agent needs safer Kubernetes session tools.
+        Mark check failures clearly so repeated verification gaps can be tracked.
         Do not include Secret values, tokens, credentials, or private hostnames.
   - type: input
     id: agent
@@ -38,6 +39,23 @@ body:
     attributes:
       label: Failure mode to prevent
       description: What unsafe action, confusing output, missing check, or broken infra behavior should Kply prevent?
+    validations:
+      required: true
+  - type: dropdown
+    id: check-failure
+    attributes:
+      label: Check failure
+      description: Classify the verification behavior that failed, misled, or was missing.
+      options:
+        - existing check bug
+        - repeated check failure
+        - missing readiness check
+        - missing service endpoint check
+        - missing route check
+        - misleading check evidence
+        - missing skipped-check reason
+        - not a check failure
+        - not sure
     validations:
       required: true
   - type: textarea
