@@ -47,11 +47,13 @@ Completed work:
 - Milestone 20 item 4 is implemented:
   - top-level `kply doctor` readiness checks for config, kubeconfig, and
     `kubectl`.
+- Milestone 20 item 5 is implemented:
+  - opt-in anonymized `kply doctor --capability-report` output.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 5: add anonymized environment capability report, opt-in
-  only.
+- Milestone 20 item 6: add docs for using `kply` with Codex, Claude Code,
+  Cursor, and other terminal agents.
 
 ## Locked Decisions
 
@@ -694,7 +696,7 @@ Kubeply product direction.
 2. Add a security policy.
 3. Add a roadmap issue template.
 4. [x] Add `kply doctor` once enough checks exist.
-5. Add anonymized environment capability report, opt-in only.
+5. [x] Add anonymized environment capability report, opt-in only.
 6. Add docs for using `kply` with Codex, Claude Code, Cursor, and other terminal
    agents.
 7. Add a local demo video or terminal cast.

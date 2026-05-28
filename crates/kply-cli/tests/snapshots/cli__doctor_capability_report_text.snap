@@ -1,0 +1,25 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: normalize_capability_report_output(&output)
+---
+kply doctor --capability-report
+schema_version: 1
+collection: opt_in
+anonymized: true
+omitted: paths,cluster_urls,resource_names,namespaces,hostnames,secret_values
+kply_version: 0.1.0
+os: <os>
+arch: <arch>
+config_source: default
+config_status: valid
+config_reason: none
+app_count: 0
+policy_count: 0
+enabled_policy_count: 0
+kubeconfig_status: resolved
+kubeconfig_reason: none
+local_tools: 4
+  kubectl: present=true
+  docker: present=true
+  podman: present=false
+  nerdctl: present=false

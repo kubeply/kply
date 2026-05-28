@@ -1,0 +1,51 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: value
+---
+{
+  "anonymized": true,
+  "arch": "<arch>",
+  "collection": "opt_in",
+  "command": "doctor --capability-report",
+  "config": {
+    "app_count": null,
+    "enabled_policy_count": null,
+    "policy_count": null,
+    "reason": "read_error",
+    "source": "explicit",
+    "status": "unreadable"
+  },
+  "kply_version": "0.1.0",
+  "kubeconfig": {
+    "reason": "missing_kubeconfig",
+    "status": "unavailable"
+  },
+  "local_tools": [
+    {
+      "name": "kubectl",
+      "present": false
+    },
+    {
+      "name": "docker",
+      "present": false
+    },
+    {
+      "name": "podman",
+      "present": false
+    },
+    {
+      "name": "nerdctl",
+      "present": false
+    }
+  ],
+  "omitted": [
+    "paths",
+    "cluster_urls",
+    "resource_names",
+    "namespaces",
+    "hostnames",
+    "secret_values"
+  ],
+  "os": "<os>",
+  "schema_version": 1
+}

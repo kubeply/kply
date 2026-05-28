@@ -203,6 +203,36 @@ fn fake_kubectl_path(workspace: &Path, exit_code: i32) -> (String, PathBuf) {
     (bin_dir.to_string_lossy().into_owned(), log_path)
 }
 
+fn normalize_capability_report_output(output: &str) -> String {
+    normalize_output(output)
+        .lines()
+        .map(|line| {
+            if line.starts_with("os: ") {
+                "os: <os>"
+            } else if line.starts_with("arch: ") {
+                "arch: <arch>"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn normalize_capability_report_json(value: &mut serde_json::Value) {
+    assert!(
+        value.get("os").is_some_and(serde_json::Value::is_string),
+        "capability report must include string `os`"
+    );
+    assert!(
+        value.get("arch").is_some_and(serde_json::Value::is_string),
+        "capability report must include string `arch`"
+    );
+    value["os"] = serde_json::Value::String("<os>".to_owned());
+    value["arch"] = serde_json::Value::String("<arch>".to_owned());
+}
+
 #[cfg(unix)]
 fn set_fake_executable_permissions(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -366,6 +396,117 @@ fn reports_doctor_missing_readiness() {
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
     insta::assert_snapshot!("doctor_missing_readiness", normalize_output(&stdout));
+}
+
+#[test]
+fn prints_anonymized_capability_report_text() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .env("PATH", fake_demo_path(workspace.path()))
+        .args(["doctor", "--capability-report"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    insta::assert_snapshot!(
+        "doctor_capability_report_text",
+        normalize_capability_report_output(&output)
+    );
+}
+
+#[test]
+fn prints_anonymized_capability_report_json() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let path = fake_demo_path(workspace.path());
+    let output = kply_cmd()
+        .env("KUBECONFIG", &kubeconfig_path)
+        .env("PATH", &path)
+        .args(["doctor", "--capability-report", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert!(
+        !output.contains(&path),
+        "capability report JSON must not include PATH directory values"
+    );
+    assert!(
+        !output.contains(&kubeconfig_path.to_string_lossy().to_string()),
+        "capability report JSON must not include kubeconfig paths"
+    );
+    let output = normalize_output(&output);
+    let mut value: serde_json::Value =
+        serde_json::from_str(&output).expect("stdout should be JSON");
+    normalize_capability_report_json(&mut value);
+    insta::assert_json_snapshot!("doctor_capability_report_json", value);
+}
+
+#[test]
+fn omits_paths_from_anonymized_capability_report() {
+    let workspace = temp_workspace();
+    let empty_path = workspace.path().join("empty-bin");
+    let missing_config = workspace.path().join("missing-kply.yaml");
+    let missing_kubeconfig = workspace.path().join("missing-kubeconfig.yaml");
+    std::fs::create_dir_all(&empty_path).expect("empty PATH directory should be created");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", &missing_kubeconfig)
+        .env("PATH", &empty_path)
+        .args([
+            "doctor",
+            "--capability-report",
+            "--json",
+            "--config",
+            missing_config
+                .to_str()
+                .expect("missing config path should be UTF-8"),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert!(
+        !stdout.contains(&empty_path.to_string_lossy().to_string()),
+        "capability reports must not include PATH directory values"
+    );
+    assert!(
+        !stdout.contains(&missing_config.to_string_lossy().to_string()),
+        "capability reports must not include config paths"
+    );
+    assert!(
+        !stdout.contains(&missing_kubeconfig.to_string_lossy().to_string()),
+        "capability reports must not include kubeconfig paths"
+    );
+    let output = normalize_output(&stdout);
+    let mut value: serde_json::Value =
+        serde_json::from_str(&output).expect("stdout should be JSON");
+    normalize_capability_report_json(&mut value);
+    insta::assert_json_snapshot!("doctor_capability_report_omits_paths", value);
+}
+
+#[test]
+fn suppresses_capability_report_text_when_quiet() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .env("PATH", fake_demo_path(workspace.path()))
+        .args(["doctor", "--capability-report", "--quiet"])
+        .assert()
+        .success()
+        .stdout("");
 }
 
 #[test]
