@@ -1,0 +1,49 @@
+name: Agent workflow request
+description: Request a safer workflow for Codex, Claude Code, Cursor, or another terminal agent.
+title: "agent workflow: "
+labels:
+  - agent-workflow
+  - feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for workflows where an agent needs safer Kubernetes session tools.
+        Do not include Secret values, tokens, credentials, or private hostnames.
+  - type: input
+    id: agent
+    attributes:
+      label: Agent or tool
+      description: Which terminal agent or coding tool should use Kply?
+      placeholder: Codex, Claude Code, Cursor, custom agent
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Desired workflow
+      description: Describe what the agent should inspect, plan, verify, report, or avoid.
+    validations:
+      required: true
+  - type: textarea
+    id: current-commands
+    attributes:
+      label: Current manual or agent commands
+      description: List the commands humans or agents run today, with sensitive data removed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: failure-mode
+    attributes:
+      label: Failure mode to prevent
+      description: What unsafe action, confusing output, missing check, or broken infra behavior should Kply prevent?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Useful Kply behavior
+      description: What CLI command, report, check, or workflow would make this safe enough to try?
+    validations:
+      required: true

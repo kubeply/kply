@@ -83,6 +83,9 @@ jobs:
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
 
+      - name: Check issue templates
+        run: cargo xtask check-issue-templates
+
       - name: Check known limitations docs
         run: cargo xtask check-known-limitations-docs
 

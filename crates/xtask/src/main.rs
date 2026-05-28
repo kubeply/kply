@@ -52,6 +52,7 @@ fn main() -> Result<()> {
             println!("  check-fixture-naming-docs verify fixture naming docs");
             println!("  check-fixture-testing-docs verify fixture testing guidance");
             println!("  check-future-session-docs verify future session docs are explicit");
+            println!("  check-issue-templates verify feedback issue templates");
             println!(
                 "  check-known-limitations-docs verify first-release limitations stay explicit"
             );
@@ -93,6 +94,9 @@ fn main() -> Result<()> {
         }
         "check-future-session-docs" => {
             check_future_session_docs()?;
+        }
+        "check-issue-templates" => {
+            check_issue_templates()?;
         }
         "check-known-limitations-docs" => {
             check_known_limitations_docs()?;
@@ -142,6 +146,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-fixture-naming-docs");
             println!("cargo xtask check-fixture-testing-docs");
             println!("cargo xtask check-future-session-docs");
+            println!("cargo xtask check-issue-templates");
             println!("cargo xtask check-known-limitations-docs");
             println!("cargo xtask check-license-files");
             println!("cargo xtask check-module-docs");
@@ -261,6 +266,16 @@ fn check_future_session_docs() -> Result<()> {
     ])
 }
 
+fn check_issue_templates() -> Result<()> {
+    check_issue_templates_inner([
+        ".github/ISSUE_TEMPLATE/config.yml".into(),
+        ".github/ISSUE_TEMPLATE/routing-environment.yml".into(),
+        ".github/ISSUE_TEMPLATE/kubernetes-discovery-bug.yml".into(),
+        ".github/ISSUE_TEMPLATE/session-planning-gap.yml".into(),
+        ".github/ISSUE_TEMPLATE/agent-workflow-request.yml".into(),
+    ])
+}
+
 fn check_known_limitations_docs() -> Result<()> {
     check_known_limitations_docs_inner("docs/first-release.md".into())
 }
@@ -287,6 +302,73 @@ fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()>
             "The local demo is bounded to the Kind ecommerce fixture".into(),
         ],
     }];
+
+    check_docs_contain(docs)
+}
+
+fn check_issue_templates_inner(template_paths: [PathBuf; 5]) -> Result<()> {
+    let [
+        config_path,
+        routing_path,
+        discovery_path,
+        planning_path,
+        agent_path,
+    ] = template_paths;
+    let docs = [
+        DocExpectation {
+            path: config_path,
+            required_phrases: vec![
+                "blank_issues_enabled: false".into(),
+                "Security reports".into(),
+                "/security/policy".into(),
+            ],
+        },
+        DocExpectation {
+            path: routing_path,
+            required_phrases: vec![
+                "name: Routing environment".into(),
+                "labels:".into(),
+                "routing".into(),
+                "Gateway API implementation, ingress controller, service mesh".into(),
+                "Do not include Secret values".into(),
+                "Route strategy".into(),
+                "Sanitized Kply output".into(),
+            ],
+        },
+        DocExpectation {
+            path: discovery_path,
+            required_phrases: vec![
+                "name: Kubernetes discovery bug".into(),
+                "discovery".into(),
+                "Do not include Secret values".into(),
+                "Workload shape".into(),
+                "Secret metadata references".into(),
+                "Expected discovery result".into(),
+            ],
+        },
+        DocExpectation {
+            path: planning_path,
+            required_phrases: vec![
+                "name: Session planning gap".into(),
+                "session-planning".into(),
+                "Do not include Secret values".into(),
+                "Command and sanitized config".into(),
+                "unsupported feature warnings and risk notes".into(),
+                "Safety constraints".into(),
+            ],
+        },
+        DocExpectation {
+            path: agent_path,
+            required_phrases: vec![
+                "name: Agent workflow request".into(),
+                "agent-workflow".into(),
+                "Codex, Claude Code, Cursor".into(),
+                "Do not include Secret values".into(),
+                "Failure mode to prevent".into(),
+                "Useful Kply behavior".into(),
+            ],
+        },
+    ];
 
     check_docs_contain(docs)
 }
@@ -1075,6 +1157,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo xtask check-fixture-naming-docs",
         "cargo xtask check-fixture-testing-docs",
         "cargo xtask check-future-session-docs",
+        "cargo xtask check-issue-templates",
         "cargo xtask check-known-limitations-docs",
         "cargo xtask check-license-files",
         "cargo xtask check-module-docs",
@@ -1812,7 +1895,7 @@ mod tests {
         check_demo_docs_inner, check_deny_config_inner, check_docs_contain,
         check_fixture_directories_inner, check_fixture_naming_docs_inner,
         check_fixture_testing_docs_inner, check_future_session_docs_inner,
-        check_known_limitations_docs_inner, check_license_files_inner,
+        check_issue_templates_inner, check_known_limitations_docs_inner, check_license_files_inner,
         check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
         check_security_assumptions_docs_inner, check_toolchain_pin_inner, collect_crate_sources,
@@ -1936,6 +2019,8 @@ jobs:
         run: cargo xtask check-fixture-testing-docs
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
+      - name: Check issue templates
+        run: cargo xtask check-issue-templates
       - name: Check known limitations docs
         run: cargo xtask check-known-limitations-docs
       - name: Check license files
@@ -2171,6 +2256,143 @@ Gateway API routing groundwork has started.
             .expect_err("future session docs missing current status should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
+    }
+
+    #[test]
+    fn accepts_feedback_issue_templates() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let config_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/config.yml",
+            "blank_issues_enabled: false\nSecurity reports\n/security/policy\n",
+        );
+        let routing_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/routing-environment.yml",
+            "\
+name: Routing environment
+labels:
+  - routing
+Gateway API implementation, ingress controller, service mesh
+Do not include Secret values
+Route strategy
+Sanitized Kply output
+",
+        );
+        let discovery_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/kubernetes-discovery-bug.yml",
+            "\
+name: Kubernetes discovery bug
+discovery
+Do not include Secret values
+Workload shape
+Secret metadata references
+Expected discovery result
+",
+        );
+        let planning_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/session-planning-gap.yml",
+            "\
+name: Session planning gap
+session-planning
+Do not include Secret values
+Command and sanitized config
+unsupported feature warnings and risk notes
+Safety constraints
+",
+        );
+        let agent_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/agent-workflow-request.yml",
+            "\
+name: Agent workflow request
+agent-workflow
+Codex, Claude Code, Cursor
+Do not include Secret values
+Failure mode to prevent
+Useful Kply behavior
+",
+        );
+
+        check_issue_templates_inner([
+            config_path,
+            routing_path,
+            discovery_path,
+            planning_path,
+            agent_path,
+        ])
+        .expect("feedback issue templates should pass");
+    }
+
+    #[test]
+    fn rejects_feedback_issue_templates_without_secret_warning() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let config_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/config.yml",
+            "blank_issues_enabled: false\nSecurity reports\n/security/policy\n",
+        );
+        let routing_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/routing-environment.yml",
+            "\
+name: Routing environment
+labels:
+  - routing
+Gateway API implementation, ingress controller, service mesh
+Route strategy
+Sanitized Kply output
+",
+        );
+        let discovery_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/kubernetes-discovery-bug.yml",
+            "\
+name: Kubernetes discovery bug
+discovery
+Do not include Secret values
+Workload shape
+Secret metadata references
+Expected discovery result
+",
+        );
+        let planning_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/session-planning-gap.yml",
+            "\
+name: Session planning gap
+session-planning
+Do not include Secret values
+Command and sanitized config
+unsupported feature warnings and risk notes
+Safety constraints
+",
+        );
+        let agent_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/agent-workflow-request.yml",
+            "\
+name: Agent workflow request
+agent-workflow
+Codex, Claude Code, Cursor
+Do not include Secret values
+Failure mode to prevent
+Useful Kply behavior
+",
+        );
+
+        let error = check_issue_templates_inner([
+            config_path,
+            routing_path,
+            discovery_path,
+            planning_path,
+            agent_path,
+        ])
+        .expect_err("feedback templates without routing Secret warning should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
     }
 
     #[test]
