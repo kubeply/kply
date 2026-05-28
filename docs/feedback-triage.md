@@ -160,3 +160,30 @@ When the repeated threshold is met, open a roadmap issue with evidence type
 
 Convert the roadmap issue into an OpenSpec change only after the check input,
 status semantics, evidence schema, and fixture set are clear enough to test.
+
+## OpenSpec Conversion
+
+Convert repeated feedback into a new OpenSpec change only after a maintainer can
+write testable requirements from sanitized evidence. Do not start implementation
+from an anecdote, a private customer artifact, or a broad product wish.
+
+Before opening an OpenSpec change, the roadmap issue must include:
+
+- evidence type, such as `repeated route adapter request`, `repeated policy
+  need`, `repeated app graph failure`, or `repeated check failure`.
+- links to sanitized issues, benchmark runs, demo failures, or fixtures.
+- the affected requirement or the new requirement that should be added under
+  `openspec/specs/`.
+- at least one acceptance scenario written as a concrete WHEN and THEN outcome.
+- the fixture, snapshot, or integration test boundary that will prove the
+  behavior.
+- the explicit non-goals so the change does not become a broad platform rewrite.
+
+The OpenSpec change should stay scoped to one capability family. Split separate
+route adapters, policy semantics, graph relationships, and check behaviors into
+separate changes unless the same fixture and acceptance scenario require them
+together.
+
+Keep the roadmap issue open until the OpenSpec change links back to the
+sanitized evidence and states how public documentation will avoid exposing
+customer details.
