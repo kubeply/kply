@@ -201,3 +201,36 @@ The JSON form must remain an object with these fields:
 `status` must be `planned` for successful dry-run output in `v0.1.0`.
 Mutation belongs behind explicit apply-oriented commands, not behind
 `kply session plan`.
+
+## Generated Manifest Output Requirement
+
+The first release must let users review generated sandbox manifests before
+anything is applied to a cluster. `kply session manifests <app>` builds from
+the same validated dry-run plan as `kply session plan <app>` and renders
+deterministic Kubernetes objects for review.
+
+The text form must include these stable lines in this order:
+
+```text
+kply session manifests <app>
+session_id: <session-id>
+manifests: <count>
+  manifest: <kind> <namespace>/<name>
+```
+
+The JSON form must remain an object with these fields:
+
+- `app`
+- `session_id`
+- `status`
+- `manifests`
+
+Each manifest entry must include `kind`, `namespace`, `name`, and `object`.
+The nested `object` is the Kubernetes object that would be applied by an
+apply-oriented command. `status` must be `generated` for successful output in
+`v0.1.0`.
+
+The `--yaml` form must render the generated Kubernetes objects as a
+multi-document YAML stream without the JSON wrapper. It is intended for human
+review, diffing, and manual tooling experiments, not as a production promotion
+signal.
