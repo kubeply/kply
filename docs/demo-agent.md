@@ -106,6 +106,12 @@ selectors, and route references. `route apply` is currently a placeholder that
 returns `status: "not_implemented"` and `apply: false`; it does not query or
 mutate Kubernetes.
 
+`session create checkout --apply` creates sandbox resources labelled
+`kply.dev/session-id=checkout-plan`. Later session-aware commands discover those
+resources from Kubernetes: `check run` calls `get_session_in_namespace` and
+`kply_k8s::get_session`, and `session cleanup` uses the same label selector to
+find the session-owned Deployment and Service.
+
 Expected outcome:
 - Explain what is broken.
 - Show the kply plan output you used.
