@@ -392,6 +392,7 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
             required_phrases: vec![
                 "name: Kubernetes discovery bug".into(),
                 "discovery".into(),
+                "feedback".into(),
                 "Do not include Secret values".into(),
                 "Workload shape".into(),
                 "Secret metadata references".into(),
@@ -2412,6 +2413,7 @@ Sanitized Kply output
             "\
 name: Kubernetes discovery bug
 discovery
+feedback
 Do not include Secret values
 Workload shape
 Secret metadata references
@@ -2503,6 +2505,7 @@ Sanitized Kply output
             "\
 name: Kubernetes discovery bug
 discovery
+feedback
 Do not include Secret values
 Workload shape
 Secret metadata references

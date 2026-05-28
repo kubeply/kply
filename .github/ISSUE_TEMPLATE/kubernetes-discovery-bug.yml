@@ -4,6 +4,7 @@ title: "discovery: "
 labels:
   - discovery
   - bug
+  - feedback
 body:
   - type: markdown
     attributes:
