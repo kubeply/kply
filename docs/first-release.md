@@ -87,3 +87,29 @@ The JSON form is exactly an object with `name` and `version` fields:
 Do not add status, build metadata, target triples, or other fields to
 `kply --version --json` before `v0.1.0`. Additive version metadata can be
 reconsidered in a later minor release with snapshot changes and release notes.
+
+## Config Validation Requirement
+
+The first release must keep `kply config validate` deterministic and
+machine-readable before any Kubernetes access happens.
+
+The default valid config text output is exactly:
+
+```text
+kply config validate
+Config is valid.
+```
+
+The valid JSON form is exactly an object with `status: "valid"` and an empty
+`errors` array:
+
+```json
+{
+  "errors": [],
+  "status": "valid"
+}
+```
+
+Invalid config JSON must keep the same top-level shape with
+`status: "invalid"` and a deterministic `errors` array of field-scoped strings.
+Do not add warning, hint, path, or remediation fields before `v0.1.0`.
