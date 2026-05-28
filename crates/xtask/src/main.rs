@@ -648,6 +648,15 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         errors.push("dist.installers must generate the shell installer only".to_owned());
     }
 
+    let checksum = dist_config
+        .get("dist")
+        .and_then(|dist| dist.get("checksum"))
+        .and_then(toml::Value::as_str);
+
+    if checksum != Some("sha256") {
+        errors.push("dist.checksum must generate sha256 checksums".to_owned());
+    }
+
     let targets = dist_config
         .get("dist")
         .and_then(|dist| dist.get("targets"))
@@ -1511,6 +1520,7 @@ highlight = "all"
 cargo-dist-version = "0.32.0"
 packages = ["kply-cli"]
 installers = ["shell"]
+checksum = "sha256"
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "aarch64-apple-darwin"]
 pr-run-mode = "plan"
 allow-dirty = ["ci"]
@@ -2736,6 +2746,26 @@ license = "Apache-2.0"
             .expect_err("release installer drift should fail");
 
         assert!(error.to_string().contains("shell installer"));
+    }
+
+    #[test]
+    fn rejects_release_checksum_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace("checksum = \"sha256\"", "checksum = false"),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release checksum drift should fail");
+
+        assert!(error.to_string().contains("sha256 checksums"));
     }
 
     #[test]
