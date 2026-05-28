@@ -1501,6 +1501,20 @@ fn prints_session_create_text() {
     });
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(
+        output,
+        concat!(
+            "kply session create checkout\n",
+            "session_id: checkout-plan\n",
+            "status: planned\n",
+            "mutation: not_applied\n",
+            "apply: false\n",
+            "planned_resources: 3\n",
+            "  resource: shop/Deployment/checkout-plan-workload\n",
+            "  resource: shop/HTTPRoute/checkout-plan-route\n",
+            "  resource: shop/Service/checkout-plan-service\n",
+        )
+    );
     insta::assert_snapshot!("session_create_text", output);
 }
 
@@ -1525,6 +1539,20 @@ fn prints_session_create_json() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("session create output should be an object");
+    assert_eq!(
+        object.len(),
+        6,
+        "session create JSON shape should stay stable"
+    );
+    assert_eq!(value["app"], "checkout");
+    assert_eq!(value["session_id"], "checkout-plan");
+    assert_eq!(value["status"], "planned");
+    assert_eq!(value["mutation"], "not_applied");
+    assert_eq!(value["apply"], false);
+    assert_eq!(value["planned_resources"].as_array().map(Vec::len), Some(3));
     insta::assert_json_snapshot!("session_create_json", value);
 }
 
@@ -1558,6 +1586,10 @@ fn rejects_session_create_apply_without_kubeconfig() {
     assert!(
         !stderr.contains(missing_kubeconfig),
         "mutation errors should not leak the configured kubeconfig path"
+    );
+    assert!(
+        stderr.contains("apply_stage: experimental"),
+        "live apply errors should be marked experimental"
     );
     insta::assert_snapshot!(
         "session_create_apply_missing_kubeconfig",
@@ -1598,6 +1630,7 @@ fn rejects_session_create_apply_without_kubeconfig_json() {
         "mutation JSON errors should not leak the configured kubeconfig path"
     );
     let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    assert_eq!(value["error"]["apply_stage"], "experimental");
     insta::assert_json_snapshot!("session_create_apply_missing_kubeconfig_json", value);
 }
 
@@ -2449,6 +2482,16 @@ fn prints_route_apply_text() {
         .clone();
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(
+        output,
+        concat!(
+            "kply route apply checkout-plan\n",
+            "namespace: shop\n",
+            "status: not_implemented\n",
+            "mutation: not_applied\n",
+            "apply: false\n",
+        )
+    );
     insta::assert_snapshot!("route_apply_text", output);
 }
 
@@ -2472,6 +2515,15 @@ fn prints_route_apply_json() {
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("route apply output should be an object");
+    assert_eq!(object.len(), 5, "route apply JSON shape should stay stable");
+    assert_eq!(value["session_id"], "checkout-plan");
+    assert_eq!(value["namespace"], "shop");
+    assert_eq!(value["status"], "not_implemented");
+    assert_eq!(value["mutation"], "not_applied");
+    assert_eq!(value["apply"], false);
     insta::assert_json_snapshot!("route_apply_json", value);
 }
 

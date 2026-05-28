@@ -55,6 +55,7 @@ const RISK_CATEGORY_DATABASE: &str = "database";
 const RISK_SEVERITY_WARNING: &str = "warning";
 const RISK_REASON_DATABASE_REFERENCE_REQUIRES_MANUAL_REVIEW: &str =
     "database_reference_requires_manual_review";
+const EXPERIMENTAL_APPLY_STAGE: &str = "experimental";
 const SANDBOX_WORKLOAD_KIND: &str = "Deployment";
 const SESSION_STATUS_ANNOTATION: &str = "kply.dev/session-status";
 const SUPPORTED_ROUTE_STRATEGIES: [RouteStrategy; 3] = [
@@ -376,6 +377,7 @@ fn render_session_create(
                 "status": "partially_applied",
                 "mutation": "applied",
                 "apply": true,
+                "apply_stage": EXPERIMENTAL_APPLY_STAGE,
                 "created_resources": applied.created_resources,
                 "pending_resources": applied.pending_resources,
                 "readiness": applied.readiness,
@@ -388,6 +390,7 @@ fn render_session_create(
             println!("status: partially_applied");
             println!("mutation: applied");
             println!("apply: true");
+            println!("apply_stage: {EXPERIMENTAL_APPLY_STAGE}");
             println!("created_resources: {}", applied.created_resources.len());
             for resource in &applied.created_resources {
                 println!(
@@ -3261,12 +3264,14 @@ fn render_session_create_apply_error(error: &MutationError, wants_json: bool) ->
             "error": {
                 "code": error.code.as_str(),
                 "exit_code": EXIT_USAGE,
-                "message": error.message
+                "message": error.message,
+                "apply_stage": EXPERIMENTAL_APPLY_STAGE
             }
         });
         eprintln!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         eprintln!("kply error: {}\n\n{}", error.code.as_str(), error.message);
+        eprintln!("apply_stage: {EXPERIMENTAL_APPLY_STAGE}");
     }
 
     Ok(exit_code(EXIT_USAGE))
@@ -3287,6 +3292,7 @@ fn render_session_create_partial_apply_error(
                 "exit_code": EXIT_BLOCKING,
                 "message": error.message,
                 "mutation": "partially_applied",
+                "apply_stage": EXPERIMENTAL_APPLY_STAGE,
                 "created_resources": created_resources,
                 "pending_resources": pending_resources,
                 "recorded_resources": recorded_resources,
@@ -3296,6 +3302,7 @@ fn render_session_create_partial_apply_error(
     } else {
         eprintln!("kply error: {}\n\n{}", error.code.as_str(), error.message);
         eprintln!("mutation: partially_applied");
+        eprintln!("apply_stage: {EXPERIMENTAL_APPLY_STAGE}");
         eprintln!("created_resources: {}", created_resources.len());
         for resource in created_resources {
             eprintln!(
