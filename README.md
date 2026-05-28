@@ -93,7 +93,7 @@ cargo test --all-targets --all-features --locked
 
 ## Roadmap
 
-See [docs/implementation-roadmap.md](docs/implementation-roadmap.md).
+See [docs/product-sprints.md](docs/product-sprints.md).
 
 ## CLI Contract
 

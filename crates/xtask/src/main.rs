@@ -1936,8 +1936,7 @@ fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
     let source = std::fs::read_to_string(readme_path)
         .with_context(|| format!("reading README file {}", readme_path.display()))?;
     let has_roadmap_heading = markdown_has_heading_outside_code_block(&source, "## Roadmap");
-    let has_roadmap_link =
-        source.contains("[docs/implementation-roadmap.md](docs/implementation-roadmap.md)");
+    let has_roadmap_link = source.contains("[docs/product-sprints.md](docs/product-sprints.md)");
 
     let mut errors = Vec::new();
 
@@ -1946,12 +1945,12 @@ fn check_readme_roadmap_link_inner(readme_path: &Path) -> Result<()> {
     }
 
     if !has_roadmap_link {
-        errors.push("missing markdown link to docs/implementation-roadmap.md");
+        errors.push("missing markdown link to docs/product-sprints.md");
     }
 
     if !errors.is_empty() {
         bail!(
-            "{} must include a top-level Roadmap section linking docs/implementation-roadmap.md: {}",
+            "{} must include a top-level Roadmap section linking docs/product-sprints.md: {}",
             readme_path.display(),
             errors.join("; ")
         );
@@ -3499,7 +3498,7 @@ A human still needs to review and promote outside Kply.
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "# Kply\n\n## Roadmap\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+            "# Kply\n\n## Roadmap\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
         );
 
         check_readme_roadmap_link_inner(&readme_path).expect("README roadmap link should pass");
@@ -3533,7 +3532,7 @@ A human still needs to review and promote outside Kply.
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "# Kply\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+            "# Kply\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
         );
 
         let error = check_readme_roadmap_link_inner(&readme_path)
@@ -3548,7 +3547,7 @@ A human still needs to review and promote outside Kply.
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "# Kply\n\n### Roadmap\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+            "# Kply\n\n### Roadmap\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
         );
 
         let error = check_readme_roadmap_link_inner(&readme_path)
@@ -3563,7 +3562,7 @@ A human still needs to review and promote outside Kply.
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "# Kply\n\n## RoadmapPlanning\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+            "# Kply\n\n## RoadmapPlanning\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
         );
 
         let error = check_readme_roadmap_link_inner(&readme_path)
@@ -3578,7 +3577,7 @@ A human still needs to review and promote outside Kply.
         let readme_path = write_source(
             temp.path(),
             "README.md",
-            "# Kply\n\n```md\n## Roadmap\n```\n\nSee [docs/implementation-roadmap.md](docs/implementation-roadmap.md).\n",
+            "# Kply\n\n```md\n## Roadmap\n```\n\nSee [docs/product-sprints.md](docs/product-sprints.md).\n",
         );
 
         let error = check_readme_roadmap_link_inner(&readme_path)

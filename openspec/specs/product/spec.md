@@ -10,7 +10,8 @@ tool.
 ### Requirement: Kply defines safe sessions for agents
 
 Kply SHALL define a CLI architecture that AI coding agents and humans can use
-to create safe Kubernetes-oriented sessions once the roadmap is implemented.
+to create safe Kubernetes-oriented sessions as OpenSpec-backed product sprints
+land.
 The CLI SHALL prefer constrained commands and auditable output over raw cluster
 mutation.
 
