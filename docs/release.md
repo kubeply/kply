@@ -64,10 +64,11 @@ tar -xJf "$archive"
 ./kply help
 ```
 
-Use the matching target triple for the host being tested:
-`aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`,
-`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-musl`, or
-`x86_64-unknown-linux-musl`.
+Use the matching host target for the machine being tested:
+`aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`, or
+`x86_64-unknown-linux-gnu`. Use `aarch64-unknown-linux-musl` or
+`x86_64-unknown-linux-musl` only when testing a musl-based system or verifying
+portable Linux compatibility.
 
 ## First-Release Checklist
 
