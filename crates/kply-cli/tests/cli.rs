@@ -251,6 +251,7 @@ fn prints_version_text() {
         .clone();
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(output, format!("kply {}\n", env!("CARGO_PKG_VERSION")));
     insta::assert_snapshot!("version_text", output);
 }
 
@@ -267,6 +268,12 @@ fn prints_version_json() {
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let output = normalize_output(&output);
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("version output should be an object");
+    assert_eq!(object.len(), 2, "version output shape should stay stable");
+    assert_eq!(value["name"], "kply");
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
     insta::assert_json_snapshot!("version_json", value);
 }
 

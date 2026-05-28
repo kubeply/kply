@@ -63,3 +63,27 @@ surface is covered by docs, tests, CI, and release packaging:
 - Local demo docs are present.
 - Completed roadmap milestones are reflected in the roadmap.
 - Known limitations and security assumptions are documented.
+
+## Version Output Requirement
+
+The first release must keep version output stable because installers, GitHub
+Actions, and agents use it to verify which binary is running.
+
+The text form is exactly:
+
+```text
+kply 0.1.0
+```
+
+The JSON form is exactly an object with `name` and `version` fields:
+
+```json
+{
+  "name": "kply",
+  "version": "0.1.0"
+}
+```
+
+Do not add status, build metadata, target triples, or other fields to
+`kply --version --json` before `v0.1.0`. Additive version metadata can be
+reconsidered in a later minor release with snapshot changes and release notes.
