@@ -1,0 +1,56 @@
+name: Roadmap request
+description: Propose roadmap work backed by user evidence, demos, or benchmark failures.
+title: "roadmap: "
+labels:
+  - roadmap
+  - feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for roadmap requests that should change future Kply work.
+        Include evidence from real user feedback, demos, benchmarks, or repeated workflow failures.
+        Do not include Secret values, tokens, credentials, or private hostnames.
+  - type: dropdown
+    id: evidence-type
+    attributes:
+      label: Evidence type
+      options:
+        - real user feedback
+        - local demo failure
+        - infra-bench failure
+        - repeated route adapter request
+        - repeated policy need
+        - repeated app graph failure
+        - repeated check failure
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link or summarize the feedback, demo run, benchmark result, issue pattern, or support conversation.
+    validations:
+      required: true
+  - type: textarea
+    id: requested-change
+    attributes:
+      label: Requested roadmap change
+      description: Describe the capability, adapter, check, policy, report, docs, or OpenSpec change you want.
+    validations:
+      required: true
+  - type: textarea
+    id: affected-workflow
+    attributes:
+      label: Affected agent-infra workflow
+      description: Explain which agent, Kubernetes workflow, route strategy, policy boundary, or app graph behavior is affected.
+    validations:
+      required: true
+  - type: textarea
+    id: success-criteria
+    attributes:
+      label: Success criteria
+      description: What behavior would prove this roadmap item is useful and safe enough to prioritize?
+    validations:
+      required: true

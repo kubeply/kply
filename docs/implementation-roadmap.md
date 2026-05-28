@@ -42,10 +42,12 @@ Completed work:
   - feedback issue templates.
 - Milestone 20 item 2 is implemented:
   - security policy.
+- Milestone 20 item 3 is implemented:
+  - roadmap issue template.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 3: add a roadmap issue template.
+- Milestone 20 item 4: add `kply doctor` once enough checks exist.
 
 ## Locked Decisions
 

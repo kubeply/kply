@@ -278,6 +278,7 @@ fn check_issue_templates() -> Result<()> {
         ".github/ISSUE_TEMPLATE/kubernetes-discovery-bug.yml".into(),
         ".github/ISSUE_TEMPLATE/session-planning-gap.yml".into(),
         ".github/ISSUE_TEMPLATE/agent-workflow-request.yml".into(),
+        ".github/ISSUE_TEMPLATE/roadmap-request.yml".into(),
     ])
 }
 
@@ -319,13 +320,14 @@ fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()>
     check_docs_contain(docs)
 }
 
-fn check_issue_templates_inner(template_paths: [PathBuf; 5]) -> Result<()> {
+fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
     let [
         config_path,
         routing_path,
         discovery_path,
         planning_path,
         agent_path,
+        roadmap_path,
     ] = template_paths;
     let docs = [
         DocExpectation {
@@ -379,6 +381,20 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 5]) -> Result<()> {
                 "Do not include Secret values".into(),
                 "Failure mode to prevent".into(),
                 "Useful Kply behavior".into(),
+            ],
+        },
+        DocExpectation {
+            path: roadmap_path,
+            required_phrases: vec![
+                "name: Roadmap request".into(),
+                "roadmap".into(),
+                "real user feedback, demos, benchmarks".into(),
+                "Do not include Secret values".into(),
+                "Evidence type".into(),
+                "infra-bench failure".into(),
+                "Requested roadmap change".into(),
+                "Affected agent-infra workflow".into(),
+                "Success criteria".into(),
             ],
         },
     ];
@@ -2371,6 +2387,21 @@ Failure mode to prevent
 Useful Kply behavior
 ",
         );
+        let roadmap_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/roadmap-request.yml",
+            "\
+name: Roadmap request
+roadmap
+real user feedback, demos, benchmarks
+Do not include Secret values
+Evidence type
+infra-bench failure
+Requested roadmap change
+Affected agent-infra workflow
+Success criteria
+",
+        );
 
         check_issue_templates_inner([
             config_path,
@@ -2378,6 +2409,7 @@ Useful Kply behavior
             discovery_path,
             planning_path,
             agent_path,
+            roadmap_path,
         ])
         .expect("feedback issue templates should pass");
     }
@@ -2438,6 +2470,21 @@ Failure mode to prevent
 Useful Kply behavior
 ",
         );
+        let roadmap_path = write_nested_source(
+            temp.path(),
+            ".github/ISSUE_TEMPLATE/roadmap-request.yml",
+            "\
+name: Roadmap request
+roadmap
+real user feedback, demos, benchmarks
+Do not include Secret values
+Evidence type
+infra-bench failure
+Requested roadmap change
+Affected agent-infra workflow
+Success criteria
+",
+        );
 
         let error = check_issue_templates_inner([
             config_path,
@@ -2445,6 +2492,7 @@ Useful Kply behavior
             discovery_path,
             planning_path,
             agent_path,
+            roadmap_path,
         ])
         .expect_err("feedback templates without routing Secret warning should fail");
 
