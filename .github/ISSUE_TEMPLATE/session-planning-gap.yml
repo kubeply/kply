@@ -9,6 +9,7 @@ body:
     attributes:
       value: |
         Use this when `kply session plan` or `kply session manifests` cannot describe a useful safe session.
+        Mark policy gaps clearly so repeated policy needs can be tracked.
         Do not include Secret values, tokens, credentials, or private hostnames.
   - type: input
     id: kply-version
@@ -32,6 +33,20 @@ body:
       label: Current plan output
       description: Include the current plan or manifest output, including unsupported feature warnings and risk notes.
       render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: policy-gap
+    attributes:
+      label: Policy gap
+      description: Classify the policy boundary that Kply cannot plan or explain safely.
+      options:
+        - existing policy bug
+        - repeated policy need
+        - missing policy field
+        - unclear policy warning
+        - not a policy gap
+        - not sure
     validations:
       required: true
   - type: textarea
