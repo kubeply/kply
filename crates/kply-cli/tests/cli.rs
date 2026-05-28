@@ -3558,6 +3558,18 @@ apps:
         .clone();
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert_eq!(
+        output,
+        concat!(
+            "kply app inspect checkout\n",
+            "name: checkout\n",
+            "namespace: shop\n",
+            "workload: checkout-api\n",
+            "service: checkout-http\n",
+            "route_strategy: header\n",
+            "default_image: ghcr.io/acme/checkout:next\n",
+        )
+    );
     insta::assert_snapshot!("app_inspect_text", output);
 }
 
@@ -3595,6 +3607,17 @@ apps:
 
     let output = String::from_utf8(output).expect("stdout should be UTF-8");
     let value: serde_json::Value = serde_json::from_str(&output).expect("stdout should be JSON");
+    let object = value
+        .as_object()
+        .expect("app inspect output should be an object");
+    assert_eq!(object.len(), 7, "app inspect JSON shape should stay stable");
+    assert_eq!(value["name"], "catalog");
+    assert_eq!(value["namespace"], "shop");
+    assert_eq!(value["workload"], "catalog-api");
+    assert_eq!(value["workload_kind"], "Deployment");
+    assert_eq!(value["service"], "catalog-http");
+    assert_eq!(value["route_strategy"], "preview");
+    assert_eq!(value["default_image"], serde_json::Value::Null);
     insta::assert_json_snapshot!("app_inspect_json", value);
 }
 

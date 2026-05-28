@@ -113,3 +113,35 @@ The valid JSON form is exactly an object with `status: "valid"` and an empty
 Invalid config JSON must keep the same top-level shape with
 `status: "invalid"` and a deterministic `errors` array of field-scoped strings.
 Do not add warning, hint, path, or remediation fields before `v0.1.0`.
+
+## Read-Only App Inspection Requirement
+
+The first release must let users inspect configured app targets without
+mutating Kubernetes resources. `kply app inspect <app>` loads and validates
+configuration, then renders only the selected app contract.
+
+The text form must include these stable lines in this order:
+
+```text
+kply app inspect <app>
+name: <app>
+namespace: <namespace>
+workload: <workload>
+service: <service>
+route_strategy: <strategy>
+default_image: <image-or-none>
+```
+
+The JSON form must remain an object with these fields:
+
+- `name`
+- `namespace`
+- `workload`
+- `workload_kind`
+- `service`
+- `route_strategy`
+- `default_image`
+
+Do not make `kply app inspect` create, update, delete, or patch Kubernetes
+resources in `v0.1.0`. Future live discovery for this command must stay
+read-only and preserve deterministic JSON output.
