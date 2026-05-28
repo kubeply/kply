@@ -17,6 +17,31 @@ The order is intentional:
 Every implementation task should be small enough to land independently with
 focused tests and snapshot coverage.
 
+## Current Status
+
+Completed work:
+
+- Milestones 1 through 18 are implemented and validated in the repository.
+- Milestone 19 items 1 through 12 are implemented:
+  - first-release scope.
+  - stable version output.
+  - stable config validation.
+  - read-only app inspection.
+  - dry-run session planning.
+  - generated manifest output.
+  - experimental live apply marking.
+  - no Secret value reads.
+  - CI passing.
+  - release packaging passing.
+  - local demo docs.
+  - roadmap status for completed milestones.
+
+Remaining before tagging `v0.1.0`:
+
+- Milestone 19 item 13: add known limitations.
+- Milestone 19 item 14: add security assumptions.
+- Milestone 19 item 15: tag `v0.1.0`.
+
 ## Locked Decisions
 
 These decisions are fixed unless implementation proves they are wrong.
