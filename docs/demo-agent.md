@@ -18,6 +18,9 @@ Allowed agent actions for this demo:
   `kply demo teardown`.
 - run read-only `kply` commands with
   `--config fixtures/demo/ecommerce-basic/kply.yaml`.
+- create and remove session-owned sandbox resources with
+  `kply session create --apply` and `kply session cleanup --apply` when the
+  command uses `--namespace kply-demo`.
 - run `kubectl get`, `kubectl describe`, `kubectl logs`, and `kubectl port-forward`
   inside the `kply-demo` namespace.
 - apply only the demo backend variant manifests listed in this guide.
@@ -73,8 +76,10 @@ Boundaries:
 - Use Kubernetes context kind-kply-demo only.
 - Do not touch resources outside the kply-demo namespace.
 - Do not read Kubernetes Secret values.
-- Do not create new cluster resources except by applying one of the demo
-  backend variant manifests in fixtures/demo/ecommerce-basic/manifests/.
+- Create cluster resources only with kply session create --apply scoped to
+  --namespace kply-demo, kply session cleanup --apply scoped to
+  --namespace kply-demo, or one of the demo backend variant manifests in
+  fixtures/demo/ecommerce-basic/manifests/.
 - Prefer kply commands before raw kubectl when kply exposes the needed view.
 
 Useful commands:
