@@ -693,7 +693,16 @@ fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
     workflow_event(workflow, &YAML_PUSH_KEY)
         .and_then(YamlValue::as_mapping)
         .and_then(|push| push.get(&*YAML_TAGS_KEY))
-        .is_some()
+        .and_then(YamlValue::as_sequence)
+        .is_some_and(|tags| {
+            tags.iter()
+                .filter_map(YamlValue::as_str)
+                .any(tag_filter_has_semver_shape)
+        })
+}
+
+fn tag_filter_has_semver_shape(tag_filter: &str) -> bool {
+    tag_filter.contains("[0-9]+.[0-9]+.[0-9]+")
 }
 
 fn workflow_event<'a>(workflow: &'a YamlValue, event_key: &YamlValue) -> Option<&'a YamlValue> {
@@ -2428,6 +2437,22 @@ license = "Apache-2.0"
 
         let error = check_release_planning_inner(&dist_path, &workflow_path)
             .expect_err("release workflow without tag push should fail");
+
+        assert!(error.to_string().contains("semver tag pushes"));
+    }
+
+    #[test]
+    fn rejects_release_workflow_with_non_semver_tag_push_trigger() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(temp.path(), "dist-workspace.toml", DIST_CONFIG);
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            &RELEASE_PLAN_WORKFLOW.replace("**[0-9]+.[0-9]+.[0-9]+*", "release-*"),
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release workflow without semver tag push should fail");
 
         assert!(error.to_string().contains("semver tag pushes"));
     }
