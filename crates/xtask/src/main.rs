@@ -9,6 +9,14 @@ use regex::Regex;
 use serde_norway::Value as YamlValue;
 
 static YAML_JOBS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("jobs".to_owned()));
+static YAML_BRANCHES_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("branches".to_owned()));
+static YAML_CONTENTS_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("contents".to_owned()));
+static YAML_MERGE_GROUP_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("merge_group".to_owned()));
+static YAML_PERMISSIONS_KEY: LazyLock<YamlValue> =
+    LazyLock::new(|| YamlValue::String("permissions".to_owned()));
 static YAML_ON_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("on".to_owned()));
 static YAML_PULL_REQUEST_KEY: LazyLock<YamlValue> =
     LazyLock::new(|| YamlValue::String("pull_request".to_owned()));
@@ -17,6 +25,7 @@ static YAML_RUN_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("r
 static YAML_STEPS_KEY: LazyLock<YamlValue> =
     LazyLock::new(|| YamlValue::String("steps".to_owned()));
 static YAML_TAGS_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("tags".to_owned()));
+static YAML_USES_KEY: LazyLock<YamlValue> = LazyLock::new(|| YamlValue::String("uses".to_owned()));
 static SECRET_FIELD_ACCESS_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*(data|string_data)\b")
         .expect("Secret field access regex should compile")
@@ -35,6 +44,7 @@ fn main() -> Result<()> {
     match command.as_str() {
         "help" => {
             println!("available tasks:");
+            println!("  check-ci-workflow verify pull-request CI release gates");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
             println!("  check-deny-config verify cargo-deny policy strictness");
             println!("  check-fixture-directories verify fixture directory skeleton");
@@ -54,6 +64,9 @@ fn main() -> Result<()> {
             println!("  check-toolchain-pin verify Rust toolchain pinning");
             println!("  help               print this message");
             println!("  validate           print the validation command list");
+        }
+        "check-ci-workflow" => {
+            check_ci_workflow()?;
         }
         "check-crate-inventory-docs" => {
             check_crate_inventory_docs()?;
@@ -105,6 +118,9 @@ fn main() -> Result<()> {
             println!("cargo check --all-targets --all-features --locked");
             println!("cargo clippy --all-targets --all-features --locked -- -D warnings");
             println!("cargo test --all-targets --all-features --locked");
+            println!("cargo test -p kply-test --locked");
+            println!("cargo deny check");
+            println!("cargo xtask check-ci-workflow");
             println!("cargo xtask check-crate-inventory-docs");
             println!("cargo xtask check-deny-config");
             println!("cargo xtask check-fixture-directories");
@@ -156,6 +172,10 @@ fn check_module_docs() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn check_ci_workflow() -> Result<()> {
+    check_ci_workflow_inner(".github/workflows/ci.yml".as_ref())
 }
 
 fn check_no_secret_content_reads() -> Result<()> {
@@ -777,8 +797,124 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
     Ok(())
 }
 
+fn check_ci_workflow_inner(workflow_path: &Path) -> Result<()> {
+    let workflow_source = std::fs::read_to_string(workflow_path)
+        .with_context(|| format!("reading workflow file {}", workflow_path.display()))?;
+    let workflow_yaml: YamlValue = serde_norway::from_str(&workflow_source)
+        .with_context(|| format!("parsing workflow file {}", workflow_path.display()))?;
+    let mut errors = Vec::new();
+
+    if !workflow_has_pull_request(&workflow_yaml) {
+        errors.push("ci workflow must run on pull_request".to_owned());
+    }
+
+    if !workflow_has_merge_group(&workflow_yaml) {
+        errors.push("ci workflow must run on merge_group".to_owned());
+    }
+
+    if !workflow_pushes_branch(&workflow_yaml, "main") {
+        errors.push("ci workflow must run on pushes to main".to_owned());
+    }
+
+    if !workflow_has_read_only_contents_permission(&workflow_yaml) {
+        errors.push("ci workflow must keep contents: read permission".to_owned());
+    }
+
+    let run_commands = workflow_run_commands(&workflow_yaml);
+    let run_lines = run_commands
+        .iter()
+        .flat_map(|run_command| run_command.lines())
+        .map(str::trim)
+        .collect::<BTreeSet<_>>();
+    for required_command in required_ci_run_commands() {
+        if !run_lines.contains(required_command) {
+            errors.push(format!(
+                "ci workflow must run required command: {required_command}"
+            ));
+        }
+    }
+
+    let uses = workflow_uses_actions(&workflow_yaml);
+    let used_action_repositories = uses
+        .iter()
+        .map(|action| {
+            action
+                .split_once('@')
+                .map_or(*action, |(repository, _)| repository)
+        })
+        .map(str::trim)
+        .collect::<BTreeSet<_>>();
+    for required_action in [
+        "raven-actions/actionlint",
+        "dtolnay/rust-toolchain",
+        "EmbarkStudios/cargo-deny-action",
+    ] {
+        if !used_action_repositories.contains(required_action) {
+            errors.push(format!(
+                "ci workflow must use required action: {required_action}"
+            ));
+        }
+    }
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        bail!(
+            "{} ci workflow issue(s) found: {}",
+            errors.len(),
+            errors.join("; ")
+        );
+    }
+
+    Ok(())
+}
+
 fn workflow_has_pull_request(workflow: &YamlValue) -> bool {
     workflow_event(workflow, &YAML_PULL_REQUEST_KEY).is_some()
+}
+
+fn workflow_has_merge_group(workflow: &YamlValue) -> bool {
+    workflow_event(workflow, &YAML_MERGE_GROUP_KEY).is_some()
+}
+
+fn workflow_pushes_branch(workflow: &YamlValue, expected_branch: &str) -> bool {
+    workflow_event(workflow, &YAML_PUSH_KEY)
+        .and_then(YamlValue::as_mapping)
+        .and_then(|push| push.get(&*YAML_BRANCHES_KEY))
+        .and_then(YamlValue::as_sequence)
+        .is_some_and(|branches| {
+            branches
+                .iter()
+                .filter_map(YamlValue::as_str)
+                .any(|branch| branch == expected_branch)
+        })
+}
+
+fn workflow_has_read_only_contents_permission(workflow: &YamlValue) -> bool {
+    let top_level_read_only = workflow
+        .as_mapping()
+        .and_then(|workflow| workflow.get(&*YAML_PERMISSIONS_KEY))
+        .and_then(YamlValue::as_mapping)
+        .and_then(|permissions| permissions.get(&*YAML_CONTENTS_KEY))
+        .and_then(YamlValue::as_str)
+        == Some("read");
+
+    let jobs_do_not_escalate = workflow
+        .as_mapping()
+        .and_then(|workflow| workflow.get(&*YAML_JOBS_KEY))
+        .and_then(YamlValue::as_mapping)
+        .is_none_or(|jobs| {
+            jobs.values().filter_map(YamlValue::as_mapping).all(|job| {
+                job.get(&*YAML_PERMISSIONS_KEY)
+                    .and_then(YamlValue::as_mapping)
+                    .and_then(|permissions| permissions.get(&*YAML_CONTENTS_KEY))
+                    .and_then(YamlValue::as_str)
+                    .is_none_or(|contents| contents == "read")
+            })
+        });
+
+    top_level_read_only && jobs_do_not_escalate
 }
 
 fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
@@ -795,6 +931,32 @@ fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
 
 fn tag_filter_has_semver_shape(tag_filter: &str) -> bool {
     tag_filter.contains("[0-9]+.[0-9]+.[0-9]+")
+}
+
+fn required_ci_run_commands() -> &'static [&'static str] {
+    &[
+        "cargo fmt --all -- --check",
+        "cargo check --all-targets --all-features --locked",
+        "cargo clippy --all-targets --all-features --locked -- -D warnings",
+        "cargo test --all-targets --all-features --locked",
+        "cargo test -p kply-test --locked",
+        "cargo xtask check-ci-workflow",
+        "cargo xtask check-crate-inventory-docs",
+        "cargo xtask check-deny-config",
+        "cargo xtask check-fixture-directories",
+        "cargo xtask check-fixture-naming-docs",
+        "cargo xtask check-fixture-testing-docs",
+        "cargo xtask check-future-session-docs",
+        "cargo xtask check-license-files",
+        "cargo xtask check-module-docs",
+        "cargo xtask check-no-secret-content-reads",
+        "cargo xtask check-placeholder-docs",
+        "cargo xtask check-placeholders",
+        "cargo xtask check-report-language",
+        "cargo xtask check-readme-roadmap-link",
+        "cargo xtask check-release-planning",
+        "cargo xtask check-toolchain-pin",
+    ]
 }
 
 fn toml_array_contains_str(values: Option<&Vec<toml::Value>>, expected: &str) -> bool {
@@ -830,6 +992,26 @@ fn workflow_run_commands(workflow: &YamlValue) -> Vec<&str> {
         .flat_map(|steps| steps.iter())
         .filter_map(YamlValue::as_mapping)
         .filter_map(|step| step.get(&*YAML_RUN_KEY))
+        .filter_map(YamlValue::as_str)
+        .collect()
+}
+
+fn workflow_uses_actions(workflow: &YamlValue) -> Vec<&str> {
+    let Some(jobs) = workflow
+        .as_mapping()
+        .and_then(|workflow| workflow.get(&*YAML_JOBS_KEY))
+        .and_then(YamlValue::as_mapping)
+    else {
+        return Vec::new();
+    };
+
+    jobs.values()
+        .filter_map(YamlValue::as_mapping)
+        .filter_map(|job| job.get(&*YAML_STEPS_KEY))
+        .filter_map(YamlValue::as_sequence)
+        .flat_map(|steps| steps.iter())
+        .filter_map(YamlValue::as_mapping)
+        .filter_map(|step| step.get(&*YAML_USES_KEY))
         .filter_map(YamlValue::as_str)
         .collect()
 }
@@ -1496,15 +1678,16 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        DocExpectation, WorkspaceCrate, check_crate_inventory_docs_inner, check_deny_config_inner,
-        check_docs_contain, check_fixture_directories_inner, check_fixture_naming_docs_inner,
-        check_fixture_testing_docs_inner, check_future_session_docs_inner,
-        check_license_files_inner, check_no_secret_content_reads_inner, check_placeholder_sources,
+        DocExpectation, WorkspaceCrate, check_ci_workflow_inner, check_crate_inventory_docs_inner,
+        check_deny_config_inner, check_docs_contain, check_fixture_directories_inner,
+        check_fixture_naming_docs_inner, check_fixture_testing_docs_inner,
+        check_future_session_docs_inner, check_license_files_inner,
+        check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
         check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
         contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
-        has_non_placeholder_public_item, has_placeholder_marker, secret_content_guard_source_roots,
-        workflow_installs_toolchain,
+        has_non_placeholder_public_item, has_placeholder_marker, required_ci_run_commands,
+        secret_content_guard_source_roots, workflow_installs_toolchain,
     };
 
     const PLACEHOLDER_SOURCE: &str = "\
@@ -1575,6 +1758,71 @@ jobs:
         run: dist host --steps=upload --steps=release
       - name: Create GitHub Release
         run: gh release create v0.1.0 artifacts/*
+"#;
+    const CI_WORKFLOW: &str = r#"
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    steps:
+      - name: Lint workflows
+        uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check all targets
+        run: cargo check --all-targets --all-features --locked
+      - name: Lint
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Test
+        run: cargo test --all-targets --all-features --locked
+      - name: Test fixture helpers
+        run: cargo test -p kply-test --locked
+      - name: Check CI workflow
+        run: cargo xtask check-ci-workflow
+      - name: Check crate inventory docs
+        run: cargo xtask check-crate-inventory-docs
+      - name: Check cargo-deny config
+        run: cargo xtask check-deny-config
+      - name: Check fixture directories
+        run: cargo xtask check-fixture-directories
+      - name: Check fixture naming docs
+        run: cargo xtask check-fixture-naming-docs
+      - name: Check fixture testing docs
+        run: cargo xtask check-fixture-testing-docs
+      - name: Check future session docs
+        run: cargo xtask check-future-session-docs
+      - name: Check license files
+        run: cargo xtask check-license-files
+      - name: Check module docs
+        run: cargo xtask check-module-docs
+      - name: Check no Secret content reads
+        run: cargo xtask check-no-secret-content-reads
+      - name: Check placeholder docs
+        run: cargo xtask check-placeholder-docs
+      - name: Check placeholders
+        run: cargo xtask check-placeholders
+      - name: Check report language
+        run: cargo xtask check-report-language
+      - name: Check README roadmap link
+        run: cargo xtask check-readme-roadmap-link
+      - name: Check release planning
+        run: cargo xtask check-release-planning
+      - name: Check toolchain pin
+        run: cargo xtask check-toolchain-pin
+      - name: Check dependencies
+        uses: EmbarkStudios/cargo-deny-action@a531616d8ce3b9177443e48a1159bc945a099823 # v2
 "#;
 
     #[test]
@@ -2571,6 +2819,183 @@ license = "Apache-2.0"
                 .to_string()
                 .contains("cargo-deny config issue(s) found")
         );
+    }
+
+    #[test]
+    fn accepts_first_release_ci_workflow() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path =
+            write_nested_source(temp.path(), ".github/workflows/ci.yml", CI_WORKFLOW);
+
+        check_ci_workflow_inner(&workflow_path).expect("first-release CI workflow should pass");
+    }
+
+    #[test]
+    fn requires_every_ci_release_gate_command() {
+        let temp = TempDir::new().expect("temp dir should be created");
+
+        for (index, required_command) in required_ci_run_commands().iter().enumerate() {
+            let workflow_filename =
+                format!(".github/workflows/missing-required-command-{index}.yml");
+            let workflow_path = write_nested_source(
+                temp.path(),
+                &workflow_filename,
+                &CI_WORKFLOW.replace(required_command, "cargo --version"),
+            );
+
+            let error = check_ci_workflow_inner(&workflow_path)
+                .expect_err("workflow missing required command should fail");
+
+            assert!(
+                error.to_string().contains(*required_command),
+                "error should mention missing command {required_command}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_ci_workflow_with_echoed_required_command() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let required_command = "cargo fmt --all -- --check";
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace(
+                &format!("run: {required_command}"),
+                &format!("run: echo {required_command}"),
+            ),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("echoed required command should not satisfy CI guard");
+
+        assert!(error.to_string().contains(required_command));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_without_pull_request_trigger() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace("  pull_request:\n", ""),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow without pull_request should fail");
+
+        assert!(error.to_string().contains("pull_request"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_without_merge_group_trigger() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace("  merge_group:\n", ""),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow without merge_group should fail");
+
+        assert!(error.to_string().contains("merge_group"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_without_main_push_trigger() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace("      - main", "      - release"),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow without main push should fail");
+
+        assert!(error.to_string().contains("pushes to main"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_without_read_only_contents_permission() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace("  contents: read", "  contents: write"),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow without read-only contents permission should fail");
+
+        assert!(error.to_string().contains("contents: read"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_with_job_level_write_contents_permission() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW.replace(
+                "  quality:\n    steps:",
+                "  quality:\n    permissions:\n      contents: write\n    steps:",
+            ),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow with job-level contents write should fail");
+
+        assert!(error.to_string().contains("contents: read"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_without_required_actions() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW
+                .replace("raven-actions/actionlint", "raven-actions/other")
+                .replace("dtolnay/rust-toolchain", "dtolnay/other")
+                .replace("EmbarkStudios/cargo-deny-action", "EmbarkStudios/other"),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("CI workflow without required actions should fail");
+        let error = error.to_string();
+
+        assert!(error.contains("actionlint"));
+        assert!(error.contains("rust-toolchain"));
+        assert!(error.contains("cargo-deny-action"));
+    }
+
+    #[test]
+    fn rejects_ci_workflow_with_spoofed_required_actions() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/ci.yml",
+            &CI_WORKFLOW
+                .replace(
+                    "raven-actions/actionlint",
+                    "example/raven-actions-actionlint",
+                )
+                .replace("dtolnay/rust-toolchain", "example/dtolnay-rust-toolchain")
+                .replace(
+                    "EmbarkStudios/cargo-deny-action",
+                    "example/EmbarkStudios-cargo-deny-action",
+                ),
+        );
+
+        let error = check_ci_workflow_inner(&workflow_path)
+            .expect_err("spoofed action repository names should fail");
+        let error = error.to_string();
+
+        assert!(error.contains("actionlint"));
+        assert!(error.contains("rust-toolchain"));
+        assert!(error.contains("cargo-deny-action"));
     }
 
     #[test]
