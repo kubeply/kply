@@ -49,11 +49,13 @@ Completed work:
     `kubectl`.
 - Milestone 20 item 5 is implemented:
   - opt-in anonymized `kply doctor --capability-report` output.
+- Milestone 20 item 6 is implemented:
+  - terminal agent usage docs for Codex, Claude Code, Cursor, and generic
+    agents.
 
 Remaining adoption and feedback work:
 
-- Milestone 20 item 6: add docs for using `kply` with Codex, Claude Code,
-  Cursor, and other terminal agents.
+- Milestone 20 item 7: add a local demo video or terminal cast.
 
 ## Locked Decisions
 
@@ -697,7 +699,7 @@ Kubeply product direction.
 3. Add a roadmap issue template.
 4. [x] Add `kply doctor` once enough checks exist.
 5. [x] Add anonymized environment capability report, opt-in only.
-6. Add docs for using `kply` with Codex, Claude Code, Cursor, and other terminal
+6. [x] Add docs for using `kply` with Codex, Claude Code, Cursor, and other terminal
    agents.
 7. Add a local demo video or terminal cast.
 8. Add benchmark tasks in `infra-bench` comparing raw `kubectl` agent use with
