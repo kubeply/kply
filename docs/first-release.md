@@ -271,6 +271,37 @@ If future work needs Secret contents, it requires a separate design, explicit
 policy, tests, documentation, and a release note before any implementation
 lands. Do not add a bypass to the guard for `v0.1.0`.
 
+## Known Limitations
+
+Kply `v0.1.0` is an evaluation release, not a production safety guarantee. The
+release must make these boundaries visible anywhere the first-release scope is
+used for tagging, demos, or public claims:
+
+- No automatic promotion is included. Kply does not decide that a production
+  rollout is safe.
+- `kply route apply` is a no-op placeholder and must keep reporting
+  `status: not_implemented`, `mutation: not_applied`, and `apply: false`.
+- Experimental live apply can create sandbox Deployment and Service resources,
+  but it is not a complete deployment system.
+- Preview Service and no-route checks do not prove edge routing behavior
+  through a Gateway, Ingress, mesh, CDN, or external load balancer.
+- Kply never reads Kubernetes Secret values. It only models Secret names and
+  metadata references.
+- No hosted policy, team approval, audit retention, or reporting service is
+  included.
+- No long-running in-cluster controller reconciles sessions after the CLI exits.
+- Runtime checks report evidence, not approval to deploy. Failed, warning, and
+  skipped checks require human or platform policy review.
+- The JSON contracts are stable only for `v0.1.0` evaluation and may change
+  before `1.0.0`.
+- The local demo is bounded to the Kind ecommerce fixture and does not prove
+  compatibility with every Kubernetes distribution, ingress controller, service
+  mesh, cloud load balancer, or GitOps setup.
+
+`cargo xtask check-known-limitations-docs` is part of the release gate. It pins
+the release limitations above so release cleanup, marketing copy, or demo work
+cannot silently remove the production-safety boundary before `v0.1.0`.
+
 ## CI Passing Requirement
 
 The first release must be cut from a commit where the GitHub Actions `ci`

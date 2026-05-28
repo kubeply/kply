@@ -79,6 +79,7 @@ cargo xtask check-fixture-directories
 cargo xtask check-fixture-naming-docs
 cargo xtask check-fixture-testing-docs
 cargo xtask check-future-session-docs
+cargo xtask check-known-limitations-docs
 cargo xtask check-license-files
 cargo xtask check-module-docs
 cargo xtask check-no-secret-content-reads

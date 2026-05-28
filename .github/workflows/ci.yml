@@ -83,6 +83,9 @@ jobs:
       - name: Check future session docs
         run: cargo xtask check-future-session-docs
 
+      - name: Check known limitations docs
+        run: cargo xtask check-known-limitations-docs
+
       - name: Check license files
         run: cargo xtask check-license-files
 
