@@ -634,6 +634,15 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         errors.push("dist.packages must release only kply-cli".to_owned());
     }
 
+    let targets = dist_config
+        .get("dist")
+        .and_then(|dist| dist.get("targets"))
+        .and_then(toml::Value::as_array);
+
+    if !toml_array_contains_str(targets, "x86_64-unknown-linux-gnu") {
+        errors.push("dist.targets must include x86_64-unknown-linux-gnu".to_owned());
+    }
+
     if !workflow_has_pull_request(&release_workflow_yaml) {
         errors.push("release workflow must run on pull_request".to_owned());
     }
@@ -717,6 +726,15 @@ fn workflow_has_push_tags(workflow: &YamlValue) -> bool {
 
 fn tag_filter_has_semver_shape(tag_filter: &str) -> bool {
     tag_filter.contains("[0-9]+.[0-9]+.[0-9]+")
+}
+
+fn toml_array_contains_str(values: Option<&Vec<toml::Value>>, expected: &str) -> bool {
+    values.is_some_and(|values| {
+        values
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .any(|value| value == expected)
+    })
 }
 
 fn workflow_event<'a>(workflow: &'a YamlValue, event_key: &YamlValue) -> Option<&'a YamlValue> {
@@ -1458,6 +1476,7 @@ highlight = "all"
 [dist]
 cargo-dist-version = "0.32.0"
 packages = ["kply-cli"]
+targets = ["x86_64-unknown-linux-gnu"]
 pr-run-mode = "plan"
 allow-dirty = ["ci"]
 "#;
@@ -2661,6 +2680,29 @@ license = "Apache-2.0"
             .expect_err("release package drift should fail");
 
         assert!(error.to_string().contains("kply-cli"));
+    }
+
+    #[test]
+    fn rejects_release_linux_x64_target_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                "targets = [\"x86_64-unknown-linux-gnu\"]",
+                "targets = [\"aarch64-unknown-linux-gnu\"]",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release Linux x64 target drift should fail");
+
+        assert!(error.to_string().contains("x86_64-unknown-linux-gnu"));
     }
 
     #[test]
