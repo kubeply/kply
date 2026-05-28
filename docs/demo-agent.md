@@ -131,5 +131,5 @@ deterministic fixture manifests, and an isolated namespace to inspect and plan
 around a Kubernetes change.
 
 It does not yet prove live sandbox routing, automated verification, rollback,
-rollback, or promotion. Live session apply is experimental, and the broader
+or promotion. Live session apply is experimental, and the broader
 flows are future roadmap work.
