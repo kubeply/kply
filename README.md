@@ -124,7 +124,8 @@ Codex, Claude Code, Cursor, and other terminal coding agents.
 ## Local Demo
 
 See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup
-guide.
+guide. A short asciinema-compatible cast is available at
+[docs/demo-terminal-cast.md](docs/demo-terminal-cast.md).
 
 ## Security
 
