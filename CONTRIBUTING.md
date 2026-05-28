@@ -24,6 +24,7 @@ cargo xtask check-placeholders
 cargo xtask check-readme-roadmap-link
 cargo xtask check-release-planning
 cargo xtask check-security-assumptions-docs
+cargo xtask check-security-policy
 cargo xtask check-toolchain-pin
 ```
 

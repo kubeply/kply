@@ -116,6 +116,9 @@ jobs:
       - name: Check security assumptions docs
         run: cargo xtask check-security-assumptions-docs
 
+      - name: Check security policy
+        run: cargo xtask check-security-policy
+
       - name: Check toolchain pin
         run: cargo xtask check-toolchain-pin
 

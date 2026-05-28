@@ -121,6 +121,10 @@ reports in pull-request workflows.
 See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup
 guide.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
