@@ -1,0 +1,15 @@
+---
+source: crates/kply-cli/src/main.rs
+expression: yaml
+---
+version: 1
+apps:
+- name: checkout-api
+  namespace: shop
+  workload: checkout-api
+  workload_kind: Deployment
+  service: checkout-http
+  route_strategy: preview
+routing: {}
+checks: []
+policies: []

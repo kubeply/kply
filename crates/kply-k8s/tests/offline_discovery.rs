@@ -14,6 +14,26 @@ use tower_test::mock::{self, Handle};
 type MockKubeHandle = Handle<Request<Body>, Response<Body>>;
 
 #[tokio::test]
+async fn lists_namespaces_from_mocked_kubernetes_api() {
+    let (client, handle) = mock_client();
+    let server = spawn_mock_namespace_list_api(handle);
+
+    let namespaces = kply_k8s::list_namespaces(client)
+        .await
+        .expect("mocked Namespace list should succeed");
+
+    wait_for_mock_kubernetes_api(server).await;
+
+    assert_eq!(
+        namespaces
+            .iter()
+            .map(|namespace| namespace.name.as_str())
+            .collect::<Vec<_>>(),
+        ["kube-system", "shop"]
+    );
+}
+
+#[tokio::test]
 async fn discovers_read_only_app_from_mocked_kubernetes_api() {
     let (client, handle) = mock_client();
     let server = spawn_mock_kubernetes_api(
@@ -144,6 +164,31 @@ fn mock_client() -> (Client, MockKubeHandle) {
     let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
 
     (Client::new(mock_service, "default"), handle)
+}
+
+fn spawn_mock_namespace_list_api(handle: MockKubeHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut handle = std::pin::pin!(handle);
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("mock Kubernetes API should receive expected request");
+
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces");
+
+        send.send_response(Response::new(Body::from(
+            to_vec(&json!({
+                "apiVersion": "v1",
+                "kind": "NamespaceList",
+                "items": [
+                    { "metadata": { "name": "shop" } },
+                    { "metadata": { "name": "kube-system" } }
+                ]
+            }))
+            .expect("namespace fixture should serialize"),
+        )));
+    })
 }
 
 fn spawn_mock_session_list_api(handle: MockKubeHandle) -> JoinHandle<()> {

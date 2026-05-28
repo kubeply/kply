@@ -14,8 +14,9 @@ use kply_cli::cli::{
     PolicyCommand, ReportCommand, ReportExportFormat, RouteCommand, SessionCommand,
 };
 use kply_config::{
-    AppConfig, ConfigLoadError, ConfigValidationErrors, DatabaseRiskWarningPolicy, KplyConfig,
-    MutationModePolicy, PolicyConfig, PolicyConfigs, RouteStrategy, load_config_path,
+    AppConfig, AppConfigs, CheckConfigs, ConfigLoadError, ConfigValidationErrors, ConfigVersion,
+    DatabaseRiskWarningPolicy, KplyConfig, MutationModePolicy, PolicyConfig, PolicyConfigs,
+    RouteStrategy, RoutingConfig, load_config_path,
 };
 use kply_core::{
     AppGraph, CheckResultStatus, ConfidenceLevel, GraphRelationship, ImageRef,
@@ -37,6 +38,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -94,6 +97,13 @@ fn run() -> Result<ExitCode> {
         }
         Some(Command::Doctor { capability_report }) => {
             return doctor::render_doctor(&cli, *capability_report);
+        }
+        Some(Command::Init {
+            from_cluster,
+            output,
+            overwrite,
+        }) => {
+            return render_init_from_cluster(&cli, *from_cluster, output.as_deref(), *overwrite);
         }
         Some(Command::Config {
             command: Some(ConfigCommand::Show),
@@ -284,6 +294,490 @@ fn run() -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render the cluster-backed init workflow and write a starter config.
+fn render_init_from_cluster(
+    cli: &Cli,
+    from_cluster: bool,
+    output: Option<&Path>,
+    overwrite: bool,
+) -> Result<ExitCode> {
+    if !from_cluster {
+        return render_init_usage_error(cli.json);
+    }
+
+    let output_path = output
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(kply_config::CANONICAL_CONFIG_FILENAME));
+    if output_path.exists() && !overwrite {
+        return render_init_output_exists_error(&output_path, cli.json);
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let discovery = match runtime.block_on(discover_init_from_cluster()) {
+        Ok(discovery) => discovery,
+        Err(error) => return render_discovery_error(&error, cli.json),
+    };
+    let config = init_config_from_apps(&discovery.apps);
+    if let Err(errors) = config.validate() {
+        return render_config_validation_error(&errors, cli.json);
+    }
+    let config_yaml = render_init_config_yaml(&discovery.apps)?;
+
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&output_path, config_yaml)?;
+
+    let report = InitReport {
+        command: "init",
+        source: "cluster",
+        status: "generated",
+        output_path: output_path.to_string_lossy().into_owned(),
+        cluster: InitClusterReport {
+            cluster_url: discovery.cluster.cluster_url,
+            default_namespace: discovery.cluster.default_namespace,
+            namespaces_scanned: discovery.namespaces.len(),
+        },
+        apps: discovery.apps,
+        skipped_services: discovery.skipped_services,
+    };
+
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if !cli.quiet {
+        print!("{}", init_report_text(&report, color_enabled(cli)));
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn discover_init_from_cluster() -> Result<InitDiscovery, kply_k8s::DiscoveryError> {
+    let cluster = kply_k8s::cluster_info()
+        .await
+        .map_err(|error| kply_k8s::DiscoveryError::from_kubeconfig_error_redacted(&error))?;
+    let loaded_client = kply_k8s::load_discovery_client_with_info().await?;
+    let namespaces = kply_k8s::list_namespaces(loaded_client.client.clone())
+        .await
+        .map_err(|error| {
+            kply_k8s::DiscoveryError::from_kubernetes_api_error("list Namespaces", &error)
+        })?;
+    let mut apps = Vec::new();
+    let mut skipped_services = Vec::new();
+
+    for namespace in &namespaces {
+        let deployments = kply_k8s::list_deployments(loaded_client.client.clone(), &namespace.name)
+            .await
+            .map_err(|error| {
+                kply_k8s::DiscoveryError::from_kubernetes_api_error("list Deployments", &error)
+            })?;
+        let services = kply_k8s::list_services(loaded_client.client.clone(), &namespace.name)
+            .await
+            .map_err(|error| {
+                kply_k8s::DiscoveryError::from_kubernetes_api_error("list Services", &error)
+            })?;
+        let namespace_discovery = discover_namespace_apps(&namespace.name, &deployments, &services);
+        apps.extend(namespace_discovery.apps);
+        skipped_services.extend(namespace_discovery.skipped_services);
+    }
+
+    deduplicate_app_names(&mut apps);
+    apps.sort_by(|left, right| {
+        left.namespace
+            .cmp(&right.namespace)
+            .then_with(|| left.workload.cmp(&right.workload))
+            .then_with(|| left.service.cmp(&right.service))
+    });
+    skipped_services.sort_by(|left, right| {
+        left.namespace
+            .cmp(&right.namespace)
+            .then_with(|| left.service.cmp(&right.service))
+    });
+
+    Ok(InitDiscovery {
+        cluster,
+        namespaces,
+        apps,
+        skipped_services,
+    })
+}
+
+fn discover_namespace_apps(
+    namespace: &str,
+    deployments: &[kply_k8s::DeploymentSummary],
+    services: &[kply_k8s::ServiceSummary],
+) -> NamespaceInitDiscovery {
+    let mut service_matches = Vec::new();
+    let mut skipped_services = Vec::new();
+
+    for service in services {
+        if service.selector.is_empty() {
+            skipped_services.push(InitSkippedService {
+                namespace: namespace.to_owned(),
+                service: service.name.clone(),
+                reason: "missing_selector".to_owned(),
+                matched_workloads: Vec::new(),
+            });
+            continue;
+        }
+
+        let matched_workloads = deployments
+            .iter()
+            .filter(|deployment| {
+                selector_matches_labels(&service.selector, &deployment.pod_template_labels)
+            })
+            .map(|deployment| deployment.name.clone())
+            .collect::<Vec<_>>();
+        if matched_workloads.len() == 1 {
+            service_matches.push((service, matched_workloads[0].clone()));
+        } else {
+            skipped_services.push(InitSkippedService {
+                namespace: namespace.to_owned(),
+                service: service.name.clone(),
+                reason: if matched_workloads.is_empty() {
+                    "unmatched_selector".to_owned()
+                } else {
+                    "ambiguous_selector".to_owned()
+                },
+                matched_workloads,
+            });
+        }
+    }
+
+    let mut apps = Vec::new();
+    for deployment in deployments {
+        let matched_services = service_matches
+            .iter()
+            .filter(|(_, workload)| workload == &deployment.name)
+            .map(|(service, _)| *service)
+            .collect::<Vec<_>>();
+        let Some(service) = matched_services.first().copied() else {
+            continue;
+        };
+
+        apps.push(InitDiscoveredApp {
+            name: deployment.name.clone(),
+            namespace: namespace.to_owned(),
+            workload: deployment.name.clone(),
+            workload_kind: "Deployment".to_owned(),
+            service: service.name.clone(),
+            route_strategy: RouteStrategy::Preview.as_str().to_owned(),
+            ports: service.ports.iter().map(|port| port.port).collect(),
+        });
+
+        for extra_service in matched_services.iter().skip(1) {
+            skipped_services.push(InitSkippedService {
+                namespace: namespace.to_owned(),
+                service: extra_service.name.clone(),
+                reason: "duplicate_workload_service".to_owned(),
+                matched_workloads: vec![deployment.name.clone()],
+            });
+        }
+    }
+
+    NamespaceInitDiscovery {
+        apps,
+        skipped_services,
+    }
+}
+
+fn selector_matches_labels(
+    selector: &[kply_k8s::LabelSelectorEntry],
+    labels: &[kply_k8s::LabelSelectorEntry],
+) -> bool {
+    selector.iter().all(|selector_entry| {
+        labels
+            .iter()
+            .any(|label| label.key == selector_entry.key && label.value == selector_entry.value)
+    })
+}
+
+fn deduplicate_app_names(apps: &mut [InitDiscoveredApp]) {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for app in apps.iter() {
+        *counts.entry(app.name.clone()).or_default() += 1;
+    }
+
+    for app in apps {
+        if counts.get(&app.name).copied().unwrap_or_default() > 1 {
+            app.name = format!("{}-{}", app.namespace, app.workload);
+        }
+    }
+}
+
+fn init_config_from_apps(apps: &[InitDiscoveredApp]) -> KplyConfig {
+    KplyConfig::new(
+        ConfigVersion::CURRENT,
+        AppConfigs::new(
+            apps.iter()
+                .map(|app| {
+                    AppConfig::new(
+                        app.name.clone(),
+                        app.namespace.clone(),
+                        app.workload.clone(),
+                        app.service.clone(),
+                        None,
+                        RouteStrategy::Preview,
+                    )
+                    .with_workload_kind(app.workload_kind.clone())
+                })
+                .collect(),
+        ),
+        RoutingConfig,
+        CheckConfigs::default(),
+        PolicyConfigs::default(),
+    )
+}
+
+fn render_init_config_yaml(apps: &[InitDiscoveredApp]) -> Result<String> {
+    let document = InitConfigDocument {
+        version: ConfigVersion::CURRENT.get(),
+        apps: apps
+            .iter()
+            .map(|app| InitConfigDocumentApp {
+                name: &app.name,
+                namespace: &app.namespace,
+                workload: &app.workload,
+                workload_kind: &app.workload_kind,
+                service: &app.service,
+                route_strategy: &app.route_strategy,
+            })
+            .collect(),
+        routing: BTreeMap::<String, String>::new(),
+        checks: Vec::<String>::new(),
+        policies: Vec::<String>::new(),
+    };
+    let mut yaml = serde_norway::to_string(&document)?;
+    if !yaml.ends_with('\n') {
+        yaml.push('\n');
+    }
+    Ok(yaml)
+}
+
+fn init_report_text(report: &InitReport, color: bool) -> String {
+    let mut output = String::new();
+    output.push_str("kply init --from-cluster\n\n");
+    output.push_str(&format!("{}\n", style_heading("Cluster", color)));
+    output.push_str(&format!(
+        "  server              {}\n",
+        report.cluster.cluster_url
+    ));
+    output.push_str(&format!(
+        "  default_namespace   {}\n",
+        report.cluster.default_namespace
+    ));
+    output.push_str(&format!(
+        "  namespaces_scanned  {}\n\n",
+        report.cluster.namespaces_scanned
+    ));
+    output.push_str(&format!("{}\n", style_heading("Discovered Apps", color)));
+    if report.apps.is_empty() {
+        output.push_str(&format!(
+            "  {}\n",
+            style_warning("no apps discovered", color)
+        ));
+    } else {
+        for app in &report.apps {
+            output.push_str(&format!(
+                "  {} {}/{}",
+                style_success("✓", color),
+                app.namespace,
+                app.workload
+            ));
+            output.push('\n');
+            output.push_str(&format!("      app             {}\n", app.name));
+            output.push_str(&format!("      service         {}\n", app.service));
+            output.push_str(&format!("      route_strategy  {}\n", app.route_strategy));
+            output.push_str(&format!(
+                "      ports           {}\n",
+                format_ports(&app.ports)
+            ));
+        }
+    }
+    if !report.skipped_services.is_empty() {
+        output.push('\n');
+        output.push_str(&format!("{}\n", style_heading("Skipped Services", color)));
+        for service in &report.skipped_services {
+            output.push_str(&format!(
+                "  {} {}/{} reason={}",
+                style_warning("!", color),
+                service.namespace,
+                service.service,
+                service.reason
+            ));
+            output.push('\n');
+        }
+    }
+    output.push('\n');
+    output.push_str(&format!("{}\n", style_heading("Generated", color)));
+    output.push_str(&format!("  path  {}\n", report.output_path));
+    output.push_str(&format!("  apps  {}\n\n", report.apps.len()));
+    output.push_str(&format!("{}\n", style_heading("Next", color)));
+    output.push_str(&format!(
+        "  kply --config {} app list\n",
+        report.output_path
+    ));
+    if let Some(app) = report.apps.first() {
+        output.push_str(&format!(
+            "  kply --config {} app inspect {}",
+            report.output_path, app.name
+        ));
+        output.push('\n');
+    }
+    output
+}
+
+fn format_ports(ports: &[i32]) -> String {
+    if ports.is_empty() {
+        return "<none>".to_owned();
+    }
+    ports
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn color_enabled(cli: &Cli) -> bool {
+    !cli.no_color && std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+fn style_heading(value: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[1m{value}\x1b[0m")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn style_success(value: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[32m{value}\x1b[0m")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn style_warning(value: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[33m{value}\x1b[0m")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn render_init_usage_error(wants_json: bool) -> Result<ExitCode> {
+    let message = "kply init requires --from-cluster";
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "usage",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: usage\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+fn render_init_output_exists_error(path: &Path, wants_json: bool) -> Result<ExitCode> {
+    let message = format!(
+        "refusing to overwrite `{}`; pass --overwrite or choose --output <path>",
+        path.display()
+    );
+    if wants_json {
+        let value = serde_json::json!({
+            "error": {
+                "code": "output_exists",
+                "exit_code": EXIT_USAGE,
+                "message": message
+            }
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        eprintln!("kply error: output exists\n\n{message}");
+    }
+
+    Ok(exit_code(EXIT_USAGE))
+}
+
+#[derive(Debug)]
+struct NamespaceInitDiscovery {
+    apps: Vec<InitDiscoveredApp>,
+    skipped_services: Vec<InitSkippedService>,
+}
+
+#[derive(Debug)]
+struct InitDiscovery {
+    cluster: kply_k8s::ClusterInfo,
+    namespaces: Vec<kply_k8s::NamespaceSummary>,
+    apps: Vec<InitDiscoveredApp>,
+    skipped_services: Vec<InitSkippedService>,
+}
+
+#[derive(Debug, Serialize)]
+struct InitReport {
+    command: &'static str,
+    source: &'static str,
+    status: &'static str,
+    output_path: String,
+    cluster: InitClusterReport,
+    apps: Vec<InitDiscoveredApp>,
+    skipped_services: Vec<InitSkippedService>,
+}
+
+#[derive(Debug, Serialize)]
+struct InitClusterReport {
+    cluster_url: String,
+    default_namespace: String,
+    namespaces_scanned: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct InitDiscoveredApp {
+    name: String,
+    namespace: String,
+    workload: String,
+    workload_kind: String,
+    service: String,
+    route_strategy: String,
+    ports: Vec<i32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct InitSkippedService {
+    namespace: String,
+    service: String,
+    reason: String,
+    matched_workloads: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct InitConfigDocument<'a> {
+    version: u16,
+    apps: Vec<InitConfigDocumentApp<'a>>,
+    routing: BTreeMap<String, String>,
+    checks: Vec<String>,
+    policies: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct InitConfigDocumentApp<'a> {
+    name: &'a str,
+    namespace: &'a str,
+    workload: &'a str,
+    workload_kind: &'a str,
+    service: &'a str,
+    route_strategy: &'a str,
 }
 
 /// Render the explicit session create command without mutating cluster state.
@@ -3381,7 +3875,9 @@ fn render_session_manifest_error(
 
 /// Render read-only cluster facts resolved from kubeconfig.
 fn render_cluster_info(cli: &Cli) -> Result<ExitCode> {
-    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
     let info = match runtime.block_on(kply_k8s::cluster_info()) {
         Ok(info) => info,
         Err(error) => return render_kubeconfig_error(&error, cli.json),
@@ -3596,19 +4092,21 @@ fn print_verbose_trace(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::{
-        CheckRunItem, CheckRunReport, CheckRunStatusCounts, ReportShowUnavailable,
-        SessionCreateApplyError, SessionPlanBuildError, SessionStateRecordError,
-        apply_session_resources, check_run_report_from_session, compact_duration_seconds,
-        evaluate_session_planning_policies, image_registry_host, planned_resource_token,
-        planned_session_annotations, planned_session_checks, planned_session_cleanup_steps,
-        planned_session_labels, planned_session_resources, planned_session_risk_notes,
-        policy_route_strategy, render_check_evidence, render_check_run_json_report,
-        render_check_run_text_report, render_report_unavailable_json,
+        CheckRunItem, CheckRunReport, CheckRunStatusCounts, InitDiscoveredApp,
+        ReportShowUnavailable, SessionCreateApplyError, SessionPlanBuildError,
+        SessionStateRecordError, apply_session_resources, check_run_report_from_session,
+        compact_duration_seconds, deduplicate_app_names, discover_namespace_apps,
+        evaluate_session_planning_policies, image_registry_host, init_config_from_apps,
+        init_report_text, planned_resource_token, planned_session_annotations,
+        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
+        planned_session_resources, planned_session_risk_notes, policy_route_strategy,
+        render_check_evidence, render_check_run_json_report, render_check_run_text_report,
+        render_init_config_yaml, render_report_unavailable_json,
         render_report_unavailable_markdown, render_report_unavailable_text,
         report_show_unavailable_from_session, required_session_permissions,
         resolve_session_route_strategy, route_cleanup_from_session,
         route_strategy_creates_route_object, route_strategy_has_route_check,
-        route_strategy_uses_preview_service, session_plan_from_config,
+        route_strategy_uses_preview_service, selector_matches_labels, session_plan_from_config,
         session_plan_from_config_with_policies, session_policy_for_mutation_mode,
         session_state_annotations, session_state_check_status, session_token,
         unsupported_session_feature_warnings, workload_permission_resource,
@@ -3622,10 +4120,171 @@ mod tests {
         WorkloadRef,
     };
     use kply_k8s::{
-        DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, MutationError,
-        MutationErrorCode, ServiceSummary, SessionSummary,
+        DeploymentRolloutPhase, DeploymentRolloutSummary, DeploymentSummary, LabelSelectorEntry,
+        MutationError, MutationErrorCode, ServicePortSummary, ServiceSummary, SessionSummary,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn matches_service_selector_against_deployment_template_labels() {
+        let selector = vec![label("app", "checkout"), label("tier", "api")];
+        let labels = vec![
+            label("app", "checkout"),
+            label("track", "stable"),
+            label("tier", "api"),
+        ];
+
+        assert!(selector_matches_labels(&selector, &labels));
+        assert!(!selector_matches_labels(
+            &[label("app", "checkout"), label("tier", "worker")],
+            &labels
+        ));
+    }
+
+    #[test]
+    fn discovers_namespace_apps_from_deterministic_service_selectors() {
+        let deployments = vec![
+            deployment_summary("shop", "checkout-api", &[label("app", "checkout")]),
+            deployment_summary("shop", "catalog-api", &[label("app", "catalog")]),
+        ];
+        let services = vec![
+            service_summary("shop", "checkout-http", &[label("app", "checkout")], &[80]),
+            service_summary("shop", "catalog-http", &[label("app", "catalog")], &[8080]),
+        ];
+
+        let discovery = discover_namespace_apps("shop", &deployments, &services);
+
+        assert_eq!(
+            discovery.apps,
+            vec![
+                InitDiscoveredApp {
+                    name: "checkout-api".to_owned(),
+                    namespace: "shop".to_owned(),
+                    workload: "checkout-api".to_owned(),
+                    workload_kind: "Deployment".to_owned(),
+                    service: "checkout-http".to_owned(),
+                    route_strategy: "preview".to_owned(),
+                    ports: vec![80],
+                },
+                InitDiscoveredApp {
+                    name: "catalog-api".to_owned(),
+                    namespace: "shop".to_owned(),
+                    workload: "catalog-api".to_owned(),
+                    workload_kind: "Deployment".to_owned(),
+                    service: "catalog-http".to_owned(),
+                    route_strategy: "preview".to_owned(),
+                    ports: vec![8080],
+                },
+            ]
+        );
+        assert!(discovery.skipped_services.is_empty());
+    }
+
+    #[test]
+    fn skips_ambiguous_and_selectorless_services() {
+        let deployments = vec![
+            deployment_summary("shop", "checkout-blue", &[label("app", "checkout")]),
+            deployment_summary("shop", "checkout-green", &[label("app", "checkout")]),
+        ];
+        let services = vec![
+            service_summary("shop", "checkout-http", &[label("app", "checkout")], &[80]),
+            service_summary("shop", "headless", &[], &[80]),
+        ];
+
+        let discovery = discover_namespace_apps("shop", &deployments, &services);
+
+        assert!(discovery.apps.is_empty());
+        assert_eq!(discovery.skipped_services.len(), 2);
+        assert_eq!(discovery.skipped_services[0].reason, "ambiguous_selector");
+        assert_eq!(discovery.skipped_services[1].reason, "missing_selector");
+    }
+
+    #[test]
+    fn deduplicates_app_names_across_namespaces() {
+        let mut apps = vec![
+            discovered_app("web", "staging", "web", "web-http"),
+            discovered_app("web", "prod", "web", "web-http"),
+            discovered_app("api", "prod", "api", "api-http"),
+        ];
+
+        deduplicate_app_names(&mut apps);
+
+        assert_eq!(apps[0].name, "staging-web");
+        assert_eq!(apps[1].name, "prod-web");
+        assert_eq!(apps[2].name, "api");
+    }
+
+    #[test]
+    fn renders_init_config_yaml_from_discovered_apps() {
+        let apps = vec![discovered_app(
+            "checkout-api",
+            "shop",
+            "checkout-api",
+            "checkout-http",
+        )];
+        let config = init_config_from_apps(&apps);
+        config.validate().expect("generated config should validate");
+        let yaml = render_init_config_yaml(&apps).expect("config should serialize");
+
+        insta::assert_snapshot!("init_config_yaml", yaml);
+    }
+
+    #[test]
+    fn renders_empty_init_report_text() {
+        let report = init_report(Vec::new(), Vec::new());
+
+        insta::assert_snapshot!("init_report_empty_text", init_report_text(&report, false));
+    }
+
+    #[test]
+    fn renders_multiple_app_init_report_text() {
+        let report = init_report(
+            vec![
+                discovered_app("checkout-api", "shop", "checkout-api", "checkout-http"),
+                discovered_app("catalog-api", "shop", "catalog-api", "catalog-http"),
+            ],
+            Vec::new(),
+        );
+
+        insta::assert_snapshot!(
+            "init_report_multiple_apps_text",
+            init_report_text(&report, false)
+        );
+    }
+
+    #[test]
+    fn renders_init_report_json_without_terminal_decoration() {
+        let report = init_report(
+            vec![discovered_app(
+                "checkout-api",
+                "shop",
+                "checkout-api",
+                "checkout-http",
+            )],
+            Vec::new(),
+        );
+        let value = serde_json::to_value(&report).expect("report should serialize");
+
+        insta::assert_json_snapshot!("init_report_json", value);
+    }
+
+    #[test]
+    fn renders_ambiguous_selector_init_report_text() {
+        let report = init_report(
+            Vec::new(),
+            vec![super::InitSkippedService {
+                namespace: "shop".to_owned(),
+                service: "checkout-http".to_owned(),
+                reason: "ambiguous_selector".to_owned(),
+                matched_workloads: vec!["checkout-blue".to_owned(), "checkout-green".to_owned()],
+            }],
+        );
+
+        insta::assert_snapshot!(
+            "init_report_ambiguous_selector_text",
+            init_report_text(&report, false)
+        );
+    }
 
     #[test]
     fn preserves_session_token_suffix_for_long_app_names() {
@@ -3969,6 +4628,7 @@ mod tests {
                     ready_replicas: None,
                     updated_replicas: None,
                     images: vec!["ghcr.io/acme/checkout:next".to_owned()],
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4012,6 +4672,7 @@ mod tests {
                     ready_replicas: Some(1),
                     updated_replicas: Some(1),
                     images: vec!["ghcr.io/acme/checkout:next".to_owned()],
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4125,6 +4786,7 @@ mod tests {
                     ready_replicas: None,
                     updated_replicas: None,
                     images: Vec::new(),
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4200,6 +4862,7 @@ mod tests {
                     ready_replicas: None,
                     updated_replicas: None,
                     images: Vec::new(),
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4297,6 +4960,7 @@ mod tests {
                     ready_replicas: None,
                     updated_replicas: None,
                     images: Vec::new(),
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4330,6 +4994,7 @@ mod tests {
                     ready_replicas: Some(1),
                     updated_replicas: Some(1),
                     images: Vec::new(),
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4412,6 +5077,7 @@ mod tests {
                     ready_replicas: None,
                     updated_replicas: None,
                     images: Vec::new(),
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -4445,6 +5111,7 @@ mod tests {
                     ready_replicas: Some(1),
                     updated_replicas: Some(1),
                     images: Vec::new(),
+                    pod_template_labels: Vec::new(),
                     probes: Vec::new(),
                     resources: Vec::new(),
                     rollout: DeploymentRolloutSummary {
@@ -5308,6 +5975,103 @@ mod tests {
             notes[0].reason(),
             "database_reference_requires_manual_review"
         );
+    }
+
+    fn label(key: &str, value: &str) -> LabelSelectorEntry {
+        LabelSelectorEntry {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    fn deployment_summary(
+        namespace: &str,
+        name: &str,
+        pod_template_labels: &[LabelSelectorEntry],
+    ) -> DeploymentSummary {
+        DeploymentSummary {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            replicas: Some(1),
+            available_replicas: Some(1),
+            ready_replicas: Some(1),
+            updated_replicas: Some(1),
+            images: Vec::new(),
+            pod_template_labels: pod_template_labels.to_vec(),
+            probes: Vec::new(),
+            resources: Vec::new(),
+            rollout: DeploymentRolloutSummary {
+                phase: DeploymentRolloutPhase::Complete,
+                generation: Some(1),
+                observed_generation: Some(1),
+                desired_replicas: Some(1),
+                ready_replicas: Some(1),
+                available_replicas: Some(1),
+                updated_replicas: Some(1),
+                unavailable_replicas: Some(0),
+                conditions: Vec::new(),
+            },
+        }
+    }
+
+    fn service_summary(
+        namespace: &str,
+        name: &str,
+        selector: &[LabelSelectorEntry],
+        ports: &[i32],
+    ) -> ServiceSummary {
+        ServiceSummary {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            service_type: Some("ClusterIP".to_owned()),
+            selector: selector.to_vec(),
+            ports: ports
+                .iter()
+                .map(|port| ServicePortSummary {
+                    name: None,
+                    port: *port,
+                    app_protocol: None,
+                    protocol: Some("TCP".to_owned()),
+                    target_port: Some(port.to_string()),
+                })
+                .collect(),
+        }
+    }
+
+    fn discovered_app(
+        name: &str,
+        namespace: &str,
+        workload: &str,
+        service: &str,
+    ) -> InitDiscoveredApp {
+        InitDiscoveredApp {
+            name: name.to_owned(),
+            namespace: namespace.to_owned(),
+            workload: workload.to_owned(),
+            workload_kind: "Deployment".to_owned(),
+            service: service.to_owned(),
+            route_strategy: "preview".to_owned(),
+            ports: vec![80],
+        }
+    }
+
+    fn init_report(
+        apps: Vec<InitDiscoveredApp>,
+        skipped_services: Vec<super::InitSkippedService>,
+    ) -> super::InitReport {
+        super::InitReport {
+            command: "init",
+            source: "cluster",
+            status: "generated",
+            output_path: "kply.yaml".to_owned(),
+            cluster: super::InitClusterReport {
+                cluster_url: "https://127.0.0.1:6443/".to_owned(),
+                default_namespace: "default".to_owned(),
+                namespaces_scanned: 2,
+            },
+            apps,
+            skipped_services,
+        }
     }
 
     #[test]

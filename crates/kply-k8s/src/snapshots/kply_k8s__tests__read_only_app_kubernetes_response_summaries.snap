@@ -1,5 +1,6 @@
 ---
 source: crates/kply-k8s/src/lib.rs
+assertion_line: 2161
 expression: "json!({\n    \"deployment\": deployment, \"service\": service, \"pod\": pod, \"ingress\":\n    ingress, \"gateway_class\": gateway_class, \"gateway\": gateway, \"http_route\":\n    http_route,\n})"
 ---
 {
@@ -11,6 +12,12 @@ expression: "json!({\n    \"deployment\": deployment, \"service\": service, \"po
     ],
     "name": "checkout-api",
     "namespace": "shop",
+    "pod_template_labels": [
+      {
+        "key": "app.kubernetes.io/name",
+        "value": "checkout-api"
+      }
+    ],
     "probes": [
       {
         "container_name": "checkout",

@@ -82,6 +82,20 @@ A Kply session is a temporary, scoped workspace for an agent:
 - cleanup plan
 - audit report
 
+## First Cluster Onboarding
+
+Start from a read-only cluster scan instead of writing config by hand:
+
+```bash
+kply init --from-cluster
+kply --config kply.yaml app list
+kply --config kply.yaml app inspect <app>
+```
+
+`kply init --from-cluster` discovers Deployments and deterministic Service
+selector matches, writes a starter `kply.yaml`, and prints next commands. It
+does not create, update, delete, patch, or read Secret values.
+
 ## Development
 
 ```bash

@@ -1,0 +1,29 @@
+---
+source: crates/kply-cli/src/main.rs
+expression: value
+---
+{
+  "apps": [
+    {
+      "name": "checkout-api",
+      "namespace": "shop",
+      "ports": [
+        80
+      ],
+      "route_strategy": "preview",
+      "service": "checkout-http",
+      "workload": "checkout-api",
+      "workload_kind": "Deployment"
+    }
+  ],
+  "cluster": {
+    "cluster_url": "https://127.0.0.1:6443/",
+    "default_namespace": "default",
+    "namespaces_scanned": 2
+  },
+  "command": "init",
+  "output_path": "kply.yaml",
+  "skipped_services": [],
+  "source": "cluster",
+  "status": "generated"
+}

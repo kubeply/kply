@@ -71,6 +71,26 @@ one or more checks are missing or invalid. Blocking readiness failures are
 reported on stdout so agents can parse the result without treating it as an
 unexpected internal error.
 
+## Init Command
+
+`kply init --from-cluster` scans the current Kubernetes context with read-only
+API calls, discovers Deployments, matches Services whose selectors identify
+exactly one Deployment pod template, and writes a starter `kply.yaml`.
+
+The default output path is `kply.yaml`. Use `--output <path>` to write
+elsewhere. Existing files are protected unless `--overwrite` is provided.
+
+Human output groups cluster facts, discovered apps, skipped Services, generated
+files, and next commands. It may use ANSI color when stdout is a terminal.
+`--no-color` disables color. `--quiet` suppresses human output but still writes
+the config file.
+
+`kply init --from-cluster --json` emits deterministic JSON for agents and never
+includes ANSI color. JSON output includes the generated path, cluster facts,
+discovered apps, and skipped Services.
+
+The command does not create, update, delete, patch, or read Secret values.
+
 ## Compatibility
 
 Exit codes are part of the CLI contract. Changes to these meanings must update

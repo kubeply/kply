@@ -9,6 +9,7 @@ Usage: kply-cli [OPTIONS] [COMMAND]
 Commands:
   help        Print top-level help
   doctor      Check local readiness for Kply workflows
+  init        Generate starter Kply configuration from read-only discovery
   session     Manage future sandbox sessions
   app         Inspect configured application targets
   config      Manage Kply configuration

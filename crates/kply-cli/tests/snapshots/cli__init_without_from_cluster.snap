@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: usage
+
+kply init requires --from-cluster
