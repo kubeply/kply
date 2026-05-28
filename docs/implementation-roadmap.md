@@ -60,6 +60,9 @@ Completed work:
 - Milestone 9 item 12 is implemented:
   - scripted local demo walkthrough for inspect, plan, sandbox create, checks,
     and cleanup.
+- Milestone 9 item 13 is implemented:
+  - demo manifests and app config stay inside the dedicated `kply-demo`
+    namespace, enforced by `crates/kply-cli/tests/demo_manifests.rs`.
 
 Remaining adoption and feedback work:
 
@@ -410,7 +413,7 @@ real cluster.
     - create sandbox.
     - run checks.
     - cleanup.
-13. Ensure demo resources use a dedicated namespace.
+13. [x] Ensure demo resources use a dedicated namespace.
 14. Ensure demo cleanup removes only labeled demo resources.
 15. Add screenshots or terminal recordings later, not before the flow works.
 
