@@ -159,7 +159,13 @@ fn check_module_docs() -> Result<()> {
 }
 
 fn check_no_secret_content_reads() -> Result<()> {
-    let source_paths = collect_crate_sources("crates/kply-k8s/src")?;
+    let mut source_paths = Vec::new();
+    for root in secret_content_guard_source_roots() {
+        source_paths.extend(collect_crate_sources(root)?);
+    }
+    source_paths.sort();
+    source_paths.dedup();
+
     check_no_secret_content_reads_inner(source_paths, forbidden_secret_content_patterns())
 }
 
@@ -285,6 +291,17 @@ fn forbidden_secret_content_patterns() -> &'static [&'static str] {
         "Api<Secret",
         "Api::<Secret",
         "Secret::",
+    ]
+}
+
+fn secret_content_guard_source_roots() -> &'static [&'static str] {
+    &[
+        "crates/kply-checks/src",
+        "crates/kply-cli/src",
+        "crates/kply-config/src",
+        "crates/kply-core/src",
+        "crates/kply-k8s/src",
+        "crates/kply-routing/src",
     ]
 }
 
