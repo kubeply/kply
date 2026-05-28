@@ -46,6 +46,7 @@ fn main() -> Result<()> {
             println!("available tasks:");
             println!("  check-ci-workflow verify pull-request CI release gates");
             println!("  check-crate-inventory-docs verify docs list workspace crates");
+            println!("  check-demo-docs verify local demo docs stay linked and bounded");
             println!("  check-deny-config verify cargo-deny policy strictness");
             println!("  check-fixture-directories verify fixture directory skeleton");
             println!("  check-fixture-naming-docs verify fixture naming docs");
@@ -70,6 +71,9 @@ fn main() -> Result<()> {
         }
         "check-crate-inventory-docs" => {
             check_crate_inventory_docs()?;
+        }
+        "check-demo-docs" => {
+            check_demo_docs()?;
         }
         "check-deny-config" => {
             check_deny_config()?;
@@ -122,6 +126,7 @@ fn main() -> Result<()> {
             println!("cargo deny check");
             println!("cargo xtask check-ci-workflow");
             println!("cargo xtask check-crate-inventory-docs");
+            println!("cargo xtask check-demo-docs");
             println!("cargo xtask check-deny-config");
             println!("cargo xtask check-fixture-directories");
             println!("cargo xtask check-fixture-naming-docs");
@@ -202,6 +207,15 @@ fn check_crate_inventory_docs() -> Result<()> {
     check_crate_inventory_docs_inner("Cargo.toml".as_ref(), doc_paths, workspace_crates())
 }
 
+fn check_demo_docs() -> Result<()> {
+    check_demo_docs_inner([
+        PathBuf::from("README.md"),
+        PathBuf::from("docs/demo-kind.md"),
+        PathBuf::from("docs/demo-agent.md"),
+        PathBuf::from("fixtures/demo/ecommerce-basic/README.md"),
+    ])
+}
+
 fn check_deny_config() -> Result<()> {
     check_deny_config_inner("deny.toml".as_ref())
 }
@@ -259,6 +273,56 @@ fn check_future_session_docs_inner(doc_paths: [PathBuf; 3]) -> Result<()> {
                 "roadmap hypothesis, partially implemented behavior".into(),
                 "runtime checks are landing".into(),
                 "Gateway API routing groundwork".into(),
+            ],
+        },
+    ];
+
+    check_docs_contain(docs)
+}
+
+fn check_demo_docs_inner(doc_paths: [PathBuf; 4]) -> Result<()> {
+    let [readme_path, kind_path, agent_path, fixture_path] = doc_paths;
+    let docs = [
+        DocExpectation {
+            path: readme_path,
+            required_phrases: vec!["## Local Demo".into(), "docs/demo-kind.md".into()],
+        },
+        DocExpectation {
+            path: kind_path,
+            required_phrases: vec![
+                "# Local Kind Demo".into(),
+                "demo-agent.md".into(),
+                "scripts/demo-walkthrough.sh".into(),
+                "demo doctor".into(),
+                "demo install".into(),
+                "demo reset".into(),
+                "demo teardown".into(),
+                "kind create cluster --name kply-demo".into(),
+                "fixtures/demo/ecommerce-basic/kply.yaml".into(),
+                "kply-demo".into(),
+            ],
+        },
+        DocExpectation {
+            path: agent_path,
+            required_phrases: vec![
+                "# Coding Agent Demo Guide".into(),
+                "Use Kubernetes context kind-kply-demo only.".into(),
+                "Do not touch resources outside the kply-demo namespace.".into(),
+                "Do not read Kubernetes Secret values.".into(),
+                "fixtures/demo/ecommerce-basic/manifests/".into(),
+                "scripts/demo-walkthrough.sh".into(),
+                "status: \"not_implemented\"".into(),
+                "It does not yet prove live sandbox routing".into(),
+            ],
+        },
+        DocExpectation {
+            path: fixture_path,
+            required_phrases: vec![
+                "docs/demo-kind.md".into(),
+                "docs/demo-agent.md".into(),
+                "scripts/demo-walkthrough.sh".into(),
+                "backend-broken.yaml".into(),
+                "backend-fixed.yaml".into(),
             ],
         },
     ];
@@ -942,6 +1006,7 @@ fn required_ci_run_commands() -> &'static [&'static str] {
         "cargo test -p kply-test --locked",
         "cargo xtask check-ci-workflow",
         "cargo xtask check-crate-inventory-docs",
+        "cargo xtask check-demo-docs",
         "cargo xtask check-deny-config",
         "cargo xtask check-fixture-directories",
         "cargo xtask check-fixture-naming-docs",
@@ -1679,10 +1744,10 @@ mod tests {
 
     use super::{
         DocExpectation, WorkspaceCrate, check_ci_workflow_inner, check_crate_inventory_docs_inner,
-        check_deny_config_inner, check_docs_contain, check_fixture_directories_inner,
-        check_fixture_naming_docs_inner, check_fixture_testing_docs_inner,
-        check_future_session_docs_inner, check_license_files_inner,
-        check_no_secret_content_reads_inner, check_placeholder_sources,
+        check_demo_docs_inner, check_deny_config_inner, check_docs_contain,
+        check_fixture_directories_inner, check_fixture_naming_docs_inner,
+        check_fixture_testing_docs_inner, check_future_session_docs_inner,
+        check_license_files_inner, check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
         check_toolchain_pin_inner, collect_crate_sources, collect_workspace_members,
         contains_crate_name, forbidden_report_overclaim_phrases, forbidden_secret_content_patterns,
@@ -1793,6 +1858,8 @@ jobs:
         run: cargo xtask check-ci-workflow
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
+      - name: Check demo docs
+        run: cargo xtask check-demo-docs
       - name: Check cargo-deny config
         run: cargo xtask check-deny-config
       - name: Check fixture directories
@@ -2034,6 +2101,108 @@ Gateway API routing groundwork has started.
             .expect_err("future session docs missing current status should fail");
 
         assert!(error.to_string().contains("placeholder documentation"));
+    }
+
+    #[test]
+    fn accepts_local_demo_docs_with_bounded_agent_workflow() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "\
+## Local Demo
+
+See [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup guide.
+",
+        );
+        let kind_path = write_nested_source(
+            temp.path(),
+            "docs/demo-kind.md",
+            "\
+# Local Kind Demo
+
+See demo-agent.md and scripts/demo-walkthrough.sh.
+
+Run kply demo doctor, kply demo install, kply demo reset, and kply demo teardown.
+Create the cluster with kind create cluster --name kply-demo.
+Use fixtures/demo/ecommerce-basic/kply.yaml in the kply-demo namespace.
+",
+        );
+        let agent_path = write_nested_source(
+            temp.path(),
+            "docs/demo-agent.md",
+            "\
+# Coding Agent Demo Guide
+
+Use Kubernetes context kind-kply-demo only.
+Do not touch resources outside the kply-demo namespace.
+Do not read Kubernetes Secret values.
+Use fixtures/demo/ecommerce-basic/manifests/ and scripts/demo-walkthrough.sh.
+Current route apply output includes status: \"not_implemented\".
+It does not yet prove live sandbox routing.
+",
+        );
+        let fixture_path = write_nested_source(
+            temp.path(),
+            "fixtures/demo/ecommerce-basic/README.md",
+            "\
+See docs/demo-kind.md, docs/demo-agent.md, and scripts/demo-walkthrough.sh.
+Backend variants include backend-broken.yaml and backend-fixed.yaml.
+",
+        );
+
+        check_demo_docs_inner([readme_path, kind_path, agent_path, fixture_path])
+            .expect("local demo docs should pass");
+    }
+
+    #[test]
+    fn rejects_local_demo_docs_without_agent_boundary() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let readme_path = write_source(
+            temp.path(),
+            "README.md",
+            "## Local Demo\nSee [docs/demo-kind.md](docs/demo-kind.md) for the current manual Kind setup guide.\n",
+        );
+        let kind_path = write_nested_source(
+            temp.path(),
+            "docs/demo-kind.md",
+            "\
+# Local Kind Demo
+demo-agent.md
+scripts/demo-walkthrough.sh
+kply demo doctor
+kply demo install
+kply demo reset
+kply demo teardown
+kind create cluster --name kply-demo
+fixtures/demo/ecommerce-basic/kply.yaml
+kply-demo
+",
+        );
+        let agent_path = write_nested_source(
+            temp.path(),
+            "docs/demo-agent.md",
+            "\
+# Coding Agent Demo Guide
+Use Kubernetes context kind-kply-demo only.
+",
+        );
+        let fixture_path = write_nested_source(
+            temp.path(),
+            "fixtures/demo/ecommerce-basic/README.md",
+            "\
+docs/demo-kind.md
+docs/demo-agent.md
+scripts/demo-walkthrough.sh
+backend-broken.yaml
+backend-fixed.yaml
+",
+        );
+
+        let error = check_demo_docs_inner([readme_path, kind_path, agent_path, fixture_path])
+            .expect_err("demo docs without agent boundary should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
     }
 
     #[test]

@@ -65,6 +65,9 @@ jobs:
       - name: Check crate inventory docs
         run: cargo xtask check-crate-inventory-docs
 
+      - name: Check demo docs
+        run: cargo xtask check-demo-docs
+
       - name: Check cargo-deny config
         run: cargo xtask check-deny-config
 
