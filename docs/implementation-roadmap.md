@@ -63,6 +63,9 @@ Completed work:
 - Milestone 9 item 13 is implemented:
   - demo manifests and app config stay inside the dedicated `kply-demo`
     namespace, enforced by `crates/kply-cli/tests/demo_manifests.rs`.
+- Milestone 9 item 14 is implemented:
+  - `kply demo teardown` deletes only labeled demo Deployments and Services,
+    enforced by CLI snapshots for the generated `kubectl` command.
 
 Remaining adoption and feedback work:
 
@@ -414,7 +417,7 @@ real cluster.
     - run checks.
     - cleanup.
 13. [x] Ensure demo resources use a dedicated namespace.
-14. Ensure demo cleanup removes only labeled demo resources.
+14. [x] Ensure demo cleanup removes only labeled demo resources.
 15. Add screenshots or terminal recordings later, not before the flow works.
 
 Acceptance criteria:
