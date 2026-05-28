@@ -51,6 +51,7 @@ fn main() -> Result<()> {
             println!("  check-fixture-directories verify fixture directory skeleton");
             println!("  check-fixture-naming-docs verify fixture naming docs");
             println!("  check-fixture-testing-docs verify fixture testing guidance");
+            println!("  check-feedback-triage-docs verify adoption feedback triage docs");
             println!("  check-future-session-docs verify future session docs are explicit");
             println!("  check-issue-templates verify feedback issue templates");
             println!(
@@ -92,6 +93,9 @@ fn main() -> Result<()> {
         }
         "check-fixture-testing-docs" => {
             check_fixture_testing_docs()?;
+        }
+        "check-feedback-triage-docs" => {
+            check_feedback_triage_docs()?;
         }
         "check-future-session-docs" => {
             check_future_session_docs()?;
@@ -149,6 +153,7 @@ fn main() -> Result<()> {
             println!("cargo xtask check-fixture-directories");
             println!("cargo xtask check-fixture-naming-docs");
             println!("cargo xtask check-fixture-testing-docs");
+            println!("cargo xtask check-feedback-triage-docs");
             println!("cargo xtask check-future-session-docs");
             println!("cargo xtask check-issue-templates");
             println!("cargo xtask check-known-limitations-docs");
@@ -263,6 +268,10 @@ fn check_fixture_testing_docs() -> Result<()> {
     check_fixture_testing_docs_inner("fixtures/README.md".as_ref())
 }
 
+fn check_feedback_triage_docs() -> Result<()> {
+    check_feedback_triage_docs_inner("docs/feedback-triage.md".into())
+}
+
 fn check_future_session_docs() -> Result<()> {
     check_future_session_docs_inner([
         "README.md".into(),
@@ -320,6 +329,24 @@ fn check_known_limitations_docs_inner(first_release_path: PathBuf) -> Result<()>
     check_docs_contain(docs)
 }
 
+fn check_feedback_triage_docs_inner(feedback_triage_path: PathBuf) -> Result<()> {
+    let docs = [DocExpectation {
+        path: feedback_triage_path,
+        required_phrases: vec![
+            "# Feedback Triage".into(),
+            "## Missing Route Adapters".into(),
+            "missing route adapter".into(),
+            "Three separate users or organizations".into(),
+            "repeated route adapter request".into(),
+            "Do not include Secret values".into(),
+            "explicit permission exists".into(),
+            "OpenSpec change".into(),
+        ],
+    }];
+
+    check_docs_contain(docs)
+}
+
 fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
     let [
         config_path,
@@ -345,6 +372,8 @@ fn check_issue_templates_inner(template_paths: [PathBuf; 6]) -> Result<()> {
                 "labels:".into(),
                 "routing".into(),
                 "Gateway API implementation, ingress controller, service mesh".into(),
+                "missing route adapter request".into(),
+                "Adapter gap".into(),
                 "Do not include Secret values".into(),
                 "Route strategy".into(),
                 "Sanitized Kply output".into(),
@@ -1968,9 +1997,10 @@ mod tests {
     use super::{
         DocExpectation, WorkspaceCrate, check_ci_workflow_inner, check_crate_inventory_docs_inner,
         check_demo_docs_inner, check_deny_config_inner, check_docs_contain,
-        check_fixture_directories_inner, check_fixture_naming_docs_inner,
-        check_fixture_testing_docs_inner, check_future_session_docs_inner,
-        check_issue_templates_inner, check_known_limitations_docs_inner, check_license_files_inner,
+        check_feedback_triage_docs_inner, check_fixture_directories_inner,
+        check_fixture_naming_docs_inner, check_fixture_testing_docs_inner,
+        check_future_session_docs_inner, check_issue_templates_inner,
+        check_known_limitations_docs_inner, check_license_files_inner,
         check_no_secret_content_reads_inner, check_placeholder_sources,
         check_readme_roadmap_link_inner, check_release_planning_inner, check_report_language_inner,
         check_security_assumptions_docs_inner, check_security_policy_inner,
@@ -2352,6 +2382,8 @@ name: Routing environment
 labels:
   - routing
 Gateway API implementation, ingress controller, service mesh
+missing route adapter request
+Adapter gap
 Do not include Secret values
 Route strategy
 Sanitized Kply output
@@ -2436,6 +2468,8 @@ name: Routing environment
 labels:
   - routing
 Gateway API implementation, ingress controller, service mesh
+missing route adapter request
+Adapter gap
 Route strategy
 Sanitized Kply output
 ",
@@ -2501,6 +2535,51 @@ Success criteria
             roadmap_path,
         ])
         .expect_err("feedback templates without routing Secret warning should fail");
+
+        assert!(error.to_string().contains("documentation phrase"));
+    }
+
+    #[test]
+    fn accepts_feedback_triage_docs() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let feedback_triage_path = write_nested_source(
+            temp.path(),
+            "docs/feedback-triage.md",
+            "\
+# Feedback Triage
+## Missing Route Adapters
+missing route adapter
+Three separate users or organizations
+repeated route adapter request
+Do not include Secret values
+explicit permission exists
+OpenSpec change
+",
+        );
+
+        check_feedback_triage_docs_inner(feedback_triage_path)
+            .expect("feedback triage docs should pass");
+    }
+
+    #[test]
+    fn rejects_feedback_triage_docs_without_repetition_threshold() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let feedback_triage_path = write_nested_source(
+            temp.path(),
+            "docs/feedback-triage.md",
+            "\
+# Feedback Triage
+## Missing Route Adapters
+missing route adapter
+repeated route adapter request
+Do not include Secret values
+explicit permission exists
+OpenSpec change
+",
+        );
+
+        let error = check_feedback_triage_docs_inner(feedback_triage_path)
+            .expect_err("feedback triage docs without repetition threshold should fail");
 
         assert!(error.to_string().contains("documentation phrase"));
     }

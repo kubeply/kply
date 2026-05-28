@@ -57,6 +57,9 @@ Completed work:
 - Milestone 20 item 8 is implemented:
   - paired `infra-bench` Kubernetes tasks comparing raw `kubectl` rollouts with
     `kply`-bounded sandbox workflows.
+- Milestone 20 item 10 is implemented:
+  - missing route adapter requests are classified in the routing issue template
+    and triaged through `docs/feedback-triage.md`.
 - Milestone 9 item 12 is implemented:
   - scripted local demo walkthrough for inspect, plan, sandbox create, checks,
     and cleanup.
@@ -74,6 +77,12 @@ Remaining adoption and feedback work:
 
 - Milestone 20 item 9: add examples from real user feedback only when
   permission exists.
+- Milestone 20 item 11: track repeated policy needs.
+- Milestone 20 item 12: track repeated app graph failures.
+- Milestone 20 item 13: track repeated check failures.
+- Milestone 20 item 14: convert repeated feedback into new OpenSpec changes.
+- Milestone 20 item 15: keep commercial/enterprise features separate from
+  open-source trust features.
 
 ## Locked Decisions
 
@@ -723,7 +732,7 @@ Kubeply product direction.
 8. [x] Add benchmark tasks in `infra-bench` comparing raw `kubectl` agent use
    with `kply`-bounded workflows.
 9. Add examples from real user feedback only when permission exists.
-10. Track repeated missing route adapters.
+10. [x] Track repeated missing route adapters.
 11. Track repeated policy needs.
 12. Track repeated app graph failures.
 13. Track repeated check failures.

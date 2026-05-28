@@ -9,6 +9,7 @@ body:
     attributes:
       value: |
         Use this for route capability detection, route planning, or route check gaps.
+        Mark missing adapter requests clearly so repeated route stacks can be tracked.
         Do not include Secret values, tokens, credentials, or private hostnames.
   - type: input
     id: kply-version
@@ -37,6 +38,19 @@ body:
       label: Routing stack
       description: Name Gateway API implementation, ingress controller, service mesh, CDN, or load balancer.
       placeholder: Gateway API implementation, ingress class, mesh, external load balancer, and route resources.
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter-gap
+    attributes:
+      label: Adapter gap
+      description: Choose whether this is a missing route adapter request or a bug in an existing strategy.
+      options:
+        - existing strategy bug
+        - missing route adapter request
+        - unsupported route stack
+        - documentation gap
+        - not sure
     validations:
       required: true
   - type: textarea
