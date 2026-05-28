@@ -340,6 +340,7 @@ fn render_init_from_cluster(
         Ok(discovery) => discovery,
         Err(error) => {
             if reserved_output.is_some() {
+                drop(reserved_output.take());
                 let _ = std::fs::remove_file(&output_path);
             }
             return render_discovery_error(&error, cli.json);
@@ -348,6 +349,7 @@ fn render_init_from_cluster(
     let config = init_config_from_apps(&discovery.apps);
     if let Err(errors) = config.validate() {
         if reserved_output.is_some() {
+            drop(reserved_output.take());
             let _ = std::fs::remove_file(&output_path);
         }
         return render_config_validation_error(&errors, cli.json);
