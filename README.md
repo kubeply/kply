@@ -33,6 +33,25 @@ Release archives are also published for Linux, portable Linux, and macOS on
 x86_64 and aarch64. Each release includes SHA-256 checksums and GitHub artifact
 attestations.
 
+## Upgrade
+
+Review the release notes before upgrading, especially for CLI output contract,
+config schema, RBAC, routing, or generated Kubernetes resource changes.
+
+Upgrade to the latest released binary by rerunning the installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/kubeply/kply/releases/latest/download/kply-cli-installer.sh \
+  | sh
+```
+
+Verify the installed version:
+
+```bash
+kply --version
+```
+
 ## Product Primitive
 
 A Kply session is a temporary, scoped workspace for an agent:
