@@ -255,3 +255,18 @@ later cleanup or manual review.
 with `--confirm-route-mutation`, it must report `status: not_implemented`,
 `mutation: not_applied`, and `apply: false` until a real route mutation adapter
 is implemented and tested.
+
+## No Secret Value Reads Requirement
+
+The first release must never read Kubernetes Secret values. Kply may model
+Secret names and references as metadata for graph output, risk notes, policy
+checks, and RBAC planning, but it must not fetch or print Secret contents.
+
+`cargo xtask check-no-secret-content-reads` is part of the release gate. It
+must scan product crate source trees for direct Kubernetes `Secret` API usage,
+typed Secret content field access, and `.data` or `.string_data` reads on
+Secret-like values.
+
+If future work needs Secret contents, it requires a separate design, explicit
+policy, tests, documentation, and a release note before any implementation
+lands. Do not add a bypass to the guard for `v0.1.0`.
