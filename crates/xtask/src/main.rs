@@ -647,6 +647,14 @@ fn check_release_planning_inner(dist_path: &Path, release_workflow_path: &Path) 
         errors.push("dist.targets must include aarch64-unknown-linux-gnu".to_owned());
     }
 
+    if !toml_array_contains_str(targets, "x86_64-unknown-linux-musl") {
+        errors.push("dist.targets must include x86_64-unknown-linux-musl".to_owned());
+    }
+
+    if !toml_array_contains_str(targets, "aarch64-unknown-linux-musl") {
+        errors.push("dist.targets must include aarch64-unknown-linux-musl".to_owned());
+    }
+
     if !toml_array_contains_str(targets, "x86_64-apple-darwin") {
         errors.push("dist.targets must include x86_64-apple-darwin".to_owned());
     }
@@ -1488,10 +1496,11 @@ highlight = "all"
 [dist]
 cargo-dist-version = "0.32.0"
 packages = ["kply-cli"]
-targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "aarch64-apple-darwin"]
 pr-run-mode = "plan"
 allow-dirty = ["ci"]
 "#;
+    const DIST_TARGETS_LINE: &str = "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-unknown-linux-musl\", \"aarch64-unknown-linux-musl\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]";
     const RELEASE_PLAN_WORKFLOW: &str = r#"
 name: release
 
@@ -2701,8 +2710,8 @@ license = "Apache-2.0"
             temp.path(),
             "dist-workspace.toml",
             &DIST_CONFIG.replace(
-                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
-                "targets = [\"aarch64-unknown-linux-gnu\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
+                DIST_TARGETS_LINE,
+                "targets = [\"aarch64-unknown-linux-gnu\", \"x86_64-unknown-linux-musl\", \"aarch64-unknown-linux-musl\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
             ),
         );
         let workflow_path = write_nested_source(
@@ -2724,8 +2733,8 @@ license = "Apache-2.0"
             temp.path(),
             "dist-workspace.toml",
             &DIST_CONFIG.replace(
-                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
-                "targets = [\"x86_64-unknown-linux-gnu\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
+                DIST_TARGETS_LINE,
+                "targets = [\"x86_64-unknown-linux-gnu\", \"x86_64-unknown-linux-musl\", \"aarch64-unknown-linux-musl\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
             ),
         );
         let workflow_path = write_nested_source(
@@ -2741,14 +2750,60 @@ license = "Apache-2.0"
     }
 
     #[test]
+    fn rejects_release_linux_x64_portable_target_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                DIST_TARGETS_LINE,
+                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"aarch64-unknown-linux-musl\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release Linux x64 portable target drift should fail");
+
+        assert!(error.to_string().contains("x86_64-unknown-linux-musl"));
+    }
+
+    #[test]
+    fn rejects_release_linux_arm64_portable_target_drift() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let dist_path = write_source(
+            temp.path(),
+            "dist-workspace.toml",
+            &DIST_CONFIG.replace(
+                DIST_TARGETS_LINE,
+                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-unknown-linux-musl\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
+            ),
+        );
+        let workflow_path = write_nested_source(
+            temp.path(),
+            ".github/workflows/release.yml",
+            RELEASE_PLAN_WORKFLOW,
+        );
+
+        let error = check_release_planning_inner(&dist_path, &workflow_path)
+            .expect_err("release Linux arm64 portable target drift should fail");
+
+        assert!(error.to_string().contains("aarch64-unknown-linux-musl"));
+    }
+
+    #[test]
     fn rejects_release_macos_x64_target_drift() {
         let temp = TempDir::new().expect("temp dir should be created");
         let dist_path = write_source(
             temp.path(),
             "dist-workspace.toml",
             &DIST_CONFIG.replace(
-                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
-                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"aarch64-apple-darwin\"]",
+                DIST_TARGETS_LINE,
+                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-unknown-linux-musl\", \"aarch64-unknown-linux-musl\", \"aarch64-apple-darwin\"]",
             ),
         );
         let workflow_path = write_nested_source(
@@ -2770,8 +2825,8 @@ license = "Apache-2.0"
             temp.path(),
             "dist-workspace.toml",
             &DIST_CONFIG.replace(
-                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-apple-darwin\", \"aarch64-apple-darwin\"]",
-                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-apple-darwin\"]",
+                DIST_TARGETS_LINE,
+                "targets = [\"x86_64-unknown-linux-gnu\", \"aarch64-unknown-linux-gnu\", \"x86_64-unknown-linux-musl\", \"aarch64-unknown-linux-musl\", \"x86_64-apple-darwin\"]",
             ),
         );
         let workflow_path = write_nested_source(
