@@ -1,0 +1,50 @@
+name: Kubernetes discovery bug
+description: Report incorrect app graph, workload, Service, Pod, or route discovery.
+title: "discovery: "
+labels:
+  - discovery
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when Kply reads Kubernetes metadata incorrectly.
+        Do not include Secret values, tokens, credentials, or private hostnames.
+  - type: input
+    id: kply-version
+    attributes:
+      label: Kply version
+      description: Output from `kply --version`.
+      placeholder: kply 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact `kply` command that produced the wrong discovery result.
+      placeholder: kply app graph backend --json
+    validations:
+      required: true
+  - type: textarea
+    id: workload-shape
+    attributes:
+      label: Workload shape
+      description: Describe the workload kind, namespace, selectors, owner references, Services, routes, probes, config references, and Secret metadata references.
+    validations:
+      required: true
+  - type: textarea
+    id: sanitized-output
+    attributes:
+      label: Sanitized Kply output
+      description: Include JSON or text output with sensitive data removed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected discovery result
+      description: What relationship, warning, confidence, or metadata fact should have appeared instead?
+    validations:
+      required: true

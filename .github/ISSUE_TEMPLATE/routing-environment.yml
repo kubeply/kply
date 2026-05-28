@@ -1,0 +1,56 @@
+name: Routing environment
+description: Report Gateway, Ingress, mesh, or preview routing behavior.
+title: "routing: "
+labels:
+  - routing
+  - feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for route capability detection, route planning, or route check gaps.
+        Do not include Secret values, tokens, credentials, or private hostnames.
+  - type: input
+    id: kply-version
+    attributes:
+      label: Kply version
+      description: Output from `kply --version`.
+      placeholder: kply 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: route-strategy
+    attributes:
+      label: Route strategy
+      options:
+        - auto
+        - gateway-api
+        - ingress
+        - preview-service
+        - none
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: routing-stack
+    attributes:
+      label: Routing stack
+      description: Name Gateway API implementation, ingress controller, service mesh, CDN, or load balancer.
+      placeholder: Gateway API implementation, ingress class, mesh, external load balancer, and route resources.
+    validations:
+      required: true
+  - type: textarea
+    id: kply-output
+    attributes:
+      label: Sanitized Kply output
+      description: Include `kply route plan`, `kply session plan`, or report output with sensitive data removed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected routing behavior
+      description: What route should Kply have detected, planned, skipped, or explained?
+    validations:
+      required: true

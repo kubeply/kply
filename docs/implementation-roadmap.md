@@ -22,7 +22,7 @@ focused tests and snapshot coverage.
 Completed work:
 
 - Milestones 1 through 18 are implemented and validated in the repository.
-- Milestone 19 items 1 through 14 are implemented:
+- Milestone 19 items 1 through 15 are implemented:
   - first-release scope.
   - stable version output.
   - stable config validation.
@@ -37,10 +37,13 @@ Completed work:
   - roadmap status for completed milestones.
   - known limitations.
   - security assumptions.
+  - `v0.1.0` tag.
+- Milestone 20 item 1 is implemented:
+  - feedback issue templates.
 
-Remaining before tagging `v0.1.0`:
+Remaining adoption and feedback work:
 
-- Milestone 19 item 15: tag `v0.1.0`.
+- Milestone 20 item 2: add a security policy.
 
 ## Locked Decisions
 

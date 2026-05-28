@@ -1,0 +1,50 @@
+name: Session planning gap
+description: Report a missing or incorrect dry-run session plan.
+title: "session plan: "
+labels:
+  - session-planning
+  - feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when `kply session plan` or `kply session manifests` cannot describe a useful safe session.
+        Do not include Secret values, tokens, credentials, or private hostnames.
+  - type: input
+    id: kply-version
+    attributes:
+      label: Kply version
+      description: Output from `kply --version`.
+      placeholder: kply 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: command-and-config
+    attributes:
+      label: Command and sanitized config
+      description: Include the command and relevant `kply.yaml` app/policy fields with sensitive data removed.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: current-plan
+    attributes:
+      label: Current plan output
+      description: Include the current plan or manifest output, including unsupported feature warnings and risk notes.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: desired-plan
+    attributes:
+      label: Desired safe session plan
+      description: Describe the resources, route selector, checks, cleanup, permissions, or warnings Kply should produce.
+    validations:
+      required: true
+  - type: textarea
+    id: safety-constraints
+    attributes:
+      label: Safety constraints
+      description: Note namespace, RBAC, admission policy, Secret handling, database, or external dependency constraints.
+    validations:
+      required: true
