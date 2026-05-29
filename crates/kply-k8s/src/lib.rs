@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, error::Error, fmt, path::Path};
 
 use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::core::v1::{Container, Pod, Probe, Service};
+use k8s_openapi::api::core::v1::{Container, Namespace, Pod, Probe, Service};
 use k8s_openapi::api::networking::v1::{Ingress, IngressBackend};
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
@@ -317,6 +317,13 @@ pub struct LoadedDiscoveryClient {
     pub default_namespace: String,
 }
 
+/// Read-only summary of a Kubernetes Namespace.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NamespaceSummary {
+    /// Namespace name.
+    pub name: String,
+}
+
 /// Read-only summary of a Kubernetes Deployment.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeploymentSummary {
@@ -334,6 +341,8 @@ pub struct DeploymentSummary {
     pub updated_replicas: Option<i32>,
     /// Declared container images in pod template order.
     pub images: Vec<String>,
+    /// Pod template labels in deterministic key order.
+    pub pod_template_labels: Vec<LabelSelectorEntry>,
     /// Readiness and liveness probes in pod template container order.
     pub probes: Vec<ContainerProbeSummary>,
     /// Resource requests and limits in pod template container order.
@@ -723,6 +732,23 @@ pub struct HttpRouteBackendRefSummary {
     pub name: Option<String>,
     /// Backend port.
     pub port: Option<i64>,
+}
+
+/// List Namespaces without mutating cluster state.
+///
+/// # Errors
+///
+/// Returns [`kube::Error`] when the Kubernetes API request fails.
+pub async fn list_namespaces(client: Client) -> Result<Vec<NamespaceSummary>, kube::Error> {
+    let namespaces: Api<Namespace> = Api::all(client);
+    let mut summaries = namespaces
+        .list(&ListParams::default())
+        .await?
+        .iter()
+        .map(namespace_summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(summaries)
 }
 
 /// List Deployments in one namespace without mutating cluster state.
@@ -1186,6 +1212,13 @@ pub async fn list_http_routes(
     Ok(summaries)
 }
 
+/// Convert a Kubernetes [`Namespace`] into a deterministic summary.
+pub fn namespace_summary(namespace: &Namespace) -> NamespaceSummary {
+    NamespaceSummary {
+        name: namespace.name_any(),
+    }
+}
+
 /// Convert a Kubernetes [`Deployment`] into a deterministic summary.
 pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
     let spec = deployment.spec.as_ref();
@@ -1199,6 +1232,11 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
                 .map(|container| container.image.clone().unwrap_or_default())
                 .collect::<Vec<_>>()
         })
+        .unwrap_or_default();
+    let pod_template_labels = spec
+        .and_then(|spec| spec.template.metadata.as_ref())
+        .and_then(|metadata| metadata.labels.as_ref())
+        .map(label_selector_entries)
         .unwrap_or_default();
     let probes = spec
         .and_then(|spec| spec.template.spec.as_ref())
@@ -1217,6 +1255,7 @@ pub fn deployment_summary(deployment: &Deployment) -> DeploymentSummary {
         ready_replicas: status.and_then(|status| status.ready_replicas),
         updated_replicas: status.and_then(|status| status.updated_replicas),
         images,
+        pod_template_labels,
         probes,
         resources,
         rollout: deployment_rollout_summary(deployment),
@@ -1678,15 +1717,7 @@ pub fn service_summary(service: &Service) -> ServiceSummary {
     let spec = service.spec.as_ref();
     let selector = spec
         .and_then(|spec| spec.selector.as_ref())
-        .map(|selector| {
-            selector
-                .iter()
-                .map(|(key, value)| LabelSelectorEntry {
-                    key: key.clone(),
-                    value: value.clone(),
-                })
-                .collect::<Vec<_>>()
-        })
+        .map(label_selector_entries)
         .unwrap_or_default();
     let ports = spec
         .map(|spec| {
@@ -1712,6 +1743,16 @@ pub fn service_summary(service: &Service) -> ServiceSummary {
         selector,
         ports,
     }
+}
+
+fn label_selector_entries(labels: &BTreeMap<String, String>) -> Vec<LabelSelectorEntry> {
+    labels
+        .iter()
+        .map(|(key, value)| LabelSelectorEntry {
+            key: key.clone(),
+            value: value.clone(),
+        })
+        .collect()
 }
 
 fn format_int_or_string(value: &IntOrString) -> String {
@@ -1796,9 +1837,9 @@ pub async fn load_discovery_client() -> Result<Client, DiscoveryError> {
     let config = load_kube_config()
         .await
         .map_err(|error| DiscoveryError::from_kubeconfig_error_redacted(&error))?;
-    Client::try_from(config).map_err(|_error| DiscoveryError {
+    Client::try_from(config).map_err(|error| DiscoveryError {
         code: DiscoveryErrorCode::KubernetesConfig,
-        message: "Kubernetes client could not be constructed from kubeconfig".to_owned(),
+        message: format!("Kubernetes client could not be constructed from kubeconfig: {error}"),
     })
 }
 
@@ -1812,9 +1853,9 @@ pub async fn load_discovery_client_with_info() -> Result<LoadedDiscoveryClient, 
         .await
         .map_err(|error| DiscoveryError::from_kubeconfig_error_redacted(&error))?;
     let default_namespace = config.default_namespace.clone();
-    let client = Client::try_from(config).map_err(|_error| DiscoveryError {
+    let client = Client::try_from(config).map_err(|error| DiscoveryError {
         code: DiscoveryErrorCode::KubernetesConfig,
-        message: "Kubernetes client could not be constructed from kubeconfig".to_owned(),
+        message: format!("Kubernetes client could not be constructed from kubeconfig: {error}"),
     })?;
     Ok(LoadedDiscoveryClient {
         client,
@@ -1932,6 +1973,10 @@ mod tests {
                 ready_replicas: Some(2),
                 updated_replicas: Some(3),
                 images: vec!["checkout:v2".to_owned(), "sidecar:v1".to_owned()],
+                pod_template_labels: vec![LabelSelectorEntry {
+                    key: "app".to_owned(),
+                    value: "checkout-api".to_owned(),
+                }],
                 probes: vec![ContainerProbeSummary {
                     container_name: "checkout-v2".to_owned(),
                     readiness: Some(http_probe_summary("/ready", "http")),
@@ -1988,6 +2033,7 @@ mod tests {
                 ready_replicas: None,
                 updated_replicas: None,
                 images: Vec::new(),
+                pod_template_labels: Vec::new(),
                 probes: Vec::new(),
                 resources: Vec::new(),
                 rollout: DeploymentRolloutSummary {

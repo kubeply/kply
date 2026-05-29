@@ -1,0 +1,7 @@
+---
+source: crates/kply-cli/tests/cli.rs
+expression: stderr
+---
+kply error: output exists
+
+refusing to overwrite `<output-path>`; pass --overwrite or choose --output <path>

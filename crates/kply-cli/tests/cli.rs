@@ -4303,6 +4303,98 @@ fn rejects_unreadable_cluster_info_kubeconfig_as_json() {
 }
 
 #[test]
+fn rejects_init_without_from_cluster() {
+    let output = assert_kply_exit_code(&["init"], EXIT_USAGE);
+
+    assert!(
+        output.stdout.is_empty(),
+        "usage errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    insta::assert_snapshot!("init_without_from_cluster", stderr);
+}
+
+#[test]
+fn rejects_init_output_overwrite_without_flag() {
+    let workspace = temp_workspace();
+    let kubeconfig_path = write_fake_kubeconfig(&workspace);
+    let output_path = write_temp_file(&workspace, "kply.yaml", "version: 1\n");
+    let output_path = output_path.to_str().expect("output path should be UTF-8");
+    let output = kply_cmd()
+        .env("KUBECONFIG", kubeconfig_path)
+        .args(["init", "--from-cluster", "--output", output_path])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stdout.is_empty(),
+        "output-exists errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let stderr = normalize_output(&stderr).replace(output_path, "<output-path>");
+    insta::assert_snapshot!("init_output_exists", stderr);
+}
+
+#[test]
+fn rejects_init_missing_kubeconfig() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+    let output_path = workspace.path().join("generated").join("kply.yaml");
+    let output_path = output_path.to_str().expect("output path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["init", "--from-cluster", "--output", output_path])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stdout.is_empty(),
+        "init kubeconfig errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains(missing_kubeconfig),
+        "init errors should not leak the configured kubeconfig path"
+    );
+    insta::assert_snapshot!("init_missing_kubeconfig", normalize_output(&stderr));
+}
+
+#[test]
+fn rejects_init_missing_kubeconfig_as_json() {
+    let workspace = temp_workspace();
+    let missing_kubeconfig_path = workspace.path().join("missing").join("kubeconfig.yaml");
+    let missing_kubeconfig = missing_kubeconfig_path
+        .to_str()
+        .expect("missing kubeconfig path should be UTF-8");
+    let output_path = workspace.path().join("generated").join("kply.yaml");
+    let output_path = output_path.to_str().expect("output path should be UTF-8");
+
+    let output = kply_cmd()
+        .env("KUBECONFIG", missing_kubeconfig)
+        .args(["init", "--from-cluster", "--output", output_path, "--json"])
+        .assert()
+        .code(EXIT_USAGE)
+        .get_output()
+        .clone();
+
+    assert!(
+        output.stdout.is_empty(),
+        "init JSON errors should not write stdout"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    let value: serde_json::Value = serde_json::from_str(&stderr).expect("stderr should be JSON");
+    insta::assert_json_snapshot!("init_missing_kubeconfig_json", value);
+}
+
+#[test]
 fn covers_every_top_level_command() {
     let mut command_names = Cli::command()
         .get_subcommands()
@@ -4321,6 +4413,7 @@ fn covers_every_top_level_command() {
             "demo",
             "doctor",
             "help",
+            "init",
             "policy",
             "report",
             "route",

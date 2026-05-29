@@ -11,9 +11,9 @@ account named `kply-agent`. Adjust names before applying them.
 
 ## Read-Only Inspection
 
-Use this role for commands that inspect workloads and sessions without creating
-or deleting resources, such as `kply session list`, `kply session status`,
-`kply report show`, and read-only app discovery.
+Use this role for commands that inspect workloads and sessions inside one
+namespace without creating or deleting resources, such as `kply session list`,
+`kply session status`, `kply report show`, and read-only app discovery.
 
 ```yaml
 apiVersion: v1
@@ -51,6 +51,34 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: kply-read-only
+```
+
+`kply init --from-cluster` also lists namespaces so it can build a starter
+config from the current cluster. Grant namespace listing only when cluster-wide
+onboarding discovery is acceptable.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kply-init-read-only
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kply-init-read-only
+subjects:
+  - kind: ServiceAccount
+    name: kply-agent
+    namespace: kply-sessions
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kply-init-read-only
 ```
 
 Gateway classes are cluster-scoped. Grant this only when read-only route

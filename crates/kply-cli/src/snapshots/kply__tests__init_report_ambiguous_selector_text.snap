@@ -1,0 +1,26 @@
+---
+source: crates/kply-cli/src/main.rs
+expression: "init_report_text(&report, false)"
+---
+kply init --from-cluster
+
+Cluster
+  server              https://127.0.0.1:6443/
+  default_namespace   default
+  namespaces_scanned  2
+
+Discovered Apps
+  no apps discovered
+
+Skipped Services
+  ! ambiguous_selector (1)
+    shop/checkout-http
+  ! missing_selector (1)
+    shop/headless
+
+Generated
+  path  kply.yaml
+  apps  0
+
+Next
+  kply --config kply.yaml app list

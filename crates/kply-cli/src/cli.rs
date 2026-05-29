@@ -61,6 +61,18 @@ pub enum Command {
         #[arg(long)]
         capability_report: bool,
     },
+    /// Generate starter Kply configuration from read-only discovery.
+    Init {
+        /// Discover candidate apps from the current Kubernetes context.
+        #[arg(long)]
+        from_cluster: bool,
+        /// Path where the generated Kply configuration should be written.
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// Replace the output file when it already exists.
+        #[arg(long)]
+        overwrite: bool,
+    },
     /// Manage future sandbox sessions.
     Session {
         /// Optional session command.
@@ -138,6 +150,7 @@ impl Command {
         match self {
             Self::Help => "help",
             Self::Doctor { .. } => "doctor",
+            Self::Init { .. } => "init",
             Self::Session { .. } => "session",
             Self::App { .. } => "app",
             Self::Config { .. } => "config",

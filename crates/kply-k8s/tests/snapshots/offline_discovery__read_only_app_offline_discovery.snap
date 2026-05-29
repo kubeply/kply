@@ -12,6 +12,12 @@ expression: "json!({\n    \"deployments\": deployment_summaries, \"services\": s
       ],
       "name": "checkout-api",
       "namespace": "shop",
+      "pod_template_labels": [
+        {
+          "key": "app.kubernetes.io/name",
+          "value": "checkout-api"
+        }
+      ],
       "probes": [
         {
           "container_name": "checkout",
