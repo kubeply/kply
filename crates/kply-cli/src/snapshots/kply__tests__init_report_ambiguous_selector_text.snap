@@ -13,7 +13,10 @@ Discovered Apps
   no apps discovered
 
 Skipped Services
-  ! shop/checkout-http reason=ambiguous_selector
+  ! ambiguous_selector (1)
+    shop/checkout-http
+  ! missing_selector (1)
+    shop/headless
 
 Generated
   path  kply.yaml

@@ -638,15 +638,23 @@ fn init_report_text(report: &InitReport, color: bool) -> String {
     if !report.skipped_services.is_empty() {
         output.push('\n');
         output.push_str(&format!("{}\n", style_heading("Skipped Services", color)));
+        let mut services_by_reason: BTreeMap<&str, Vec<&InitSkippedService>> = BTreeMap::new();
         for service in &report.skipped_services {
+            services_by_reason
+                .entry(&service.reason)
+                .or_default()
+                .push(service);
+        }
+        for (reason, services) in services_by_reason {
             output.push_str(&format!(
-                "  {} {}/{} reason={}",
+                "  {} {reason} ({})\n",
                 style_warning("!", color),
-                service.namespace,
-                service.service,
-                service.reason
+                services.len()
             ));
-            output.push('\n');
+            for service in services {
+                output.push_str(&format!("    {}/{}", service.namespace, service.service));
+                output.push('\n');
+            }
         }
     }
     output.push('\n');
@@ -4308,12 +4316,23 @@ mod tests {
     fn renders_ambiguous_selector_init_report_text() {
         let report = init_report(
             Vec::new(),
-            vec![super::InitSkippedService {
-                namespace: "shop".to_owned(),
-                service: "checkout-http".to_owned(),
-                reason: "ambiguous_selector".to_owned(),
-                matched_workloads: vec!["checkout-blue".to_owned(), "checkout-green".to_owned()],
-            }],
+            vec![
+                super::InitSkippedService {
+                    namespace: "shop".to_owned(),
+                    service: "checkout-http".to_owned(),
+                    reason: "ambiguous_selector".to_owned(),
+                    matched_workloads: vec![
+                        "checkout-blue".to_owned(),
+                        "checkout-green".to_owned(),
+                    ],
+                },
+                super::InitSkippedService {
+                    namespace: "shop".to_owned(),
+                    service: "headless".to_owned(),
+                    reason: "missing_selector".to_owned(),
+                    matched_workloads: Vec::new(),
+                },
+            ],
         );
 
         insta::assert_snapshot!(
