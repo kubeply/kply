@@ -3354,31 +3354,52 @@ fn render_app_list(cli: &Cli) -> Result<ExitCode> {
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else if !cli.quiet {
-        println!("kply app list");
-        if apps.is_empty() {
-            println!("No apps configured.");
-        } else {
-            for app in apps {
-                println!("{}", app_list_line(app));
-            }
-        }
+        print!("{}", app_list_text(apps, color_enabled(cli)));
     }
 
     Ok(ExitCode::SUCCESS)
 }
 
-/// Render one configured app as stable human-readable output.
-fn app_list_line(app: &AppConfig) -> String {
-    let default_image = app.default_image().unwrap_or("<none>");
-    format!(
-        "{} namespace={} workload={} service={} route_strategy={} default_image={}",
-        app.name(),
-        app.namespace(),
-        app.workload(),
-        app.service(),
-        app.route_strategy().as_str(),
-        default_image
-    )
+/// Render configured applications as stable human-readable output.
+fn app_list_text(apps: &[AppConfig], color: bool) -> String {
+    let mut output = String::new();
+    output.push_str("kply app list\n");
+    if apps.is_empty() {
+        output.push_str("No apps configured.\n");
+        return output;
+    }
+
+    let mut apps_by_namespace: BTreeMap<&str, Vec<&AppConfig>> = BTreeMap::new();
+    for app in apps {
+        apps_by_namespace
+            .entry(app.namespace())
+            .or_default()
+            .push(app);
+    }
+
+    output.push('\n');
+    output.push_str(&format!("{}\n", style_heading("Apps", color)));
+    output.push_str(&format!("  configured  {}\n", apps.len()));
+    output.push_str(&format!("  namespaces  {}\n", apps_by_namespace.len()));
+
+    for (namespace, namespace_apps) in apps_by_namespace {
+        output.push('\n');
+        output.push_str(&format!("{}\n", style_heading(namespace, color)));
+        for app in namespace_apps {
+            output.push_str(&format!("  {} {}\n", style_success("✓", color), app.name()));
+            output.push_str(&format!("      workload        {}\n", app.workload()));
+            output.push_str(&format!("      service         {}\n", app.service()));
+            output.push_str(&format!(
+                "      route_strategy  {}\n",
+                app.route_strategy().as_str()
+            ));
+            if let Some(default_image) = app.default_image() {
+                output.push_str(&format!("      default_image   {default_image}\n"));
+            }
+        }
+    }
+
+    output
 }
 
 /// Render config validation errors for commands that consume valid config.
@@ -4138,14 +4159,14 @@ mod tests {
     use super::{
         CheckRunItem, CheckRunReport, CheckRunStatusCounts, InitDiscoveredApp,
         ReportShowUnavailable, SessionCreateApplyError, SessionPlanBuildError,
-        SessionStateRecordError, apply_session_resources, check_run_report_from_session,
-        compact_duration_seconds, deduplicate_app_names, discover_namespace_apps,
-        evaluate_session_planning_policies, image_registry_host, init_config_from_apps,
-        init_report_text, planned_resource_token, planned_session_annotations,
-        planned_session_checks, planned_session_cleanup_steps, planned_session_labels,
-        planned_session_resources, planned_session_risk_notes, policy_route_strategy,
-        render_check_evidence, render_check_run_json_report, render_check_run_text_report,
-        render_init_config_yaml, render_report_unavailable_json,
+        SessionStateRecordError, app_list_text, apply_session_resources,
+        check_run_report_from_session, compact_duration_seconds, deduplicate_app_names,
+        discover_namespace_apps, evaluate_session_planning_policies, image_registry_host,
+        init_config_from_apps, init_report_text, planned_resource_token,
+        planned_session_annotations, planned_session_checks, planned_session_cleanup_steps,
+        planned_session_labels, planned_session_resources, planned_session_risk_notes,
+        policy_route_strategy, render_check_evidence, render_check_run_json_report,
+        render_check_run_text_report, render_init_config_yaml, render_report_unavailable_json,
         render_report_unavailable_markdown, render_report_unavailable_text,
         report_show_unavailable_from_session, required_session_permissions,
         resolve_session_route_strategy, route_cleanup_from_session,
@@ -4278,6 +4299,92 @@ mod tests {
         let report = init_report(Vec::new(), Vec::new());
 
         insta::assert_snapshot!("init_report_empty_text", init_report_text(&report, false));
+    }
+
+    #[test]
+    fn renders_empty_app_list_text() {
+        let apps = Vec::new();
+
+        assert_eq!(
+            app_list_text(&apps, false),
+            "kply app list\nNo apps configured.\n"
+        );
+    }
+
+    #[test]
+    fn renders_app_list_text_grouped_by_namespace() {
+        let apps = vec![
+            app_config(
+                "checkout",
+                "shop",
+                "checkout-api",
+                "checkout-http",
+                Some("ghcr.io/acme/checkout:next"),
+                RouteStrategy::Header,
+            ),
+            app_config(
+                "catalog",
+                "shop",
+                "catalog-api",
+                "catalog-http",
+                None,
+                RouteStrategy::Preview,
+            ),
+            app_config(
+                "worker",
+                "jobs",
+                "worker",
+                "worker-metrics",
+                Some("ghcr.io/acme/worker:next"),
+                RouteStrategy::Host,
+            ),
+        ];
+
+        assert_eq!(
+            app_list_text(&apps, false),
+            concat!(
+                "kply app list\n",
+                "\n",
+                "Apps\n",
+                "  configured  3\n",
+                "  namespaces  2\n",
+                "\n",
+                "jobs\n",
+                "  ✓ worker\n",
+                "      workload        worker\n",
+                "      service         worker-metrics\n",
+                "      route_strategy  host\n",
+                "      default_image   ghcr.io/acme/worker:next\n",
+                "\n",
+                "shop\n",
+                "  ✓ checkout\n",
+                "      workload        checkout-api\n",
+                "      service         checkout-http\n",
+                "      route_strategy  header\n",
+                "      default_image   ghcr.io/acme/checkout:next\n",
+                "  ✓ catalog\n",
+                "      workload        catalog-api\n",
+                "      service         catalog-http\n",
+                "      route_strategy  preview\n",
+            )
+        );
+    }
+
+    #[test]
+    fn omits_missing_default_image_from_app_list_text() {
+        let apps = vec![app_config(
+            "catalog",
+            "shop",
+            "catalog-api",
+            "catalog-http",
+            None,
+            RouteStrategy::Preview,
+        )];
+
+        let output = app_list_text(&apps, false);
+
+        assert!(output.contains("  ✓ catalog\n"));
+        assert!(!output.contains("default_image"));
     }
 
     #[test]
@@ -6108,6 +6215,24 @@ mod tests {
             route_strategy: "preview".to_owned(),
             ports: vec![80],
         }
+    }
+
+    fn app_config(
+        name: &str,
+        namespace: &str,
+        workload: &str,
+        service: &str,
+        default_image: Option<&str>,
+        route_strategy: RouteStrategy,
+    ) -> AppConfig {
+        AppConfig::new(
+            name,
+            namespace,
+            workload,
+            service,
+            default_image.map(str::to_owned),
+            route_strategy,
+        )
     }
 
     fn init_report(
