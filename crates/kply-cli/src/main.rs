@@ -3441,16 +3441,28 @@ fn render_app_inspect(cli: &Cli, app_name: &str) -> Result<ExitCode> {
     if cli.json {
         println!("{}", serde_json::to_string_pretty(app)?);
     } else if !cli.quiet {
-        println!("kply app inspect {}", app.name());
-        println!("name: {}", app.name());
-        println!("namespace: {}", app.namespace());
-        println!("workload: {}", app.workload());
-        println!("service: {}", app.service());
-        println!("route_strategy: {}", app.route_strategy().as_str());
-        println!("default_image: {}", app.default_image().unwrap_or("<none>"));
+        print!("{}", app_inspect_text(app, color_enabled(cli)));
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render one configured application target as stable human-readable output.
+fn app_inspect_text(app: &AppConfig, color: bool) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("kply app inspect {}\n\n", app.name()));
+    output.push_str(&format!("{}\n", style_heading("App", color)));
+    output.push_str(&format!("  name       {}\n", app.name()));
+    output.push_str(&format!("  namespace  {}\n\n", app.namespace()));
+    output.push_str(&format!("{}\n", style_heading("Target", color)));
+    output.push_str("  legend     ▣ workload  ◇ service  ↳ route  ◎ image\n");
+    output.push_str(&format!("  ▣ {}\n", app.workload()));
+    output.push_str(&format!("  ◇ {}\n", app.service()));
+    output.push_str(&format!("  ↳ {}\n", app.route_strategy().as_str()));
+    if let Some(default_image) = app.default_image() {
+        output.push_str(&format!("  ◎ {default_image}\n"));
+    }
+    output
 }
 
 /// Render one configured application graph.

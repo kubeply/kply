@@ -1,17 +1,16 @@
 ---
 source: crates/kply-cli/tests/cli.rs
-assertion_line: 627
+assertion_line: 4009
 expression: output
 ---
-kply app inspect checkout
+kply app inspect catalog
 
 App
-  name       checkout
+  name       catalog
   namespace  shop
 
 Target
   legend     ▣ workload  ◇ service  ↳ route  ◎ image
-  ▣ checkout-api
-  ◇ checkout-http
-  ↳ header
-  ◎ ghcr.io/acme/checkout:next
+  ▣ catalog-api
+  ◇ catalog-http
+  ↳ preview

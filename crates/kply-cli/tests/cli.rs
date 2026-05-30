@@ -3953,15 +3953,60 @@ apps:
         output,
         concat!(
             "kply app inspect checkout\n",
-            "name: checkout\n",
-            "namespace: shop\n",
-            "workload: checkout-api\n",
-            "service: checkout-http\n",
-            "route_strategy: header\n",
-            "default_image: ghcr.io/acme/checkout:next\n",
+            "\n",
+            "App\n",
+            "  name       checkout\n",
+            "  namespace  shop\n",
+            "\n",
+            "Target\n",
+            "  legend     ▣ workload  ◇ service  ↳ route  ◎ image\n",
+            "  ▣ checkout-api\n",
+            "  ◇ checkout-http\n",
+            "  ↳ header\n",
+            "  ◎ ghcr.io/acme/checkout:next\n",
         )
     );
     insta::assert_snapshot!("app_inspect_text", output);
+}
+
+#[test]
+fn prints_app_inspect_text_without_default_image() {
+    let workspace = temp_workspace();
+    let config_path = write_temp_file(
+        &workspace,
+        "kply.yaml",
+        r#"
+version: 1
+apps:
+  - name: catalog
+    namespace: shop
+    workload: catalog-api
+    service: catalog-http
+    route_strategy: preview
+"#,
+    );
+
+    let output = kply_cmd()
+        .args([
+            "--config",
+            config_path.to_str().expect("config path should be UTF-8"),
+            "app",
+            "inspect",
+            "catalog",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = String::from_utf8(output).expect("stdout should be UTF-8");
+    assert!(output.contains("  ▣ catalog-api\n"));
+    assert!(output.contains("  ◇ catalog-http\n"));
+    assert!(output.contains("  ↳ preview\n"));
+    assert!(!output.contains("<none>"));
+    assert!(!output.lines().any(|line| line.starts_with("  ◎ ")));
+    insta::assert_snapshot!("app_inspect_text_without_default_image", output);
 }
 
 #[test]
