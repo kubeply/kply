@@ -4,9 +4,14 @@ assertion_line: 627
 expression: output
 ---
 kply app inspect checkout
-name: checkout
-namespace: shop
-workload: checkout-api
-service: checkout-http
-route_strategy: header
-default_image: ghcr.io/acme/checkout:next
+
+App
+  name       checkout
+  namespace  shop
+
+Target
+  legend     ▣ workload  ◇ service  ↳ route  ◎ image
+  ▣ checkout-api
+  ◇ checkout-http
+  ↳ header
+  ◎ ghcr.io/acme/checkout:next
