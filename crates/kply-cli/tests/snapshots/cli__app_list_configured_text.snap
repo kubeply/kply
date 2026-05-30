@@ -8,14 +8,15 @@ kply app list
 Apps
   configured  2
   namespaces  1
+  legend      ▣ workload  ◇ service  ↳ route  ◎ image
 
 shop
   ✓ checkout
-      workload        checkout-api
-      service         checkout-http
-      route_strategy  header
-      default_image   ghcr.io/acme/checkout:next
+      ▣ checkout-api
+      ◇ checkout-http
+      ↳ header
+      ◎ ghcr.io/acme/checkout:next
   ✓ catalog
-      workload        catalog-api
-      service         catalog-http
-      route_strategy  preview
+      ▣ catalog-api
+      ◇ catalog-http
+      ↳ preview
