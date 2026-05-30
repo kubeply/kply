@@ -4006,6 +4006,7 @@ apps:
     assert!(output.contains("  ↳ preview\n"));
     assert!(!output.contains("<none>"));
     assert!(!output.lines().any(|line| line.starts_with("  ◎ ")));
+    insta::assert_snapshot!("app_inspect_text_without_default_image", output);
 }
 
 #[test]

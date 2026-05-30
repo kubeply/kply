@@ -1,0 +1,16 @@
+---
+source: crates/kply-cli/tests/cli.rs
+assertion_line: 4009
+expression: output
+---
+kply app inspect catalog
+
+App
+  name       catalog
+  namespace  shop
+
+Target
+  legend     ▣ workload  ◇ service  ↳ route  ◎ image
+  ▣ catalog-api
+  ◇ catalog-http
+  ↳ preview
