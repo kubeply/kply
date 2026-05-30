@@ -3381,20 +3381,18 @@ fn app_list_text(apps: &[AppConfig], color: bool) -> String {
     output.push_str(&format!("{}\n", style_heading("Apps", color)));
     output.push_str(&format!("  configured  {}\n", apps.len()));
     output.push_str(&format!("  namespaces  {}\n", apps_by_namespace.len()));
+    output.push_str("  legend      ▣ workload  ◇ service  ↳ route  ◎ image\n");
 
     for (namespace, namespace_apps) in apps_by_namespace {
         output.push('\n');
         output.push_str(&format!("{}\n", style_heading(namespace, color)));
         for app in namespace_apps {
             output.push_str(&format!("  {} {}\n", style_success("✓", color), app.name()));
-            output.push_str(&format!("      workload        {}\n", app.workload()));
-            output.push_str(&format!("      service         {}\n", app.service()));
-            output.push_str(&format!(
-                "      route_strategy  {}\n",
-                app.route_strategy().as_str()
-            ));
+            output.push_str(&format!("      ▣ {}\n", app.workload()));
+            output.push_str(&format!("      ◇ {}\n", app.service()));
+            output.push_str(&format!("      ↳ {}\n", app.route_strategy().as_str()));
             if let Some(default_image) = app.default_image() {
-                output.push_str(&format!("      default_image   {default_image}\n"));
+                output.push_str(&format!("      ◎ {default_image}\n"));
             }
         }
     }
@@ -4348,24 +4346,25 @@ mod tests {
                 "Apps\n",
                 "  configured  3\n",
                 "  namespaces  2\n",
+                "  legend      ▣ workload  ◇ service  ↳ route  ◎ image\n",
                 "\n",
                 "jobs\n",
                 "  ✓ worker\n",
-                "      workload        worker\n",
-                "      service         worker-metrics\n",
-                "      route_strategy  host\n",
-                "      default_image   ghcr.io/acme/worker:next\n",
+                "      ▣ worker\n",
+                "      ◇ worker-metrics\n",
+                "      ↳ host\n",
+                "      ◎ ghcr.io/acme/worker:next\n",
                 "\n",
                 "shop\n",
                 "  ✓ checkout\n",
-                "      workload        checkout-api\n",
-                "      service         checkout-http\n",
-                "      route_strategy  header\n",
-                "      default_image   ghcr.io/acme/checkout:next\n",
+                "      ▣ checkout-api\n",
+                "      ◇ checkout-http\n",
+                "      ↳ header\n",
+                "      ◎ ghcr.io/acme/checkout:next\n",
                 "  ✓ catalog\n",
-                "      workload        catalog-api\n",
-                "      service         catalog-http\n",
-                "      route_strategy  preview\n",
+                "      ▣ catalog-api\n",
+                "      ◇ catalog-http\n",
+                "      ↳ preview\n",
             )
         );
     }
