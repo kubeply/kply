@@ -3354,31 +3354,52 @@ fn render_app_list(cli: &Cli) -> Result<ExitCode> {
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else if !cli.quiet {
-        println!("kply app list");
-        if apps.is_empty() {
-            println!("No apps configured.");
-        } else {
-            for app in apps {
-                println!("{}", app_list_line(app));
-            }
-        }
+        print!("{}", app_list_text(apps, color_enabled(cli)));
     }
 
     Ok(ExitCode::SUCCESS)
 }
 
-/// Render one configured app as stable human-readable output.
-fn app_list_line(app: &AppConfig) -> String {
-    let default_image = app.default_image().unwrap_or("<none>");
-    format!(
-        "{} namespace={} workload={} service={} route_strategy={} default_image={}",
-        app.name(),
-        app.namespace(),
-        app.workload(),
-        app.service(),
-        app.route_strategy().as_str(),
-        default_image
-    )
+/// Render configured applications as stable human-readable output.
+fn app_list_text(apps: &[AppConfig], color: bool) -> String {
+    let mut output = String::new();
+    output.push_str("kply app list\n");
+    if apps.is_empty() {
+        output.push_str("No apps configured.\n");
+        return output;
+    }
+
+    let mut apps_by_namespace: BTreeMap<&str, Vec<&AppConfig>> = BTreeMap::new();
+    for app in apps {
+        apps_by_namespace
+            .entry(app.namespace())
+            .or_default()
+            .push(app);
+    }
+
+    output.push('\n');
+    output.push_str(&format!("{}\n", style_heading("Apps", color)));
+    output.push_str(&format!("  configured  {}\n", apps.len()));
+    output.push_str(&format!("  namespaces  {}\n", apps_by_namespace.len()));
+
+    for (namespace, namespace_apps) in apps_by_namespace {
+        output.push('\n');
+        output.push_str(&format!("{}\n", style_heading(namespace, color)));
+        for app in namespace_apps {
+            output.push_str(&format!("  {} {}\n", style_success("✓", color), app.name()));
+            output.push_str(&format!("      workload        {}\n", app.workload()));
+            output.push_str(&format!("      service         {}\n", app.service()));
+            output.push_str(&format!(
+                "      route_strategy  {}\n",
+                app.route_strategy().as_str()
+            ));
+            if let Some(default_image) = app.default_image() {
+                output.push_str(&format!("      default_image   {default_image}\n"));
+            }
+        }
+    }
+
+    output
 }
 
 /// Render config validation errors for commands that consume valid config.
